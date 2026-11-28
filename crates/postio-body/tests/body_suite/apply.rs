@@ -764,3 +764,81 @@ fn a_rule_goes_after_the_text_with_a_line_for_the_caret() {
     );
     assert_eq!(empty.selection, caret(&[1], 0));
 }
+
+#[test]
+fn pasted_inline_content_joins_the_caret_block() {
+    let pasted = doc(vec![Block::Paragraph(vec![strong("big")])]);
+    let edited = apply(
+        &doc(vec![p("ab")]),
+        &caret(&[0], 1),
+        EditIntent::Paste(pasted),
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![Block::Paragraph(vec![t("a"), strong("big"), t("b")])])
+    );
+    assert_eq!(edited.selection, caret(&[0], 4));
+    assert_eq!(edited.join, Join::New);
+}
+
+#[test]
+fn pasted_blocks_go_between_the_halves_of_the_caret_block() {
+    let pasted = doc(vec![p("one"), bullets(&["two"]), p("three")]);
+    let edited = apply(
+        &doc(vec![p("ab")]),
+        &caret(&[0], 1),
+        EditIntent::Paste(pasted),
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![p("aone"), bullets(&["two"]), p("threeb")])
+    );
+    assert_eq!(
+        edited.selection,
+        caret(&[2], 5),
+        "the caret is after what was pasted"
+    );
+}
+
+#[test]
+fn a_pasted_list_into_an_empty_line_replaces_the_line() {
+    let edited = apply(
+        &doc(vec![p("x"), p("")]),
+        &caret(&[1], 0),
+        EditIntent::Paste(doc(vec![bullets(&["a", "b"])])),
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![p("x"), bullets(&["a", "b"]), p("")])
+    );
+    assert_eq!(edited.selection, caret(&[2], 0));
+}
+
+#[test]
+fn paste_over_a_range_replaces_it() {
+    let edited = apply(
+        &doc(vec![p("hello world")]),
+        &span((&[0], 6), (&[0], 11)),
+        EditIntent::Paste(doc(vec![p("there")])),
+    );
+    assert_eq!(edited.document, doc(vec![p("hello there")]));
+}
+
+#[test]
+fn hostile_markup_arrives_narrowed() {
+    let hostile = postio_body::parse(
+        "<p style=\"color:red\" onclick=\"steal()\">hi<script>steal()</script>\
+         <img src=\"https://tracker.example.com/p.gif\"><a href=\"javascript:steal()\">x</a></p>\
+         <iframe src=\"https://example.com/\"></iframe>",
+    );
+    let edited = apply(
+        &doc(vec![p("")]),
+        &caret(&[0], 0),
+        EditIntent::Paste(hostile),
+    );
+    assert_eq!(
+        edited.document,
+        doc(vec![p("hix")]),
+        "no script, no remote image, no link to code"
+    );
+}

@@ -6,6 +6,7 @@ mod blocks;
 pub(crate) mod flat;
 mod lists;
 mod marks;
+mod paste;
 mod text;
 pub(crate) mod tree;
 
@@ -39,6 +40,9 @@ pub enum EditIntent {
     /// Shift+Tab: a level out, and out of the list from the top level.
     Outdent,
     InsertRule,
+    /// Already narrowed: paste and drop go through [`crate::parse`] first, so hostile markup
+    /// cannot reach the draft.
+    Paste(Document),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,5 +222,6 @@ fn run(blocks: &mut Vec<Block>, selection: &Selection, intent: EditIntent) -> Op
         EditIntent::Indent => blocks::indent(blocks, selection),
         EditIntent::Outdent => blocks::outdent(blocks, selection),
         EditIntent::InsertRule => blocks::insert_rule(blocks, selection),
+        EditIntent::Paste(pasted) => paste::paste(blocks, selection, pasted),
     }
 }
