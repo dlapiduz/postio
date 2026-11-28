@@ -1,65 +1,32 @@
-//! `[saved_searches]` — named saved queries.
-//!
-//! ```toml
-//! [saved_searches.needs-reply]
-//! query = "is:unread from:team"
-//! pinned = true
-//! ```
-//!
-//! The query string uses the same operator language as the search bar
-//! (`from:`, `has:attach`, `is:unread`, …); parsing it belongs to
-//! `postio-search`, so this layer keeps it as text.
-
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{Config, Extras, Result};
 
-/// One entry of `[saved_searches]`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct FilterConfig {
-    /// The search expression.
     #[serde(default)]
     pub query: String,
-    /// Show this filter in the sidebar.
     #[serde(default)]
     pub pinned: bool,
-    /// A display name distinct from the `[saved_searches.<key>]` key -- the key
-    /// stays a stable, TOML-safe identity (issue #292); this is what the
-    /// user actually chose to call it, in whatever text they typed.
-    ///
-    /// `None` means "nobody has renamed this yet", so it shows as the key
-    /// still does -- every filter saved before renaming existed, and one
-    /// saved today, both start this way.
+    /// The key stays a stable TOML-safe identity (#292); this is what the user chose to call it.
+    /// `None` means nobody has renamed it, so it shows as the key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Where this filter sits among the others in the sidebar, lowest
-    /// first.
-    ///
-    /// `None` sorts after every filter that has one, by key -- the
-    /// alphabetical order every filter already had before reordering
-    /// existed, so a file nobody has reordered behaves exactly as before.
+    /// `None` sorts after every filter that has one, by key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub order: Option<u32>,
-    /// Show a quiet badge with the matches that arrived since it was last
-    /// viewed (spec 010 D15). Never a banner, never a notification.
+    /// Never a banner, never a notification.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub notify: bool,
-    /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
 }
 
 impl Config {
-    /// Save `query` as a new pinned filter, named from the query text.
-    ///
-    /// This is `Ctrl+S`'s write path (issue #10): the caller still has to
-    /// call [`patch_filters`] afterward, the same as any other programmatic
-    /// edit -- this only touches the in-memory table. Returns the key the
-    /// filter was stored under, since the name is derived rather than chosen
-    /// and a caller updating a sidebar needs to know it.
-    pub fn save_filter(&mut self, query: &str) -> String {
+    #[cfg(test)]
+    fn save_filter(&mut self, query: &str) -> String {
         let key = self.unique_filter_key(query);
         self.filters.insert(
             key.clone(),
@@ -75,12 +42,9 @@ impl Config {
         key
     }
 
-    /// Save `query` as a new filter named `name`, pinned or not, notifying
-    /// or not: the Save popover's write (spec 010 FR-029). Pinned, it takes
-    /// the next free place after every pinned filter -- the next ⌥ number --
-    /// and the others are given the places they are shown in, as
-    /// [`Config::move_filter`] does, so "no order, by key" cannot put the
-    /// new one anywhere else. Returns its key, derived from the query.
+    /// Pinned, it takes the next free place after every pinned filter (the next ⌥ number) and the
+    /// others are given explicit places, as `move_filter` does, so "no order, by key" cannot put it
+    /// elsewhere.
     pub fn save_filter_as(
         &mut self,
         query: &str,
@@ -112,14 +76,8 @@ impl Config {
         key
     }
 
-    /// Give `key`'s saved search a display name distinct from its
-    /// `[saved_searches.<key>]` key.
-    ///
-    /// Renaming to empty text, or to text that just repeats the key, is
-    /// stored the same way as never having renamed it -- `None`, not a name
-    /// that would show identically to the key it already falls back to.
-    ///
-    /// Returns whether `key` names a filter at all.
+    /// Renaming to empty text, or to the key itself, is stored as `None`. Returns whether `key`
+    /// names a filter.
     pub fn rename_filter(&mut self, key: &str, name: &str) -> bool {
         let Some(filter) = self.filters.get_mut(key) else {
             return false;
@@ -133,13 +91,11 @@ impl Config {
         true
     }
 
-    /// Remove `key`'s saved search entirely. Returns whether it existed.
     pub fn delete_filter(&mut self, key: &str) -> bool {
         self.filters.remove(key).is_some()
     }
 
-    /// Show or hide `key`'s saved search in the sidebar, without touching
-    /// its query or its place among the others. Returns whether it existed.
+    /// Leaves its query and place untouched. Returns whether it existed.
     pub fn set_filter_pinned(&mut self, key: &str, pinned: bool) -> bool {
         let Some(filter) = self.filters.get_mut(key) else {
             return false;
@@ -148,9 +104,6 @@ impl Config {
         true
     }
 
-    /// Every *pinned* filter's key, in the order the sidebar shows them:
-    /// explicit [`FilterConfig::order`] first (lowest first), then anything
-    /// without one, alphabetically by key.
     pub fn ordered_filter_keys(&self) -> Vec<String> {
         let mut keys: Vec<&String> = self
             .filters
@@ -170,19 +123,9 @@ impl Config {
         keys.into_iter().cloned().collect()
     }
 
-    /// Move `key` one place earlier or later among the pinned filters, per
-    /// [`Config::ordered_filter_keys`].
-    ///
-    /// Assigns an explicit `order` to *every* pinned filter as a side
-    /// effect, not only the one that moved: the moment one filter's
-    /// position is pinned down, "no explicit order, alphabetical" stops
-    /// being a coherent story for the ones left without one -- an
-    /// unordered filter would keep sorting by key, which could put it
-    /// anywhere at all among the now-explicit ones rather than where it
-    /// visibly sat a moment ago.
-    ///
-    /// Returns whether `key` actually moved -- false if it does not name a
-    /// pinned filter, or if it was already at the end being moved toward.
+    /// Assigns an explicit `order` to every pinned filter, not only the one that moved: an
+    /// unordered filter would keep sorting by key and could land anywhere among the now-explicit
+    /// ones. Returns false if `key` is not a pinned filter or was already at the end.
     pub fn move_filter(&mut self, key: &str, direction: Reorder) -> bool {
         let mut ordered = self.ordered_filter_keys();
         let Some(at) = ordered.iter().position(|k| k == key) else {
@@ -205,12 +148,7 @@ impl Config {
         true
     }
 
-    /// A `[saved_searches]` key derived from `query`, distinct from every key
-    /// already in the table.
-    ///
-    /// Two searches saved with the same text is not a conflict a user should
-    /// have to resolve by typing a name first -- it is `-2`, `-3`, the way a
-    /// file manager handles a second "Untitled".
+    /// A repeated query gets `-2`, `-3` rather than making the user type a name.
     fn unique_filter_key(&self, query: &str) -> String {
         let base = slug(query);
         if !self.filters.contains_key(&base) {
@@ -223,26 +161,12 @@ impl Config {
     }
 }
 
-/// Rewrites `text`'s `[saved_searches.*]` tables to match `filters`, leaving every
-/// other line — other sections, comments, layout — untouched.
-///
-/// [`Config::to_toml_string`] reserializes the *whole* file and cannot make
-/// that promise (see its own doc comment: unknown keys survive, but there is
-/// no promise about layout). This is the settings panel's structured filters
-/// pane's write path (#869): it uses `toml_edit`'s format-preserving document
-/// model and only ever touches the one table that pane is allowed to own,
-/// so a hand-written comment on `[ui]` or `[sync]` survives an edit made
-/// here exactly as the raw-text editor already promised it would.
-///
-/// The one thing this cannot preserve is a comment attached to a *specific*
-/// filter entry that changed — the whole `[saved_searches]` table is regenerated
-/// from `filters` on every call, not diffed key by key. Saved searches are
-/// not the kind of TOML a person hand-annotates the way `[ui]`/`[sync]` are,
-/// so that tradeoff is deliberate rather than an oversight.
+/// Format-preserving (`toml_edit`): only the `[saved_searches]` table is touched, so comments
+/// elsewhere survive (#869). The table is regenerated whole, so a comment on a changed filter entry
+/// does not.
 pub fn patch_filters(text: &str, filters: &BTreeMap<String, FilterConfig>) -> Result<String> {
-    // An empty map still serializes as a bare header (`toml` has no other
-    // spelling for a table with no keys), the dangling header this exists
-    // to avoid -- so the empty case only removes the section.
+    // An empty map serializes as a bare dangling header, so the empty case only removes the
+    // section.
     if filters.is_empty() {
         let mut doc = crate::splice::parse(text)?;
         doc.as_table_mut().remove("saved_searches");
@@ -251,27 +175,20 @@ pub fn patch_filters(text: &str, filters: &BTreeMap<String, FilterConfig>) -> Re
     crate::splice::replace_section(text, "saved_searches", &FiltersOnly { filters })
 }
 
-/// Serializes as just `[saved_searches.<key>]` tables, with no other section —
-/// [`patch_filters`]'s bridge from `toml`'s serde-derived output (which
-/// `FilterConfig` already has) to a fragment `toml_edit` can splice in.
 #[derive(Serialize)]
 struct FiltersOnly<'a> {
     #[serde(rename = "saved_searches")]
     filters: &'a BTreeMap<String, FilterConfig>,
 }
 
-/// Which way [`Config::move_filter`] should walk a saved search.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reorder {
-    /// Toward the front of the sidebar list.
     Up,
-    /// Toward the back.
     Down,
 }
 
-/// Lowercase, hyphen-separated, and never empty -- a `[saved_searches.<key>]` table
-/// name has to be a bare TOML key, so anything that is not ASCII
-/// alphanumeric becomes one separator rather than surviving into it.
+/// A table name has to be a bare TOML key, so anything not ASCII alphanumeric becomes one
+/// separator.
 fn slug(text: &str) -> String {
     let mut slug = String::new();
     let mut last_was_separator = true; // No leading hyphen.
@@ -344,8 +261,6 @@ mod tests {
             "saving a new filter must not repin an existing one"
         );
     }
-
-    // -- Acceptance: rename, reorder, delete (#292) ------------------------
 
     #[test]
     fn renaming_a_filter_sets_a_display_name_distinct_from_its_key() {
@@ -481,10 +396,6 @@ mod tests {
 
     #[test]
     fn once_anything_is_reordered_every_pinned_filter_gets_an_explicit_order() {
-        // The rationale in `move_filter`'s own doc: leaving some filters on
-        // the alphabetical fallback once another has an explicit position
-        // is a trap, so a move touches everyone's `order`, not just the
-        // pair that swapped.
         let mut config = Config::default();
         let a = config.save_filter("subject:a");
         let b = config.save_filter("subject:b");
@@ -499,9 +410,6 @@ mod tests {
             );
         }
     }
-    // -- Acceptance: `account:` survives the config file (#186) -------------
-
-    // -- Acceptance: pin/unpin from the settings panel (#869) --------------
 
     #[test]
     fn set_filter_pinned_toggles_an_existing_filter_and_says_whether_it_existed() {
@@ -517,8 +425,6 @@ mod tests {
 
         assert!(!config.set_filter_pinned("does-not-exist", true));
     }
-
-    // -- Acceptance: the settings panel patches [saved_searches] only (#869) ------
 
     #[test]
     fn patch_filters_rewrites_only_the_filters_table_leaving_everything_else_verbatim() {
@@ -579,16 +485,8 @@ pinned = true
 
     #[test]
     fn an_account_scoped_query_round_trips_through_the_config_file() {
-        // ADR 0005 Q5 keeps `account:` in the *query language* rather than in
-        // a config field of its own, so a saved search pins itself to an
-        // account by carrying the text the user typed. That only works if the
-        // text survives the file unchanged -- a colon-bearing value is
-        // exactly the kind of thing a serializer quotes, re-quotes, or
-        // mangles.
-        //
-        // This crate never parses the query (it does not depend on
-        // `postio-search` and should not), so "unchanged" is the whole
-        // contract it can offer, and the whole contract the executor needs.
+        // ADR 0005 Q5 keeps `account:` in the query language, so a saved search pins itself to an
+        // account by carrying the typed text; it must survive the file unchanged.
         let mut config = Config::default();
         let key = config.save_filter(r#"account:"Work Mail" is:unread"#);
 

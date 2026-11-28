@@ -42,15 +42,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 TESTS = ROOT / "scripts" / "tests"
 
-# `TemporaryDirectory(dir=...)` and `mkdtemp(dir=...)`, capturing what the
-# directory is. Only the literal argument is read: a name is enough to say
-# whether it resolves under `target/`, and nothing here needs to execute the
-# test to find out.
+# Only the literal argument is read; a name says whether it resolves under `target/`.
 SANDBOX = re.compile(r"(?:TemporaryDirectory|mkdtemp)\s*\(\s*(?:[^)]*?,\s*)?dir\s*=\s*([A-Za-z_][A-Za-z0-9_. /\"\']*)")
 
-# The names a test may pass. `SANDBOXES` is the one this check exists to
-# establish; the rest are absolute or already-temporary paths that never sit
-# in the repository.
+# Names a test may pass: `SANDBOXES`, or absolute or already-temporary paths.
 ALLOWED = {"SANDBOXES", "base", "directory", "tempfile.gettempdir()"}
 
 

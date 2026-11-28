@@ -1,20 +1,5 @@
-//! The digest window and the digest rule dialog (research R2, slice 12;
-//! spec 007 US10, US13, US14; screens 22 to 24).
-//!
-//! Moved from `postio-gtk`'s `digest.rs` (its page, its focused row and
-//! reference, the email opened from a reference), `rule_dialog.rs` (what a
-//! new or edited rule holds, its preview, Create), and the window's digest
-//! handlers (`open_digest`, `digest_key`, `ask_stop_digesting`,
-//! `unsubscribe`, `edit_digest_rule`, `new_digest_rule`). The words are
-//! `postio_ui::digest`'s and `postio_ui::focus_target`'s; the controller
-//! keeps what each surface holds, what each key does to it, and which read
-//! is current.
-//!
-//! The digest opens on its summary when the person has brought a model and
-//! one is written, and on its plain list otherwise (C6). A reference's email
-//! opens in the digest's own window, and Esc comes back to the same
-//! reference. On the Mac a message from the plain list opens there too
-//! (M4); Linux's reading dialog stacks over the digest instead.
+//! The digest window and rule dialog. The digest opens on its summary when a model is brought and
+//! one is written, else on its list; a reference's email opens in the digest's own window.
 
 use chrono::{DateTime, Utc};
 use postio_client::protocol::{DigestPreview, DigestRuleDraft};
@@ -32,117 +17,70 @@ use crate::feed::Step;
 use crate::surfaces::{Host, Origin};
 use crate::{FocusController, Intent, Reply, Request, SurfaceKind, ToastKind};
 
-/// The digest's window, drawable as it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestView {
-    /// The delivery on screen.
     pub delivery: DeliveryId,
-    /// The page showing.
     pub page: Page,
-    /// "Weekly · Newsletters"; the email's subject on the email page.
     pub title: String,
-    /// "14 messages from 6 senders · came due today 16:00"; "Source 2 of
-    /// 14" on the email page.
     pub subtitle: String,
-    /// "Archive all 14".
     pub archive: String,
-    /// Its key.
     pub archive_key: Option<String>,
-    /// "Weekly, Sunday 09:00 · Edit rule and cadence".
     pub rule_line: String,
-    /// Its key.
     pub rule_key: Option<String>,
-    /// Whether the Summary and list tabs show: only once a summary exists.
     pub tabs: bool,
-    /// The list tab's words: "14 messages".
     pub list_tab: String,
-    /// The key that switches between them.
     pub tab_key: Option<String>,
-    /// The plain list, one line a message.
     pub rows: Vec<DigestLine>,
-    /// The list's row with the keyboard: what `D` and `U` act on.
     pub focused: Option<u32>,
-    /// The summary, by topic.
     pub topics: Vec<DigestTopic>,
-    /// The focused reference, in reading order.
     pub focused_reference: Option<u32>,
-    /// The card under the paragraphs for the focused reference's message.
     pub card: Option<DigestCard>,
-    /// The line under the summary.
     pub footer: Option<String>,
-    /// The email shown in place, on the email page.
     pub email: Option<DigestEmail>,
-    /// The email page's way back: "Summary", "3 messages".
     pub back: String,
-    /// Its key.
     pub back_key: Option<String>,
-    /// Whether what the delivery holds is still being read.
     pub loading: bool,
 }
 
-/// One message of the digest's plain list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestLine {
-    /// The message.
     pub message: MessageId,
-    /// Who sent it.
     pub sender: String,
-    /// Its subject.
     pub subject: String,
-    /// Its first line.
     pub preview: Option<String>,
-    /// When it came: "16:02", "Tue".
     pub time: String,
+    pub summary: MessageSummary,
 }
 
-/// A run of the summary's statements under one topic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestTopic {
-    /// "Rates · 3 statements from 2 messages".
     pub heading: String,
-    /// Its statements, in reading order.
     pub statements: Vec<DigestStatement>,
 }
 
-/// One statement of the summary, ending in its numbered reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestStatement {
-    /// Where it is among all the statements: what
-    /// [`crate::Input::DigestReference`] names.
     pub index: u32,
-    /// What it says: plain text, never markup (FR-174).
     pub text: String,
-    /// Its reference's number.
     pub number: u32,
-    /// The message it cites.
     pub message: MessageId,
 }
 
-/// The card under the summary for the focused reference.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestCard {
-    /// "Reference 3 · Ada Moreno · The rate decision".
     pub title: String,
-    /// "open the full email".
     pub hint: String,
-    /// Its key.
     pub key: Option<String>,
 }
 
-/// The email shown in the digest's window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DigestEmail {
-    /// The message: what `reader_document` draws.
     pub message: MessageId,
-    /// The reference that cites it, when one does.
     pub number: Option<u32>,
-    /// The passage to highlight, when a reference cites it.
     pub excerpt: Option<String>,
-    /// The banner over it, when a reference cites it.
     pub banner: Option<String>,
 }
 
-/// What the controller keeps of the digest's window.
 #[derive(Debug)]
 pub(crate) struct DigestWindow {
     delivery: DeliveryId,
@@ -157,14 +95,12 @@ pub(crate) struct DigestWindow {
     page: Page,
     focused: Option<usize>,
     reference: Option<usize>,
-    /// The email on screen, and the page Esc goes back to.
     email: Option<(MessageId, Page)>,
     stamp: u64,
     loading: bool,
 }
 
 impl DigestWindow {
-    /// The message at `index` of the plain list, as a verb sees it.
     pub(crate) fn facts(&self, index: usize) -> Option<RowFacts> {
         self.rows.get(index).map(|row| RowFacts {
             id: row.id,
@@ -174,17 +110,18 @@ impl DigestWindow {
         })
     }
 
-    /// Where `message` is in the plain list.
     pub(crate) fn index_of(&self, message: MessageId) -> Option<usize> {
         self.rows.iter().position(|row| row.id == message)
     }
 
-    /// How many messages the plain list holds.
+    pub(crate) fn said(&self, index: usize) -> Option<(String, String)> {
+        self.rows.get(index).map(crate::said_of)
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.rows.len()
     }
 
-    /// The subject of the plain list's message at `index`.
     pub(crate) fn subject(&self, index: usize) -> Option<String> {
         self.rows.get(index)?.subject.clone()
     }
@@ -199,7 +136,6 @@ impl DigestWindow {
         self.statements() > 0
     }
 
-    /// The reference that cites `message`: its index, number and passage.
     fn cited(&self, message: MessageId) -> Option<(usize, u32, String)> {
         self.summary
             .as_ref()?
@@ -216,8 +152,6 @@ impl DigestWindow {
             })
     }
 
-    /// The list's focus follows the focused reference: `D` and `U` act on
-    /// the message it cites.
     fn follow_reference(&mut self) {
         let message = self.reference.and_then(|index| {
             self.summary
@@ -236,7 +170,6 @@ impl DigestWindow {
     }
 }
 
-/// What the controller keeps of the rule dialog.
 #[derive(Debug)]
 pub(crate) struct RuleDialog {
     form: RuleForm,
@@ -246,58 +179,35 @@ pub(crate) struct RuleDialog {
     stamp: u64,
 }
 
-/// The rule dialog, drawable as it is (screen 24).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleView {
-    /// "Digest this sender", "Digest rule · Newsletters".
     pub heading: String,
-    /// The first row's label: "From".
     pub from_label: String,
-    /// The senders, as a plain line; `None` once the query entry is up.
     pub from: Option<String>,
-    /// The query entry's text, while it is up.
     pub query: Option<String>,
-    /// The query entry's placeholder.
     pub placeholder: String,
-    /// "Match a list or a search instead…", while the senders show.
     pub match_instead: Option<String>,
-    /// "Digest mail like this", when a model can be asked for one.
     pub like_this: Option<String>,
-    /// The schedule row's label: "Deliver".
     pub deliver_label: String,
-    /// The schedule, as its controls hold it.
     pub schedule: Schedule,
-    /// The cadences, in menu order: "Daily", "Weekly", "Monthly".
     pub cadences: Vec<String>,
-    /// The weekdays, in menu order: "Monday" to "Sunday".
     pub weekdays: Vec<String>,
-    /// What still comes straight to the inbox.
     pub note: String,
-    /// "Create", or "Save" while editing.
     pub create: String,
-    /// Its key.
     pub create_key: Option<String>,
-    /// "Would have caught 9 messages in the last 90 days", once read.
     pub preview_heading: Option<String>,
-    /// The newest of them.
     pub preview: Vec<RulePreviewLine>,
-    /// "and 5 more".
     pub more: Option<String>,
-    /// Why the rule cannot be written as it stands.
     pub error: Option<String>,
 }
 
-/// One message the rule would have caught.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RulePreviewLine {
-    /// Its subject.
     pub subject: String,
-    /// When it came: "Today", "Tue", "12 Sep".
     pub day: String,
 }
 
 impl FocusController {
-    /// Open the digest whose row is at `position`, as `row` names it.
     pub(crate) fn open_digest(
         &mut self,
         row: MessageId,
@@ -318,7 +228,6 @@ impl FocusController {
             .iter()
             .find(|rule| rule.name.trim() == digest.rule.trim())
             .and_then(words::rule_when);
-        // C6: a summary is read only when the person has brought a model.
         let summary = config
             .model_for(postio_config::model::ModelFeature::DigestSummary)
             .is_some();
@@ -352,7 +261,6 @@ impl FocusController {
         steps
     }
 
-    /// Whether `id` is the digest's own while it is on top.
     pub(crate) fn digest_answers(id: CommandId) -> bool {
         matches!(
             id,
@@ -366,13 +274,10 @@ impl FocusController {
         )
     }
 
-    /// The email open in the digest's window, on its email page.
     pub(crate) fn digest_email(&self) -> Option<MessageId> {
         self.digest.as_ref()?.email.map(|(message, _)| message)
     }
 
-    /// A command while the digest is on top, or `None` when the app's rules
-    /// apply to it (Undo, the key map, the bar).
     pub(crate) fn digest_command(&mut self, id: CommandId, rows: &dyn Rows) -> Option<Vec<Step>> {
         let window = self.digest.as_mut()?;
         let steps = match id {
@@ -459,13 +364,11 @@ impl FocusController {
             | CommandId::CheatSheet
             | CommandId::Search
             | CommandId::CommandPalette => return None,
-            // A verb meant for the list behind: nobody can see its rows.
             _ => Vec::new(),
         };
         Some(steps)
     }
 
-    /// The digest goes, however it was asked to.
     fn close_digest(&mut self) -> Vec<Step> {
         self.digest = None;
         self.surfaces.dismiss(SurfaceKind::Digest);
@@ -476,7 +379,6 @@ impl FocusController {
         steps
     }
 
-    /// `]`/`[`: the focused reference, clamped to the summary's ends.
     fn step_reference(&mut self, by: i32) -> Vec<Step> {
         let Some(window) = self.digest.as_mut() else {
             return Vec::new();
@@ -489,7 +391,6 @@ impl FocusController {
         self.draw_digest()
     }
 
-    /// `j`/`k` over the plain list, or the email opened from it.
     fn step_digest_row(&mut self, by: i32) -> Vec<Step> {
         let Some(window) = self.digest.as_mut() else {
             return Vec::new();
@@ -508,7 +409,6 @@ impl FocusController {
         self.draw_digest()
     }
 
-    /// Return over the summary: the focused reference's email, in place.
     fn open_reference(&mut self) -> Vec<Step> {
         let Some(window) = self.digest.as_mut() else {
             return Vec::new();
@@ -528,8 +428,6 @@ impl FocusController {
         self.show_digest_email(message)
     }
 
-    /// Return over the plain list: on the Mac, the message in the digest's
-    /// window (M4); on Linux, the reading dialog over the digest.
     fn open_digest_row(&mut self, _rows: &dyn Rows) -> Vec<Step> {
         let Some(window) = self.digest.as_mut() else {
             return Vec::new();
@@ -548,7 +446,6 @@ impl FocusController {
         self.show_digest_email(message)
     }
 
-    /// Over the email page: show the message the list's focus is on now.
     fn digest_email_at_focus(&mut self) -> Vec<Step> {
         let Some(window) = self.digest.as_mut() else {
             return Vec::new();
@@ -561,8 +458,6 @@ impl FocusController {
         self.show_digest_email(message)
     }
 
-    /// The email page on `message`: shown in the digest's window, citing its
-    /// reference when one names it.
     fn show_digest_email(&mut self, message: MessageId) -> Vec<Step> {
         let Some(window) = self.digest.as_mut() else {
             return Vec::new();
@@ -582,8 +477,6 @@ impl FocusController {
         steps
     }
 
-    /// Linux: the digest's message at `index` in the reading dialog, over
-    /// the digest.
     pub(crate) fn open_digest_message(&mut self, index: usize) -> Vec<Step> {
         let Some(window) = self.digest.as_mut() else {
             return Vec::new();
@@ -601,7 +494,6 @@ impl FocusController {
         steps
     }
 
-    /// A click on the plain list's row at `index`.
     pub(crate) fn digest_point(&mut self, index: u32) -> Vec<Step> {
         let Some(window) = self.digest.as_mut() else {
             return Vec::new();
@@ -613,7 +505,6 @@ impl FocusController {
         self.draw_digest()
     }
 
-    /// A click on the summary's reference at `index`.
     pub(crate) fn digest_reference(&mut self, index: u32) -> Vec<Step> {
         let Some(window) = self.digest.as_mut() else {
             return Vec::new();
@@ -626,7 +517,6 @@ impl FocusController {
         self.draw_digest()
     }
 
-    /// An answer for the digest's window.
     pub(crate) fn digest_reply(&mut self, reply: Reply) -> Vec<Step> {
         match reply {
             Reply::DigestRead {
@@ -661,14 +551,12 @@ impl FocusController {
         }
     }
 
-    /// Redraw the digest's window.
     fn draw_digest(&self) -> Vec<Step> {
         self.digest_view()
             .map(|view| vec![Step::Show(Intent::Digest(Box::new(view)))])
             .unwrap_or_default()
     }
 
-    /// The digest's window in words, as it stands.
     pub(crate) fn digest_view(&self) -> Option<DigestView> {
         let window = self.digest.as_ref()?;
         let keymap = self.keymap();
@@ -742,6 +630,7 @@ impl FocusController {
                     subject: row.subject.clone().unwrap_or_default(),
                     preview: row.preview.clone(),
                     time: postio_ui::row::timestamp(row.received_at, now),
+                    summary: row.clone(),
                 })
                 .collect(),
             focused: window.focused.map(|at| at as u32),
@@ -778,8 +667,6 @@ impl FocusController {
         })
     }
 
-    /// `d` on the list, or on the open message: a new rule for the senders
-    /// of what a verb would aim at.
     pub(crate) fn new_rule(&mut self, rows: &dyn Rows) -> Vec<Step> {
         use postio_core::state::Selection;
         let selection = self.cursor.selection();
@@ -815,8 +702,7 @@ impl FocusController {
         self.open_rule()
     }
 
-    /// `d` in a digest: edit the rule called `name`, or say it is gone.
-    fn edit_rule(&mut self, name: &str) -> Vec<Step> {
+    pub(crate) fn edit_rule(&mut self, name: &str) -> Vec<Step> {
         let rule = self
             .states
             .config
@@ -841,7 +727,6 @@ impl FocusController {
         self.open_rule()
     }
 
-    /// Show the rule dialog on what it holds, and read its preview.
     fn open_rule(&mut self) -> Vec<Step> {
         let mut steps = self
             .surfaces
@@ -853,7 +738,6 @@ impl FocusController {
         steps
     }
 
-    /// What the rule would have caught over the last 90 days.
     fn read_preview(&mut self) -> Vec<Step> {
         let since = self.now().to_utc() - chrono::Duration::days(words::PREVIEW_DAYS);
         let stamp = self.stamp();
@@ -872,7 +756,6 @@ impl FocusController {
         })]
     }
 
-    /// Something the person did in the rule dialog.
     pub(crate) fn rule_input(&mut self, input: crate::Input) -> Vec<Step> {
         use crate::Input;
         let Some(rule) = self.rule.as_mut() else {
@@ -920,7 +803,6 @@ impl FocusController {
         drawn
     }
 
-    /// An answer for the rule dialog.
     pub(crate) fn rule_reply(&mut self, reply: Reply) -> Vec<Step> {
         let stamp = match &reply {
             Reply::DigestPreview { stamp, .. }
@@ -979,7 +861,6 @@ impl FocusController {
             .unwrap_or_default()
     }
 
-    /// The rule dialog in words, as it stands.
     pub(crate) fn rule_view(&self) -> Option<RuleView> {
         let rule = self.rule.as_ref()?;
         let now = self.now();
@@ -1039,7 +920,6 @@ impl FocusController {
     }
 }
 
-/// The query entry up, holding `text` (US14 scenario 2).
 fn set_query(rule: &mut RuleDialog, text: &str) {
     rule.form.set_query(text);
     rule.error = None;

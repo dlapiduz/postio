@@ -1,5 +1,3 @@
-//! Runs and storyboards for tests that need a tree on disk.
-
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -67,7 +65,6 @@ pub fn run(name: &str, app: App, variant: &[(&str, &str)], steps: usize) -> Run 
     }
 }
 
-/// Writes a run, and an empty file for every outlined frame it names.
 pub fn write(root: &Path, run: &Run) {
     let writer = RunWriter::new(root, run.app, &run.storyboard.name, &run.variant).expect("dir");
     writer.write(run).expect("run.json");
@@ -78,7 +75,6 @@ pub fn write(root: &Path, run: &Run) {
     }
 }
 
-/// A one-step storyboard, optionally naming a canvas screen.
 pub fn storyboard(design: Option<&str>) -> String {
     let design = design
         .map(|d| format!("design = \"{d}\"\n"))

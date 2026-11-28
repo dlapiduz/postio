@@ -1,89 +1,50 @@
-//! Scoring two records that may be one person (specs/011-focus-contacts S10).
-//!
-//! A pure function from what is known of two records to the evidence that
-//! they are the same person, as lines a person can read. No evidence, no
-//! candidate: the sheet shows nothing the scorer did not say. A colleague at
-//! the same company is not evidence; a shared name, the same title and company
-//! in the signature, an address that stopped when another began in the same
-//! threads, a `Resent-From` header, and answers that crossed are.
+//! Scores two records that may be one person: a pure function to readable evidence lines. No
+//! evidence, no candidate; a colleague at the same company is not evidence.
 
-/// What is known of one record.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Side {
-    /// The name shown.
     pub name: String,
-    /// Every address the record owns.
     pub addresses: Vec<String>,
-    /// The title their signature gives.
     pub title: Option<String>,
-    /// The company their signature gives.
     pub company: Option<String>,
 }
 
-/// What is known of the two together, from the mail.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Pair {
-    /// In how many threads one stopped writing as the other began.
     pub took_over_in_threads: u32,
-    /// The address that stopped, and the address that began, when it did.
     pub took_over: Option<(String, String)>,
-    /// The address a `Resent-From` header named as the one the other
-    /// forwards from, when one did.
     pub forwards_from: Option<String>,
-    /// The address that forwards, when `forwards_from` is set.
     pub forwards_to: Option<String>,
-    /// How many answers crossed between them.
     pub replies: u32,
-    /// A phone number both give.
     pub shared_phone: Option<String>,
-    /// One contact card an import read that lists both.
     pub same_card: Option<String>,
-    /// The title and company both sign with, when the signatures were noted
-    /// as the same.
     pub signature: Option<(String, String)>,
 }
 
-/// One reason to think two records are one person.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Evidence {
-    /// Both are called this.
     SameName(String),
-    /// The same title and company in the signature.
     SameSignature {
-        /// The title.
         title: String,
-        /// The company.
         company: String,
     },
-    /// One address stopped when the other began, in the same threads.
     TookOver {
-        /// The address that stopped.
         old: String,
-        /// The address that began.
         new: String,
-        /// How many threads.
         threads: u32,
     },
-    /// A `Resent-From` header.
     Forwards {
-        /// Where it forwards from.
         from: String,
-        /// The address that forwards.
         to: String,
     },
-    /// Both give the same phone number.
     SamePhone(String),
-    /// One contact card an import read lists both.
     SameCard,
-    /// Mail sent to one was answered from the other.
     Replied {
-        /// How many answers.
         answers: u32,
     },
 }
 
 impl Evidence {
-    /// How much it counts for.
     pub fn weight(&self) -> u32 {
         match self {
             Self::SameName(_) => 2,
@@ -97,12 +58,9 @@ impl Evidence {
     }
 }
 
-/// The score of a pair that has evidence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scored {
-    /// The sum of the evidence's weights.
     pub score: u32,
-    /// What there is.
     pub evidence: Vec<Evidence>,
 }
 
@@ -190,9 +148,7 @@ pub fn score(a: &Side, b: &Side, pair: &Pair) -> Option<Scored> {
     })
 }
 
-/// The sheet's "Why we think so" lines for a group of `size` records, from
-/// each pair's evidence. A kind of evidence every pair shares is said once for
-/// the group; the rest are said as they are. `name` is the kept record's.
+/// A kind of evidence every pair shares is said once for the group. `name` is the kept record's.
 pub fn describe(size: usize, pairs: &[Vec<Evidence>], name: &str) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     let shared = |matches: &dyn Fn(&Evidence) -> bool| {
@@ -285,14 +241,8 @@ fn capital(text: &str) -> String {
         .unwrap_or_default()
 }
 
-/// What a message's body and headers note about its sender, for the review to
-/// find look-alikes by: the signature (when it gives a name, a title and a
-/// company), each phone number, and the address a `Resent-From` header names.
-/// Facts about the sender, never message content.
-///
-/// With `read_signatures` false the signature is not parsed at all
-/// (Settings > Contacts, "Read signatures for details"): only the forwarding
-/// header is looked at.
+/// Facts about the sender, never message content. With `read_signatures` false the signature is not
+/// parsed at all.
 pub fn noticed(
     text: &str,
     headers: &str,
@@ -318,7 +268,6 @@ pub fn noticed(
     found
 }
 
-/// The first address of a `Resent-From` header, lowercased.
 fn resent_from(headers: &str) -> Option<String> {
     let mut lines = headers.lines().peekable();
     while let Some(line) = lines.next() {

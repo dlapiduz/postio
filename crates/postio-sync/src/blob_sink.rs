@@ -1,63 +1,22 @@
-//! A [`BodySink`] that writes straight into the blob store.
-//!
-//! # Why this exists
-//!
-//! [`VecSink`](postio_account::backend::VecSink) collects a fetch into a
-//! `Vec<u8>`, which is fine for a test and fine for a small part, and wrong for
-//! a message. A `Vec` grows by doubling, so a 40 MB attachment peaks well above
-//! 40 MB and copies itself a dozen times on the way there — and the background
-//! lane's `max_body_bytes` cap does not save anyone from it, because **the
-//! interactive lane ignores that cap by design**: the user asked for that
-//! message and is watching a spinner. There are 539 messages over 5 MB in the
-//! account ADR 0017 measured.
-//!
-//! So the bytes go socket, chunk, file: this sink holds one chunk as the
-//! transport hands it over, the digest is computed as it goes past, and the
-//! file on disk is the buffer. That is the rule ADR 0017's second axis states —
-//! *no message byte is ever resident in the process except the text being
-//! parsed.*
-//!
-//! # Why it lives here and not in `postio-storage`
-//!
-//! [`BodySink`] belongs to `postio-account` and [`BlobStore`] to
-//! `postio-storage`; making either depend on the other to join them would
-//! invert the layering (`postio-storage` is *below* the protocol, not beside
-//! it). `postio-sync` is the crate whose whole job is joining protocol to
-//! storage, so the seam belongs here. `postio-storage` supplies the primitive
-//! — [`BlobWriter`] — and knows nothing about fetches.
-//!
-//! # The contract, restated
-//!
-//! [`BodySink::finish`] is called only when the fetch completed. A sink that
-//! never sees it is holding a fragment, and this one publishes nothing:
-//! [`BlobSink::finished_blob`] is `None`, the temporary file is left for
-//! [`BlobStore::purge_temporary`], and no blob exists under a digest that
-//! promises whole bytes. There is deliberately no way to ask for the id of an
-//! unfinished write.
+//! A `BodySink` that writes straight into the blob store: no `Vec` doubling, the file on disk is
+//! the buffer (ADR 0017).
+//! Lives here, not in `postio-storage`, because joining protocol to storage is this crate's job.
+//! `finish` publishes the blob; an unfinished sink publishes nothing and exposes no id.
 
 use async_trait::async_trait;
 use postio_account::backend::{BackendError, BackendResult, BodySink};
 use postio_model::BlobId;
 use postio_storage::{BlobStore, BlobWriter};
 
-/// A [`BodySink`] whose destination is the blob store.
-///
-/// See the [module documentation](self) for the contract.
 #[derive(Debug)]
 pub struct BlobSink {
-    /// `None` once the blob has been published, which is what makes `finish`
-    /// exactly-once without a separate flag.
+    /// `None` once the blob has been published, which makes `finish` exactly-once.
     writer: Option<BlobWriter>,
     blob: Option<BlobId>,
     bytes: u64,
 }
 
 impl BlobSink {
-    /// Opens a sink writing into `blobs`.
-    ///
-    /// # Errors
-    ///
-    /// [`BackendError::Protocol`] if the temporary file cannot be created.
     pub fn new(blobs: &BlobStore) -> BackendResult<Self> {
         Ok(Self {
             writer: Some(blobs.writer().map_err(storage_error)?),
@@ -66,18 +25,12 @@ impl BlobSink {
         })
     }
 
-    /// The blob, once the fetch has completed.
-    ///
-    /// `None` until [`BodySink::finish`] has run, so a caller cannot mistake a
-    /// fragment for a body — which is the whole point of the sink contract.
+    /// `None` until `finish` has run, so a fragment cannot be mistaken for a body.
     pub fn finished_blob(&self) -> Option<BlobId> {
         self.blob.clone()
     }
 
-    /// How many bytes have been written.
-    ///
-    /// Meaningful before `finish` too: it is what the backfill reports as
-    /// progress, and what a cancelled fetch wasted.
+    /// Bytes written so far, also before `finish`.
     pub fn bytes(&self) -> u64 {
         self.bytes
     }
@@ -103,11 +56,8 @@ impl BodySink for BlobSink {
     }
 }
 
-/// A storage failure, in the vocabulary the backend seam speaks.
-///
-/// The sink sits on the protocol side of the seam, so a disk that is full has
-/// to arrive at the caller as a fetch failure rather than as a type from a
-/// crate the caller does not import.
+/// A full disk must reach the caller as a fetch failure, not a type from a crate it does not
+/// import.
 fn storage_error(error: postio_storage::Error) -> BackendError {
     BackendError::Protocol {
         reason: format!("the blob store refused the fetched bytes: {error}"),

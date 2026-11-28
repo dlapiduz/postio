@@ -1,48 +1,39 @@
-//! The three headers Focus reads before a message's body arrives (spec 007,
-//! research R8): `List-Unsubscribe`, `Precedence` and `Auto-Submitted`.
-//!
-//! ADR 0025 keeps `header:` a late, body-time fact and names one way out for
-//! a header that must be known sooner: promotion, to a column with its own
-//! operator and its own fetch. These three are promoted so the filing pass
-//! can tell bulk and automated mail at arrival, and search asks the same
-//! question with `is:bulk` and `is:automated` (constitution III). Everything
-//! here is the one reading of them, so the fetch, the body and the operators
-//! cannot disagree about what a message said.
+//! The headers Focus reads before a body arrives, promoted (ADR 0025) so filing can tell bulk and
+//! automated mail; one reading keeps the fetch, the body and `is:bulk`/`is:automated` in agreement.
 
 use serde::{Deserialize, Serialize};
 
 use crate::headers::Headers;
 
-/// `Precedence: bulk`.
 pub const PRECEDENCE_BULK: u8 = 1;
-/// `Precedence: list`.
 pub const PRECEDENCE_LIST: u8 = 2;
-/// `Precedence: junk`.
 pub const PRECEDENCE_JUNK: u8 = 4;
-/// `Auto-Submitted: auto-generated`, or any value but `no` and
-/// `auto-replied`: RFC 3834 §5 asks a reader to treat an unknown `auto-`
-/// keyword as automatic.
+/// `Auto-Submitted: auto-generated`, or any value but `no` and `auto-replied`: RFC 3834 §5 asks a
+/// reader to treat an unknown `auto-` keyword as automatic.
 pub const AUTO_GENERATED: u8 = 8;
-/// `Auto-Submitted: auto-replied`: an out-of-office, a bounce.
 pub const AUTO_REPLIED: u8 = 16;
 
-/// The `Precedence` bits: what `is:bulk` reads besides `List-Unsubscribe`
-/// (`postio_index`'s executor spells both operators from these).
+/// What `is:bulk` reads besides `List-Unsubscribe`.
 pub const PRECEDENCE: u8 = PRECEDENCE_BULK | PRECEDENCE_LIST | PRECEDENCE_JUNK;
-/// The `Auto-Submitted` bits: what `is:automated` reads.
 pub const AUTO_SUBMITTED: u8 = AUTO_GENERATED | AUTO_REPLIED;
 
-/// The field names, as a header fetch asks for them.
-pub const FIELDS: [&str; 3] = ["List-Unsubscribe", "Precedence", "Auto-Submitted"];
+/// A bulk sending service's own header, on mail that may carry no list header: a bank's statement.
+pub const BULK_SENDER: u8 = 32;
 
-/// What a message's promoted headers say (`messages.unsubscribe_offered`
-/// and `messages.automation`).
+/// Generic headers, not one provider's: a feedback loop's id and the senders' certification.
+pub const BULK_SENDER_FIELDS: [&str; 2] = ["Feedback-ID", "X-CSA-Complaints"];
+
+pub const FIELDS: [&str; 5] = [
+    "List-Unsubscribe",
+    "Precedence",
+    "Auto-Submitted",
+    BULK_SENDER_FIELDS[0],
+    BULK_SENDER_FIELDS[1],
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct PromotedHeaders {
-    /// Whether it carries a `List-Unsubscribe` with something in it.
     pub unsubscribe_offered: bool,
-    /// The [`PRECEDENCE_BULK`] ... [`AUTO_REPLIED`] bits its `Precedence`
-    /// and `Auto-Submitted` fields set.
     pub automation: u8,
 }
 
@@ -71,18 +62,27 @@ impl PromotedHeaders {
                 _ => AUTO_GENERATED,
             }
         });
+        let bulk_sender = BULK_SENDER_FIELDS.iter().map(|name| {
+            if headers
+                .get_all(name)
+                .iter()
+                .any(|value| !value.trim().is_empty())
+            {
+                BULK_SENDER
+            } else {
+                0
+            }
+        });
         Self {
             unsubscribe_offered,
             automation: precedence
                 .chain(auto_submitted)
+                .chain(bulk_sender)
                 .fold(0, |bits, bit| bits | bit),
         }
     }
 }
 
-/// A field's keyword: its first word, lowercased, with any comment or
-/// parameter after it dropped (`list (mailing list)`,
-/// `auto-replied; owner-email=...`).
 fn keyword(value: &str) -> String {
     value
         .trim()
@@ -104,9 +104,17 @@ mod tests {
         PromotedHeaders::from_headers(&headers)
     }
 
-    /// Header fields, and what they should read as: whether an unsubscribe
-    /// is offered, and the automation bits.
     type Case<'a> = (&'a [(&'a str, &'a str)], bool, u8);
+
+    #[test]
+    fn every_field_read_is_fetched() {
+        for name in ["List-Unsubscribe", "Precedence", "Auto-Submitted"]
+            .into_iter()
+            .chain(BULK_SENDER_FIELDS)
+        {
+            assert!(FIELDS.contains(&name), "{name} is read but never fetched");
+        }
+    }
 
     #[test]
     fn each_field_sets_what_it_says_and_nothing_else() {
@@ -133,8 +141,6 @@ mod tests {
                 AUTO_GENERATED,
             ),
             (&[("Auto-Submitted", "no")], false, 0),
-            // Spelled as senders spell them: any case, padded, with a
-            // comment or a parameter after the keyword.
             (&[("PRECEDENCE", "  Bulk ")], false, PRECEDENCE_BULK),
             (
                 &[("precedence", "list (mailing list)")],
@@ -149,9 +155,18 @@ mod tests {
                 false,
                 AUTO_REPLIED,
             ),
-            // A precedence no list uses is no signal, and an empty
-            // `List-Unsubscribe` offers nothing to act on.
             (&[("Precedence", "first-class")], false, 0),
+            (
+                &[("Feedback-ID", "4821:statements:bank.example:sender")],
+                false,
+                BULK_SENDER,
+            ),
+            (
+                &[("X-CSA-Complaints", "csa-complaints@example.net")],
+                false,
+                BULK_SENDER,
+            ),
+            (&[("Feedback-ID", "  ")], false, 0),
             (&[("List-Unsubscribe", "   ")], false, 0),
             (
                 &[
@@ -222,8 +237,6 @@ mod tests {
 
     #[test]
     fn the_precedence_and_auto_submitted_bits_do_not_overlap() {
-        // `is:bulk` reads one set and `is:automated` the other, so a bit in
-        // both would make one operator answer for the other's header.
         assert_eq!(PRECEDENCE & AUTO_SUBMITTED, 0);
         assert_eq!(PRECEDENCE | AUTO_SUBMITTED, 31, "five bits, each one field");
     }

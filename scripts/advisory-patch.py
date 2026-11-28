@@ -46,8 +46,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Advisory kinds a newer release fixes. `unmaintained` and `yanked` are not
-# fixed by updating to a patched version; they are left to the audit.
+# `unmaintained` and `yanked` are not fixed by a patched version; they are left to the audit.
 FIXABLE = {"vulnerability", "unsound"}
 
 Version = tuple[int, int, int]
@@ -253,7 +252,6 @@ def main() -> int:
         within, anywhere = lowest_reachable(adv)
         head = f"  {adv.id}  {adv.crate} {adv.version}: "
         if status == "patched within semver" and key in still:
-            # The update did not take: a requirement stops it.
             status = "needs a manifest bump"
         if status == "patched within semver":
             print(head + "patched within semver")

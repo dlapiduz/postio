@@ -35,16 +35,11 @@ import tempfile
 import time
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
 import prereq  # noqa: E402
 
-# Linux-only, declared rather than skipped (#1151): this stands down
-# with a sentence and exit 77, which `run-self-tests.sh` counts and
-# names, so the macOS run does not quietly claim to have covered it.
 prereq.only_on("linux", reason=(
     "the runner starts mutter on a Wayland socket; neither exists on this platform, and the macOS cargo runner takes a different path entirely"
 ))
@@ -172,15 +167,8 @@ def main() -> int:
                 "mutter was never launched for a test binary",
             )
 
-            # ── the watchdog waits on the child, not on a clock (#272) ─────
-            #
-            # The WebKit-touching suites run under a watchdog. It used to
-            # poll the child with `sleep 1`, so every one of them ended on
-            # the next whole second: a binary that took 0.1 s cost 1 s, and
-            # nextest runs `focus_suite` one process per test.
-            #
-            # The compositor is already up from the cases above, so what is
-            # timed here is the runner's own overhead and not mutter's start.
+            # The watchdog waits on the child, not a clock (#272): a `sleep 1` poll ended every
+            # watched binary on the next whole second.
             watched = stub_dir / "focus_suite-0123456789abcdef"
             watched.write_text(
                 "#!/usr/bin/env bash\nsleep 0.1\nexit \"${STUB_EXIT:-0}\"\n"
@@ -204,7 +192,6 @@ def main() -> int:
                 f"exit {result.returncode}, expected 3",
             )
 
-            # A hang still dies at the deadline, says so, and exits 124.
             hung = stub_dir / "e2e-0123456789abcdef"
             hung.write_text("#!/usr/bin/env bash\nsleep 30 &\nwait\n")
             hung.chmod(0o755)
@@ -233,13 +220,6 @@ def main() -> int:
                 f"WAYLAND_DISPLAY was {out!r}",
             )
 
-            # ── one compositor per nextest slot (#2027) ───────────────────
-            #
-            # One headless mutter served every parallel GTK case and ran at
-            # 85% of a core for a whole focus_suite run: cases queued for
-            # their frames, the machine sat 61% busy, and the cases that
-            # timed out in the queue were the suite's flakes. A slot runs one
-            # case at a time, so a compositor per slot is never shared.
             out = run(test_bin, stub_dir, runtime_dir, POSTIO_TEST_DISPLAY="", NEXTEST_TEST_GLOBAL_SLOT="3")
             case(
                 "a nextest slot gets a compositor of its own",
@@ -253,12 +233,6 @@ def main() -> int:
                 f"WAYLAND_DISPLAY was {out!r}, expected the pinned {DISPLAY!r}",
             )
 
-            # ── the shader cache outlives a case (#2027) ──────────────────
-            #
-            # focus_suite re-executes itself with a fresh XDG_CACHE_HOME, so
-            # Mesa's shader cache, which lives there by default, started
-            # empty in every case and every case compiled the renderer's
-            # shaders again.
             shader_bin = stub_dir / "shaders-0123456789abcdef"
             shader_bin.write_text(SHADER_CACHE_STUB)
             shader_bin.chmod(0o755)
@@ -275,18 +249,6 @@ def main() -> int:
                 f"MESA_SHADER_CACHE_DIR was {out!r}",
             )
 
-            # ── a socket with nothing behind it (#794) ────────────────────
-            #
-            # mutter can bind the socket and then exit -- on a machine with no
-            # DRM device, which is every GitHub-hosted runner. `-S` still
-            # passes, and committing to that display is worse than never
-            # starting one: the runner unsets DISPLAY and forces
-            # GDK_BACKEND=wayland, so the *working* fallback display is thrown
-            # away too and every GTK test skips itself for want of a display
-            # it actually had. #781 spent a day on that symptom.
-            #
-            # A fresh runtime dir, so the marker and socket from the cases
-            # above cannot decide this one.
             stale_runtime = base / "stale"
             stale_runtime.mkdir()
             stale = stale_runtime / DISPLAY
@@ -307,16 +269,6 @@ def main() -> int:
                 "compositor to fail to start",
             )
 
-            # ── the marker is a shortcut, not a verdict (#830) ─────────────
-            #
-            # It saves the next twenty binaries from re-learning that the
-            # compositor will not start. But `XDG_RUNTIME_DIR` outlives a
-            # test run, and nothing ever removed this file -- so one
-            # transient failure silently demoted every later run on that
-            # machine to the session's display for the rest of the login
-            # session, throwing test windows at whoever was at the keyboard.
-            # Observed after the nested compositor exited nine hours into a
-            # run. It has to go stale.
             fresh_runtime = base / "fresh-marker"
             fresh_runtime.mkdir()
             (fresh_runtime / f"{DISPLAY}.unavailable").touch()
@@ -350,13 +302,6 @@ def main() -> int:
                 "the marker survived, so it will go stale again next run",
             )
 
-            # ── every fallback says which display it chose (#830) ──────────
-            #
-            # The path below announces itself; the one where the socket never
-            # appears at all did not, so a CI log grepped for `postio runner:`
-            # came back empty whether mutter had worked perfectly or never
-            # started. Two opposite outcomes, one silence, and no way to tell
-            # from the log which configuration the suites had actually proved.
             mute_stubs = base / "mute-stubs"
             mute_stubs.mkdir()
             (mute_stubs / "mutter").write_text("#!/usr/bin/env bash\nexit 0\n")

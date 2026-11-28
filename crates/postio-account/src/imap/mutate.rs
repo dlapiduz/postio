@@ -1,30 +1,7 @@
-//! The commands that change a server: `STORE`, `MOVE`/`COPY`, `APPEND`,
-//! `EXPUNGE`.
-//!
-//! # Every one of them is capability-dependent
-//!
-//! None of these has a single spelling that works everywhere. `MOVE` is an
-//! extension; so is the `UID EXPUNGE` that keeps an expunge to the messages
-//! *we* deleted, and so is the `COPYUID`/`APPENDUID` that says where a
-//! message landed. The choice is made once, in [`Dispatch`], and comes out as
-//! a value this module matches on — so the cost of a missing extension is
-//! written down where somebody will read it rather than discovered when a
-//! user reports that archiving lost a message.
-//!
-//! # What they do not report
-//!
-//! `EXPUNGE` returns an empty list, always. The wire carries *sequence
-//! numbers* (`* 3 EXPUNGE`), and turning one into a UID needs a
-//! sequence-to-UID map this layer deliberately does not keep — the mailbox
-//! is paged over SQLite, not held in memory. Guessing would be the same class
-//! of mistake as acting on a stale `UIDVALIDITY`: a plausible number that
-//! names the wrong message. The caller resyncs, which it must do after an
-//! expunge in any case.
-//!
-//! Likewise a destination UID is reported only when the server actually sent
-//! `COPYUID`/`APPENDUID`. Without UIDPLUS the answer is "unknown", and
-//! finding it means searching for the message — the caller's decision to
-//! make, not one to fake here.
+//! Each command depends on a capability, chosen once in `Dispatch`. `EXPUNGE` always returns an
+//! empty list: the wire carries sequence numbers and this layer keeps no sequence-to-UID map, since
+//! a plausible wrong id is worse than none; callers resync.
+//! A destination UID is reported only when the server sent `COPYUID`/`APPENDUID`.
 
 use chrono::{SubsecRound, Utc};
 use io_imap::client::ImapClientAsync;
@@ -48,11 +25,8 @@ use super::fetch::flag_from_wire;
 use super::mailboxes::mailbox_argument;
 use super::{ConnectionPool, Dispatch, ExpungeStrategy, ImapSession, MoveStrategy, Priority};
 
-/// Changes flags on `uids` and reports what they are now.
-///
-/// Last-writer-wins: RFC 7162's conditional `STORE (UNCHANGEDSINCE n)` is not
-/// reachable through `io-imap` (ADR 0001, Q2 gap 1), so a flag lost to a race
-/// comes back on the next resync rather than being rejected here.
+/// Last-writer-wins: conditional `STORE (UNCHANGEDSINCE n)` is not reachable through `io-imap` (ADR
+/// 0001 Q2 gap 1), so a flag lost to a race returns on the next resync.
 pub async fn store_flags(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -75,12 +49,8 @@ pub async fn store_flags(
     .await
 }
 
-/// Moves messages between mailboxes.
-///
-/// With [`MoveStrategy::CopyThenDelete`] this is three commands rather than
-/// one and is not atomic: a failure between the copy and the store leaves the
-/// message in both mailboxes. That is visible in the return value only as a
-/// missing mapping, so the caller's resync is what settles it.
+/// `CopyThenDelete` is three commands and not atomic: a failure between copy and store leaves the
+/// message in both mailboxes; the caller's resync settles it.
 pub async fn move_messages(
     pool: &ConnectionPool,
     from: &str,
@@ -130,7 +100,6 @@ pub async fn move_messages(
     .await
 }
 
-/// Copies messages between mailboxes, leaving the source intact.
 pub async fn copy_messages(
     pool: &ConnectionPool,
     from: &str,
@@ -153,15 +122,8 @@ pub async fn copy_messages(
     .await
 }
 
-/// Expunges messages marked `\Deleted`.
-///
-/// With `uids`, only those are considered — and on a server without UIDPLUS
-/// that cannot be honoured, so nothing is sent at all
-/// ([`ExpungeStrategy::Defer`]). A bare `EXPUNGE` would also destroy whatever
-/// *another* client marked in the same mailbox, and losing somebody else's
-/// mail is worse than leaving ours in place.
-///
-/// Always returns an empty list; see the [module docs](self).
+/// With `uids`, on a server without UIDPLUS nothing is sent (`Defer`): a bare `EXPUNGE` would
+/// destroy another client's marked mail. Always returns an empty list.
 pub async fn expunge(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -202,10 +164,6 @@ pub async fn expunge(
     .await
 }
 
-/// Uploads a message into a mailbox.
-///
-/// Returns where it landed when the server said so with `APPENDUID`, and
-/// `None` otherwise.
 pub async fn append(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -244,17 +202,8 @@ pub async fn append(
     .await
 }
 
-// ---------------------------------------------------------------------------
-// Shared bodies
-// ---------------------------------------------------------------------------
-
-/// `UID SEARCH HEADER Message-ID <...>`: the one message carrying
-/// `message_id`, or `None`.
-///
-/// The cross-account saga's confirmation fallback (#188): where APPENDUID
-/// is not spoken, presence in the target mailbox is proven by this search.
-/// The newest match is returned when a server reports several — any copy
-/// proves arrival.
+/// The cross-account saga's confirmation fallback (#188). The newest match wins when several: any
+/// copy proves arrival.
 pub async fn find_by_message_id(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -292,7 +241,6 @@ pub async fn find_by_message_id(
     .await
 }
 
-/// `UID STORE` against the already-selected mailbox.
 async fn store(
     session: &mut ImapSession,
     live: UidValidity,
@@ -318,7 +266,6 @@ async fn store(
         .collect())
 }
 
-/// `UID COPY` against the already-selected mailbox.
 async fn copy(
     session: &mut ImapSession,
     uids: &UidSet,
@@ -333,17 +280,9 @@ async fn copy(
     Ok(mapping_from(copied))
 }
 
-/// A `COPYUID`/`MOVEUID` triple, paired up.
-///
-/// The two sequence sets are positionally matched per RFC 4315 §3; io-imap
-/// pairs them and gives no code at all when their sizes differ, so a
-/// mismatched pairing is never invented.
-///
-/// A `COPYUID` whose UIDVALIDITY is `0` (RFC 4315 forbids it; Mailo sends
-/// it) yields nothing either. io-imap reads its sets, but a `0` names no
-/// generation, and an id built on it is an id nothing can find again: the
-/// caller falls back to looking the copies up, as for a server with no
-/// UIDPLUS.
+/// The two sequence sets are positionally matched (RFC 4315 §3); io-imap gives no code when their
+/// sizes differ. A UIDVALIDITY of `0` (Mailo sends it) yields nothing: an id built on it cannot be
+/// found again, so the caller looks the copies up.
 fn mapping_from(copied: Option<ImapCopyUid>) -> Vec<UidMapping> {
     let Some(copied) = copied.filter(|copied| copied.uid_validity != 0) else {
         return Vec::new();
@@ -361,11 +300,7 @@ fn mapping_from(copied: Option<ImapCopyUid>) -> Vec<UidMapping> {
         .collect()
 }
 
-/// One `FETCH` echo from a `STORE`, as a [`FlagUpdate`].
-///
-/// An echo without a UID is dropped: RFC 4315 requires `UID STORE` to include
-/// one, and an update that cannot name its message is not one worth handing
-/// to a caller that will apply it to something.
+/// An echo without a UID is dropped: it cannot name its message.
 fn update_from(
     live: UidValidity,
     items: Vec<MessageDataItem<'static>>,
@@ -415,11 +350,7 @@ fn wire_flags(flags: &FlagSet) -> BackendResult<Vec<WireFlag<'static>>> {
         .collect()
 }
 
-/// `INTERNALDATE` on the wire.
-///
-/// IMAP carries whole seconds, so a sub-second timestamp is truncated rather
-/// than refused: losing a fraction of a second is not worth failing an upload
-/// the user asked for.
+/// IMAP carries whole seconds, so a sub-second timestamp is truncated rather than refused.
 fn wire_date(at: chrono::DateTime<Utc>) -> BackendResult<WireDateTime> {
     let at = at.trunc_subsecs(0).fixed_offset();
     WireDateTime::try_from(at).map_err(|error| BackendError::Protocol {
@@ -427,8 +358,6 @@ fn wire_date(at: chrono::DateTime<Utc>) -> BackendResult<WireDateTime> {
     })
 }
 
-/// Kept for the one thing a server cannot be asked to demonstrate: what
-/// happens to a sequence number nobody sent.
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU32;
@@ -441,8 +370,6 @@ mod tests {
         update_from(UidValidity::new(1), items, true)
     }
 
-    /// RFC 3501 §2.3.2: `\Recent` is the server's to set; a client that names
-    /// it in `STORE` or `APPEND` is refused with `BAD`.
     #[test]
     fn recent_is_never_put_on_the_wire() {
         let flags = FlagSet::from_iter([Flag::Seen, Flag::Recent]);
@@ -529,8 +456,6 @@ mod tests {
 
     #[test]
     fn a_copyuid_naming_generation_zero_is_no_mapping() {
-        // RFC 4315 forbids it and Mailo sends it. An id built on a 0 is one
-        // nothing can find again.
         let mapping = mapping_from(Some(ImapCopyUid {
             uid_validity: 0,
             source: vec![uids(1, 1)],

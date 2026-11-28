@@ -4,8 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// Agent access in Settings (#1832): the pane shows what `[mcp]` shares and
-/// revoking goes back through the boundary, leaving the rest of the file.
 @MainActor
 @Suite struct SettingsAgentsTests {
     private static let shared = """
@@ -75,7 +73,6 @@ import Testing
 
     @Test func revokingReadsTheFileAgainSoAnEditFromElsewhereSurvives() throws {
         let (store, path) = try store("fresh", Self.shared)
-        // The person edits the file by hand while the window is open.
         try (Self.shared + "\n[sync]\nidle = true\n").write(
             toFile: path, atomically: true, encoding: .utf8)
         store.revokeAgent("grace@example.com")

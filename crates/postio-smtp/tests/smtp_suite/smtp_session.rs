@@ -1,9 +1,3 @@
-//! Opening an SMTP session and sending one message: `EHLO`, `AUTH PLAIN`,
-//! the mail transaction, and how a rejection at each step is classified.
-//!
-//! `io-smtp` is sans-I/O, so the whole exchange runs here against a recorded
-//! transcript with no socket involved.
-
 use postio_model::TransportSecurity;
 use postio_smtp::cancel::CancelToken;
 use postio_smtp::error::SmtpError;
@@ -34,11 +28,8 @@ fn happy_script() -> SmtpScript {
         .on("DATA", "354 start mail input")
 }
 
-/// The happy-path script with one step replying `reply` instead.
-///
-/// `SmtpScript::on` matches the first registered rule that fits, so the
-/// override is registered before the happy-path rule for the same keyword
-/// rather than appended after it.
+/// Registered before the happy-path rule for the same keyword, since `SmtpScript::on` matches the
+/// first rule that fits.
 fn script_overriding(keyword: &str, reply: &str) -> SmtpScript {
     SmtpScript::new("220 mail.example.com ESMTP ready")
         .on(keyword, reply)
@@ -60,10 +51,6 @@ async fn open(script: SmtpScript) -> (SmtpSession, ScriptedConnector) {
         .expect("the scripted handshake");
     (session, connector)
 }
-
-// ---------------------------------------------------------------------------
-// The happy path
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_message_is_sent_through_mail_rcpt_and_data() {
@@ -125,10 +112,6 @@ async fn quit_closes_the_session_politely() {
     assert!(connector.log().commands().iter().any(|c| c == "QUIT"));
 }
 
-// ---------------------------------------------------------------------------
-// STARTTLS on the submission port
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn starttls_reissues_ehlo_over_the_upgraded_connection() {
     let script = SmtpScript::new("220 mail.example.com ESMTP ready")
@@ -143,9 +126,6 @@ async fn starttls_reissues_ehlo_over_the_upgraded_connection() {
         "ada@example.com",
     );
 
-    // The post-upgrade EHLO capabilities carry no working AUTH mechanism in
-    // this transcript, so the session still fails to open overall — but not
-    // before proving the upgrade and the second EHLO happened.
     SmtpSession::open(&settings, &password(), &connector)
         .await
         .unwrap_err();
@@ -156,10 +136,6 @@ async fn starttls_reissues_ehlo_over_the_upgraded_connection() {
     assert!(commands.iter().any(|c| c == "STARTTLS"));
     assert_eq!(connector.log().upgrades, vec!["smtp.example.com"]);
 }
-
-// ---------------------------------------------------------------------------
-// Authentication
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_rejected_password_is_an_authentication_failure_not_a_retry() {
@@ -191,10 +167,6 @@ async fn a_temporary_auth_failure_is_transient_not_a_wrong_password() {
     assert!(error.is_transient());
     assert!(!error.is_authentication_failure());
 }
-
-// ---------------------------------------------------------------------------
-// Sender and recipient rejection
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_permanently_rejected_sender_is_distinguishable_from_a_recipient_problem() {
@@ -237,8 +209,6 @@ async fn a_permanently_rejected_recipient_names_the_recipient() {
 
 #[tokio::test]
 async fn a_temporarily_unavailable_recipient_is_transient_not_a_permanent_rejection() {
-    // 450 is "mailbox busy, try later" — not the same as "this address will
-    // never work," and must not be reported as a rejection to the user.
     let script = script_overriding("RCPT TO", "450 4.2.1 mailbox busy");
     let (mut session, _connector) = open(script).await;
 
@@ -255,10 +225,6 @@ async fn a_temporarily_unavailable_recipient_is_transient_not_a_permanent_reject
     assert!(error.is_transient());
     assert_eq!(error.rejected_recipient(), None);
 }
-
-// ---------------------------------------------------------------------------
-// The message body
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_rejected_message_body_is_distinguishable_from_a_rejected_recipient() {
@@ -296,10 +262,6 @@ async fn a_rate_limited_data_command_is_retried_with_backoff_not_dropped() {
 
     assert!(error.is_transient(), "a 4xx must be retried, not dropped");
 }
-
-// ---------------------------------------------------------------------------
-// Addresses and cancellation
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn an_address_that_could_inject_a_command_is_rejected_before_the_wire() {
@@ -371,16 +333,8 @@ async fn sending_to_no_recipients_is_a_configuration_error_not_a_bare_mail_from(
     );
 }
 
-// ---------------------------------------------------------------------------
-// Live server. Ignored by default; needs a real account.
-// ---------------------------------------------------------------------------
-
-/// Reads the live-test credentials, or skips.
-///
-/// `POSTIO_TEST_SMTP_USER` and `POSTIO_TEST_SMTP_PASSWORD` — for a provider
-/// that requires one, an app-specific password, the same one the live IMAP
-/// tests use since iCloud shares it across both protocols.
-/// `POSTIO_TEST_SMTP_HOST` overrides the default of iCloud's submission host.
+/// Needs `POSTIO_TEST_SMTP_USER` and `POSTIO_TEST_SMTP_PASSWORD` (an app-specific password for a
+/// provider requiring one); `POSTIO_TEST_SMTP_HOST` overrides iCloud's submission host.
 fn live_settings() -> Option<(ConnectionSettings, SecretString)> {
     let user = std::env::var("POSTIO_TEST_SMTP_USER").ok()?;
     let password = std::env::var("POSTIO_TEST_SMTP_PASSWORD").ok()?;
@@ -410,9 +364,6 @@ async fn live_server_sends_a_message_to_self() {
          This is postio-t98's live send-to-self test.\r\n"
     );
 
-    // This proves delivery was accepted, not that the sent copy landed in
-    // the Sent folder: that needs an IMAP APPEND, which this crate has no
-    // dependency to perform. Wiring the two together is postio-pzy's job.
     session
         .send_message(
             &address,
@@ -426,16 +377,8 @@ async fn live_server_sends_a_message_to_self() {
     session.quit().await.expect("quit");
 }
 
-// ---------------------------------------------------------------------------
-// Whether the payload may already have gone (ADR 0021)
-// ---------------------------------------------------------------------------
-
-/// The distinction `is_transient` cannot make and a send has to have.
-///
-/// A `4xx` is a *reply*: the server was still talking and did not accept the
-/// message, so the transaction ended in a refusal the client witnessed and
-/// the send is safely retryable. That it is also transient is a different
-/// fact about a different question.
+/// A `4xx` is a reply the client witnessed, so the send is safely retryable; that it is also
+/// transient is a different fact about a different question.
 #[tokio::test]
 async fn a_rate_limited_data_command_did_not_deliver_anything() {
     let script = script_overriding("DATA", "421 4.7.0 too many messages, slow down");
@@ -476,12 +419,6 @@ async fn a_rejected_recipient_did_not_deliver_anything_either() {
     assert!(!error.submission_is_indeterminate());
 }
 
-// ---------------------------------------------------------------------------
-// Where the payload begins — ADR 0021, #673
-// ---------------------------------------------------------------------------
-
-/// Sends `MESSAGE` over a connector that dies somewhere, and hands back the
-/// error and the connector so a test can also ask what actually went out.
 async fn send_over(connector: ScriptedConnector) -> (SmtpError, ScriptedConnector) {
     let mut session = SmtpSession::open(&settings(), &password(), &connector)
         .await
@@ -500,9 +437,8 @@ async fn send_over(connector: ScriptedConnector) -> (SmtpError, ScriptedConnecto
 
 #[tokio::test]
 async fn a_connection_lost_before_mail_from_submitted_nothing() {
-    // The safe half. Nothing of the message reached the server, so the send
-    // is an ordinary transient failure and the drainer should try it again --
-    // refusing to would strand a queued message on a connection hiccup.
+    // Nothing reached the server, so this is an ordinary transient failure the drainer should
+    // retry.
     let (error, connector) =
         send_over(ScriptedConnector::new(happy_script()).vanishing_at("MAIL FROM")).await;
 
@@ -521,10 +457,8 @@ async fn a_connection_lost_before_mail_from_submitted_nothing() {
 
 #[tokio::test]
 async fn the_data_command_itself_is_still_before_the_payload() {
-    // The sharp edge. `DATA` is a four-letter command that asks permission;
-    // the message goes out only after the server's `354`. A connection lost
-    // between the two has submitted nothing, and treating it as unknowable
-    // would strand every message that hit a hiccup at exactly that moment.
+    // A connection lost between `DATA` and the server's `354` has submitted nothing; treating it as
+    // unknowable would strand every message that hit a hiccup then.
     let (error, connector) =
         send_over(ScriptedConnector::new(happy_script()).vanishing_at("DATA")).await;
 
@@ -541,10 +475,8 @@ async fn the_data_command_itself_is_still_before_the_payload() {
 
 #[tokio::test]
 async fn a_connection_lost_once_the_payload_is_on_the_wire_is_unknowable() {
-    // The dangerous half, and the whole reason ADR 0021 exists: the reply to
-    // the terminating `.` is exactly what is missing, so "it never arrived"
-    // and "it arrived and the acknowledgement did not" look identical from
-    // here. A retry may deliver a second copy to somebody else's inbox.
+    // The reply to the terminating `.` is what is missing, so "never arrived" and "arrived,
+    // unacknowledged" look identical; a retry may deliver a second copy.
     let (error, connector) =
         send_over(ScriptedConnector::new(happy_script()).vanishing_after_the_payload()).await;
 
@@ -567,8 +499,6 @@ async fn a_connection_lost_once_the_payload_is_on_the_wire_is_unknowable() {
 
 #[tokio::test]
 async fn a_timeout_waiting_for_the_reply_to_the_terminator_is_unknowable_too() {
-    // A timeout and a close are different errors and the send path has to
-    // reach the same conclusion from both: the server may have taken it.
     let (error, _connector) = send_over(
         ScriptedConnector::new(happy_script())
             .timing_out_after_the_payload(std::time::Duration::from_secs(30)),
@@ -585,10 +515,8 @@ async fn a_timeout_waiting_for_the_reply_to_the_terminator_is_unknowable_too() {
 
 #[tokio::test]
 async fn a_message_the_server_refused_after_the_payload_is_not_unknowable() {
-    // The other side of the payload boundary. The bytes went out *and the
-    // server answered* -- with a refusal. It said what it did with the
-    // message, so there is nothing indeterminate about it and the queue may
-    // act on the refusal.
+    // The server answered with a refusal after the bytes went out: it said what it did with the
+    // message, so nothing is indeterminate.
     let script = happy_script().on_data_body("552 5.3.4 message too big");
     let (error, _connector) = send_over(ScriptedConnector::new(script)).await;
 
@@ -602,10 +530,6 @@ async fn a_message_the_server_refused_after_the_payload_is_not_unknowable() {
 
 #[test]
 fn a_transport_failure_on_its_own_says_nothing_about_the_payload() {
-    // The predicate is about *where* a failure happened, not which variant
-    // it is. Before #673 this was approximated by variant, which meant every
-    // dropped connection anywhere in the session was treated as though the
-    // message might have gone out.
     for error in [
         SmtpError::Disconnected {
             context: "EHLO".to_owned(),

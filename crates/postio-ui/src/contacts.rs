@@ -1,20 +1,16 @@
-//! The Contacts screen's rules, without a toolkit (specs/005-contacts).
-//!
-//! What a row says, what "show mail" searches, and which command means
-//! something on which kind of row -- decided here, where a test proves them
-//! in milliseconds, so the widget only draws the answers.
+//! The Contacts screen's rules without a toolkit: row wording, "show mail" queries, command
+//! applicability.
 
 use chrono::{DateTime, Local, Utc};
 use postio_core::CommandId;
 use postio_model::{Contact, ContactId, ContactListRow, ContactSource};
 
-/// The query "show mail" writes for a person: every address they own, in one
-/// `with:` field (research R6). Addresses, not the person, so a search pinned
-/// from it keeps meaning the addresses it named.
+/// One `with:` field over every address they own, so a pinned search keeps meaning the addresses it
+/// named.
 pub fn show_mail_query(addresses: &[String]) -> String {
     let value = addresses.join(",");
-    // Quoted only when the value could not survive being typed back in: the
-    // parser splits tokens on whitespace, and a quote inside would end it.
+    // Quoted only when the value could not survive being typed back: the parser splits on
+    // whitespace.
     if value.contains(char::is_whitespace) {
         format!("with:\"{}\"", value.replace('"', ""))
     } else {
@@ -22,8 +18,6 @@ pub fn show_mail_query(addresses: &[String]) -> String {
     }
 }
 
-/// The query `Return` on a group writes: `group:` and its name, quoted when
-/// the name has a space in it.
 pub fn group_mail_query(name: &str) -> String {
     if name.contains(char::is_whitespace) {
         format!("group:\"{}\"", name.replace('"', ""))
@@ -32,14 +26,10 @@ pub fn group_mail_query(name: &str) -> String {
     }
 }
 
-/// Whether a row carries the mark for a person the user made or imported
-/// (FR-005): the list distinguishes the address book from the mail.
 pub fn is_made(source: ContactSource) -> bool {
     !matches!(source, ContactSource::Mail)
 }
 
-/// The line under a person's name: how many addresses, and when they were
-/// last in touch -- `2 addresses · Thu`, `1 address`.
 pub fn secondary_line(row: &ContactListRow, now: DateTime<Local>) -> String {
     let count = match row.address_count {
         1 => "1 address".to_owned(),
@@ -51,51 +41,34 @@ pub fn secondary_line(row: &ContactListRow, now: DateTime<Local>) -> String {
     }
 }
 
-/// The kind of row the keyboard is on. The Contacts screen is one context,
-/// and a command acts on the focused row's kind (contracts/commands.md).
+/// The Contacts screen is one context; a command acts on the focused row's kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RowKind {
-    /// A person in the list.
     Person,
-    /// One of a person's addresses, in the detail.
     Address,
-    /// A group.
     Group,
-    /// A suggestion that two people may be one.
     Suggestion,
 }
 
-/// Why a command did nothing on the focused row: the one-line hint the
-/// screen shows instead of failing silently.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hint(pub &'static str);
 
-/// Whether `command` means something on a row of `kind`, and the hint to show
-/// when it does not.
 pub fn applies(command: CommandId, kind: RowKind) -> Result<(), Hint> {
     use CommandId as C;
     use RowKind as K;
     match (command, kind) {
-        // A suggestion is two people; showing mail or writing to it would
-        // have to guess which one.
+        // A suggestion is two people; mail or writing would have to guess which.
         (C::ContactShowMail | C::ContactCompose, K::Suggestion) => {
             Err(Hint("Choose one of the two people first"))
         }
-        // Everything else either names a person, an address or a group --
-        // each of which it means something on -- or is the screen's own.
         _ => Ok(()),
     }
 }
 
-/// When a person was last in touch, for a row: [`crate::row::timestamp`]'s
-/// words, or nothing for someone no mail has involved.
 fn last_in_touch(at: Option<DateTime<Utc>>, now: DateTime<Local>) -> Option<String> {
     at.map(|at| crate::row::timestamp(at, now))
 }
 
-/// One suggestion as its row reads: each person with their addresses and
-/// how often each was seen, then why they are offered -- the evidence the
-/// user decides on (FR-018).
 pub fn suggestion_line(suggestion: &postio_model::JoinSuggestion) -> String {
     let side = |person: &Contact| {
         let addresses: Vec<String> = person
@@ -121,7 +94,6 @@ pub fn suggestion_line(suggestion: &postio_model::JoinSuggestion) -> String {
     )
 }
 
-/// What an import did, as the one line the screen shows (FR-053, R9).
 pub fn import_summary_line(summary: &postio_model::card::ImportSummary) -> String {
     let people = |n: usize| if n == 1 { "person" } else { "people" };
     let mut done: Vec<String> = Vec::new();
@@ -168,31 +140,24 @@ pub fn import_summary_line(summary: &postio_model::card::ImportSummary) -> Strin
     line
 }
 
-/// What joining these people offers to call them (specs/005-contacts
-/// FR-012/FR-013): the names the user chose, then what the mail called them,
-/// newest first and each once -- the first preselected, so `Return` accepts
-/// it -- and who survives the join.
+/// The names a join offers (chosen first, then mail's, newest first, each once), the first
+/// preselected, and who survives the join.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinChoices {
-    /// The names on offer, the preselected one first. Never empty.
     pub names: Vec<String>,
-    /// The organisations the people carry, each once. More than one is a
-    /// conflict the user has to settle: nothing they entered is dropped
-    /// without their choice.
+    /// Organisations carried, each once; more than one is a conflict the user settles, so nothing
+    /// is dropped unchosen.
     pub organizations: Vec<String>,
-    /// Who the others are joined into: whoever the preselected name came
-    /// from.
     pub into: ContactId,
 }
 
 impl JoinChoices {
-    /// Whether the join has to ask which organisation to keep.
     pub fn organization_conflict(&self) -> bool {
         self.organizations.len() > 1
     }
 }
 
-/// See [`JoinChoices`]. `people` must not be empty.
+/// `people` must not be empty.
 pub fn join_name_choices(people: &[Contact]) -> JoinChoices {
     let mut newest: Vec<&Contact> = people.iter().collect();
     newest.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at).then(a.id.cmp(&b.id)));
@@ -352,79 +317,81 @@ mod tests {
     }
 }
 
-/// The Contacts list's paging: which pages are resident, which are on their
-/// way, and which generation of the list a delivered page belongs to.
-///
-/// The message list's [`crate::list::ListWindow`] does this for messages, and
-/// carries message-only meaning with it -- threads, the aim a verb takes --
-/// so the contacts list has this smaller window of its own rather than a
-/// generic one bent to fit (specs/005-contacts research R5, as revised).
-/// Like that one, it owns the rows, so what the list holds is bounded by
-/// [`crate::list::CACHE_PAGES`] pages however long the list is.
+/// The Contacts list's paging window; owns the rows, bounded by `crate::list::CACHE_PAGES`.
 #[derive(Debug, Default)]
 pub struct ContactsWindow {
     generation: u64,
     total: u32,
     pages: std::collections::HashMap<u32, Vec<ContactListRow>>,
-    /// Least-recently-used first.
+    stale: std::collections::HashMap<u32, Vec<ContactListRow>>,
     order: std::collections::VecDeque<u32>,
     pending: std::collections::HashSet<u32>,
 }
 
-/// What one position answers with.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Slot<'a> {
-    /// The row is here.
     Row(&'a ContactListRow),
-    /// Not yet; `request` is the page to ask for, or `None` when it has been
-    /// asked for already.
+    /// Not yet; `request` is the page to ask for, or `None` if it was already asked.
     Loading {
-        /// The page to request, the first time it is missed.
         request: Option<u32>,
     },
 }
 
-/// What a delivery changed.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Delivered {
-    /// For an older generation of the list; dropped.
     Stale,
-    /// These positions now have rows, and the list is `total` long.
     Filled {
-        /// The positions the page covers.
         positions: std::ops::Range<u32>,
-        /// Whether the length moved, which a view must be told separately.
         total_changed: bool,
-        /// Pages dropped to keep the bound; objects a view holds for their
-        /// positions stand for nothing now.
+        /// Pages dropped to keep the bound; views holding their positions must forget them.
         evicted: Vec<u32>,
     },
 }
 
 impl ContactsWindow {
-    /// Starts the list over at `total` rows: a new view, a new filter, a
-    /// change to the people. Returns the new generation, which a request
-    /// carries so its answer can be told from one for the list as it was.
+    /// Starts the list over at `total` rows; returns the new generation, which requests carry so
+    /// stale answers can be told apart.
     pub fn reset(&mut self, total: u32) -> u64 {
+        let generation = self.renew(total);
+        self.stale.clear();
+        generation
+    }
+
+    /// As `reset`, but `drawn` gives each page's old rows until the page is read again.
+    pub fn renew(&mut self, total: u32) -> u64 {
         self.generation += 1;
         self.total = total;
-        self.pages.clear();
+        self.stale.extend(self.pages.drain());
         self.order.clear();
         self.pending.clear();
         self.generation
     }
 
-    /// How long the list is.
+    pub fn renewing(&self) -> Vec<u32> {
+        let mut pages: Vec<u32> = self.stale.keys().copied().collect();
+        pages.sort_unstable();
+        pages
+    }
+
+    pub fn drawn(&self, index: u32) -> Option<&ContactListRow> {
+        if index >= self.total {
+            return None;
+        }
+        self.peek(index).or_else(|| {
+            self.stale
+                .get(&(index / crate::list::PAGE_SIZE))
+                .and_then(|rows| rows.get((index % crate::list::PAGE_SIZE) as usize))
+        })
+    }
+
     pub fn total(&self) -> u32 {
         self.total
     }
 
-    /// The generation requests are being made for.
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// What position `index` holds.
     pub fn row_at(&mut self, index: u32) -> Slot<'_> {
         let page = index / crate::list::PAGE_SIZE;
         if self.pages.contains_key(&page) {
@@ -432,8 +399,6 @@ impl ContactsWindow {
             let offset = (index % crate::list::PAGE_SIZE) as usize;
             return match self.pages.get(&page).and_then(|rows| rows.get(offset)) {
                 Some(row) => Slot::Row(row),
-                // A short last page: the position is past what the store
-                // holds now, and the next delivery will say so.
                 None => Slot::Loading { request: None },
             };
         }
@@ -446,7 +411,6 @@ impl ContactsWindow {
         }
     }
 
-    /// A page arrived.
     pub fn deliver(
         &mut self,
         generation: u64,
@@ -458,6 +422,7 @@ impl ContactsWindow {
             return Delivered::Stale;
         }
         self.pending.remove(&page);
+        self.stale.remove(&page);
         let start = page * crate::list::PAGE_SIZE;
         let positions = start..start + rows.len() as u32;
         self.pages.insert(page, rows);
@@ -478,27 +443,23 @@ impl ContactsWindow {
         }
     }
 
-    /// Gives up on a page whose read failed, so the next miss asks again.
     pub fn abandon(&mut self, generation: u64, page: u32) {
         if generation == self.generation {
             self.pending.remove(&page);
         }
     }
 
-    /// How many rows are held, for the bound this exists to keep.
     pub fn resident_rows(&self) -> usize {
         self.pages.values().map(Vec::len).sum()
     }
 
-    /// The row at `index` if its page is resident, without touching the
-    /// bound's order or asking for anything.
+    /// Does not touch the LRU order or request anything.
     pub fn peek(&self, index: u32) -> Option<&ContactListRow> {
         self.pages
             .get(&(index / crate::list::PAGE_SIZE))
             .and_then(|rows| rows.get((index % crate::list::PAGE_SIZE) as usize))
     }
 
-    /// Where a person sits, if their page is resident.
     pub fn position_of(&self, id: postio_model::ContactId) -> Option<u32> {
         self.pages.iter().find_map(|(page, rows)| {
             rows.iter()
@@ -507,7 +468,6 @@ impl ContactsWindow {
         })
     }
 
-    /// Marks `page` most recently used.
     fn touch(&mut self, page: u32) {
         self.order.retain(|held| *held != page);
         self.order.push_back(page);
@@ -654,6 +614,28 @@ mod window_tests {
             "the first page was evicted, and is asked for again"
         );
     }
+
+    #[test]
+    fn a_renewed_window_draws_its_old_rows_until_each_page_lands() {
+        let mut window = ContactsWindow::default();
+        let generation = window.reset(120);
+        let _ = window.row_at(0);
+        let _ = window.deliver(generation, 0, page(0, PAGE_SIZE), 120);
+        let renewed = window.renew(119);
+        assert_eq!(window.peek(0), None, "the page is read again");
+        assert_eq!(
+            window.drawn(0).map(|row| row.name.as_str()),
+            Some("Person 0"),
+            "and drawn as it was meanwhile"
+        );
+        assert_eq!(window.row_at(0), Slot::Loading { request: Some(0) });
+        let mut fresh = page(0, PAGE_SIZE);
+        fresh[0].name = "Merged".to_owned();
+        let _ = window.deliver(renewed, 0, fresh, 119);
+        assert_eq!(window.drawn(0).map(|row| row.name.as_str()), Some("Merged"));
+        window.reset(3);
+        assert_eq!(window.drawn(0), None, "a reset draws nothing old");
+    }
 }
 
 #[cfg(test)]
@@ -725,8 +707,6 @@ mod join_tests {
 
     #[test]
     fn a_nameless_pair_is_still_offered_a_name() {
-        // Every join ends with a name (clarification): an address is the
-        // last resort, never an empty choice.
         let choices = join_name_choices(&[
             person(1, None, None, None, 1),
             person(2, None, None, None, 2),

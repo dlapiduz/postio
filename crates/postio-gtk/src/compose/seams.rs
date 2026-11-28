@@ -1,15 +1,6 @@
-//! The composer's seams, answered through Focus's client (ADR 0041).
-//!
-//! Most of these are the shared seams, answered by the one implementation,
-//! `postio_widgets::present::compose` (`shared` below; specs/007-postio-focus
-//! T022). What is Focus's own is its
-//! dialog's chrome: [`resume`]'s and [`autosave`]'s notes go to the frame's
-//! subtitle rather than a toast or a status line, and [`reply_source`]
-//! additionally reads the thread's labels and draws them (R15), which
-//! [`label_names`] fills in the names of when a resumed draft opens knowing
-//! only their ids. A composer's seam is one slot, not a signal several
-//! listeners share, so neither `reply_source` nor `label_names` can be the
-//! shared, plainer version -- see `present::compose`'s own module doc.
+//! The composer's seams, answered through Focus's client (ADR 0041). Most are the shared ones
+//! (`shared`); Focus's own send notes to the frame's subtitle. A composer seam is one slot, not a
+//! signal, so `reply_source` and `label_names` cannot be the plainer shared version.
 
 use std::rc::Rc;
 
@@ -22,31 +13,19 @@ use postio_widgets::present::compose as shared;
 
 use super::frame::Frame;
 
-/// Which message `r`, `a` and `f` answer: the row the cursor is on.
 pub type Current = Rc<dyn Fn() -> Option<MessageId>>;
 
-/// Open the draft behind a Drafts row for editing.
 pub type Resume = shared::Resume;
 
-/// Open a thread's unsent reply by its draft's id.
 pub type ResumeDraft = shared::ResumeDraft;
 
-/// What the frame's subtitle says once opening a queued draft has cancelled
-/// its send (#433).
 const SEND_CANCELLED: &str = "Send cancelled \u{2014} you're editing this draft again";
 
-/// What a send says to the person once it is queued: a sentence and what
-/// Undo does, in the window's toast.
 pub type Say = Rc<dyn Fn(&str, Rc<dyn Fn()>)>;
 
-/// What the toast says of a send that waits in the Outbox: now, or at a
-/// time the person chose.
 const QUEUED: &str = "Message queued to send";
 const SCHEDULED: &str = "Send scheduled";
 
-/// Answer every seam of `composer` through `client`, for `account`; the
-/// answer is how a Drafts row opens its draft here. `say` is how a queued
-/// send tells the person, with an Undo that takes it back.
 pub fn wire(
     composer: &Composer,
     frame: &Rc<Frame>,
@@ -60,9 +39,6 @@ pub fn wire(
     let identities_client = client.clone();
     glib::spawn_future_local(async move {
         if let Some(composer) = identities_composer.upgrade() {
-            // Focus has no conversation pane and marks nothing from the
-            // account row's own use of it, so the account this answers with goes
-            // nowhere else.
             // POSTIO-GLIB-SAFE: `install_identities` awaits one client call,
             // a oneshot receive; the host answers on its own runtime.
             shared::install_identities(&composer, &identities_client, account).await;
@@ -88,9 +64,7 @@ pub fn wire(
     resume(composer, client, last_id, frame)
 }
 
-/// A send, once queued, is said in a toast that offers Undo for as long as
-/// the toast stays: Undo takes the send off the queue and puts the draft
-/// back in the composer, as opening it from the Outbox does (#1752).
+/// Undo takes the send off the queue and puts the draft back in the composer (#1752).
 fn queued(
     composer: &Composer,
     frame: &Rc<Frame>,
@@ -131,8 +105,6 @@ fn queued(
     })
 }
 
-/// Autosave, with the frame's "Draft saved locally HH:MM" subtitle stamped from
-/// [`shared::install_autosave`]'s own hook.
 fn autosave(
     composer: &Composer,
     frame: &Rc<Frame>,
@@ -147,10 +119,6 @@ fn autosave(
     shared::install_autosave(composer, client, Some(on_saved))
 }
 
-/// A draft left in Drafts -- by Focus or by another client -- opens in the
-/// composer for editing (US3 scenario 3, US11 scenario 3), through
-/// [`shared::install_resume`]; the note it hands back becomes the frame's
-/// subtitle rather than a toast or status line.
 fn resume(
     composer: &Composer,
     client: &Client,
@@ -180,9 +148,8 @@ fn resume(
     )
 }
 
-/// `r`, `a` and `f` answer the row the cursor is on. A reply starts with its
-/// conversation's labels, marked as the thread's (FR-053, screen 06); a
-/// forward starts a conversation of its own, and none.
+/// A reply starts with its conversation's labels, marked as the thread's; a forward starts a
+/// conversation of its own, and none.
 fn reply_source(composer: &Composer, frame: &Rc<Frame>, client: &Client, current: Current) {
     let client = client.clone();
     let weak = composer.downgrade();
@@ -212,9 +179,8 @@ fn reply_source(composer: &Composer, frame: &Rc<Frame>, client: &Client, current
                 None => Vec::new(),
             };
             let generation = weak.upgrade().map(|composer| composer.generation());
-            // A source whose body has not arrived quotes nothing: ask for it
-            // for the next time, and say so rather than leave an attribution
-            // with nothing under it.
+            // A source whose body has not arrived quotes nothing: ask for it for next time, and say
+            // so rather than leave an attribution with nothing under it.
             let unquoted = found
                 .as_ref()
                 .and_then(|(source, _)| postio_ui::compose::unquoted_note(source));
@@ -225,16 +191,15 @@ fn reply_source(composer: &Composer, frame: &Rc<Frame>, client: &Client, current
             let (Some(composer), Some(frame)) = (weak.upgrade(), frame.upgrade()) else {
                 return;
             };
-            // Only a reply the answer just opened: a refusal (a draft still
-            // open) leaves the composition where it was.
+            // Only a reply the answer just opened: a refusal (a draft still open) leaves the
+            // composition where it was.
             let opened = Some(composer.generation()) != generation;
             if !opened {
                 return;
             }
             if composer.draft().kind == postio_model::DraftKind::Forward {
-                // The person asked to forward, so the parts it carries are
-                // theirs to fetch now: local by the time they press send
-                // (#1690). A reply carries nothing and never gets here.
+                // The person asked to forward, so the carried parts are fetched now: local by the
+                // time they press send (#1690).
                 fetch_carried(&composer, &client, message);
             } else {
                 let ids = labels.iter().map(|label| label.id).collect();
@@ -250,15 +215,10 @@ fn reply_source(composer: &Composer, frame: &Rc<Frame>, client: &Client, current
     });
 }
 
-/// Asks for the parts a forward of `message` carries that are not on this
-/// machine, and draws them downloading while they come (#1690).
-///
-/// Drawn before the ask, so a part that lands faster than the answer
-/// returns is not drawn downloading again after it landed: the landing is an
-/// event the window hands the composer ([`Composer::fetch_settled`]). An
-/// answer that says nothing is on its way -- already here, never downloaded,
-/// no link -- takes the drawing back; the send's carry stage fetches what is
-/// still missing.
+/// Drawn downloading before the ask, so a part that lands faster than the answer is not drawn
+/// downloading again after it landed.
+/// An answer that says nothing is on its way takes the drawing back; the send's carry stage fetches
+/// what is still missing (#1690).
 fn fetch_carried(composer: &Composer, client: &Client, message: MessageId) {
     let carried = postio_ui::compose::carried_sections(&composer.draft().attachments);
     if carried.is_empty() {
@@ -284,8 +244,6 @@ fn fetch_carried(composer: &Composer, client: &Client, message: MessageId) {
     });
 }
 
-/// The names of the labels a draft opened with, when the Labels row does
-/// not know them yet: a draft resumed from Drafts carries only their ids.
 fn label_names(composer: &Composer, frame: &Rc<Frame>, client: &Client, account: AccountId) {
     let client = client.clone();
     let weak = composer.downgrade();

@@ -1,6 +1,4 @@
-//! The merge sheet over the Contacts view (handoff screen 07): a card per
-//! record with the kept one ringed, "Why we think so", what the merge would
-//! make, and Not the same, Later and Merge. Every word and every key is
+//! The merge sheet over the Contacts view. Every word and key is
 //! `postio_ui::contact_merge::MergeSheetView`'s.
 
 use std::rc::Rc;
@@ -14,16 +12,12 @@ use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::plate;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
-/// What a click on the sheet does.
 #[derive(Clone)]
 pub struct MergeHooks {
-    /// A card chosen to keep its name and photo.
     pub keep: Rc<dyn Fn(u32)>,
-    /// A button: the command its key sends.
     pub command: Rc<dyn Fn(CommandId)>,
 }
 
-/// The sheet, over a scrim that fills what it covers.
 pub fn build(sheet: &MergeSheetView, hooks: &MergeHooks) -> gtk::Widget {
     let scrim = gtk::Box::new(gtk::Orientation::Vertical, 0);
     scrim.add_css_class("focus-contacts-scrim");
@@ -55,6 +49,7 @@ fn sheet_plate(sheet: &MergeSheetView, hooks: &MergeHooks) -> gtk::Box {
     if let Some(position) = &sheet.position {
         let place = gtk::Label::new(Some(position));
         place.add_css_class("dim-label");
+        place.add_css_class(POSITION);
         top.append(&place);
     }
     let subtitle = gtk::Label::new(Some(&sheet.subtitle));
@@ -212,7 +207,25 @@ fn foot_button(
     one
 }
 
-/// Every text the sheet shows, in order: what a test reads.
 pub fn texts(sheet: &gtk::Widget) -> Vec<String> {
     super::view::texts_of(sheet)
+}
+
+const POSITION: &str = "focus-merge-position";
+
+pub fn position(sheet: &gtk::Widget) -> Option<String> {
+    let mut stack = vec![sheet.clone()];
+    while let Some(widget) = stack.pop() {
+        if let Some(label) = widget.downcast_ref::<gtk::Label>()
+            && label.has_css_class(POSITION)
+        {
+            return Some(label.text().to_string());
+        }
+        let mut child = widget.first_child();
+        while let Some(next) = child {
+            child = next.next_sibling();
+            stack.push(next);
+        }
+    }
+    None
 }

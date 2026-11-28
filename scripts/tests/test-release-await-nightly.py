@@ -22,8 +22,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -33,8 +31,6 @@ SCRIPT = HERE / "release-await-nightly.sh"
 
 FAILURES: list[str] = []
 
-# Replies from `$STUB_DIR/<kind>.<n>` in turn, the last one repeating; a reply
-# file holding `FAIL` is the API failing. `--jq` is applied with jq, as gh does.
 GH_STUB = """#!/usr/bin/env bash
 case "$*" in *"/jobs"*) kind=jobs ;; *) kind=runs ;; esac
 n=$(cat "$STUB_DIR/$kind.count" 2>/dev/null || echo 0); n=$((n + 1))

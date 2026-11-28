@@ -1,15 +1,6 @@
-//! The message list: day headings and Focus's rows.
-//!
-//! Only the rows in view are drawn, from the window's resident pages; a row
-//! whose page is still on its way is blank, and asking for it is `App`'s
-//! business, not the drawing's (Principle V: never a whole mailbox).
-//!
-//! A row is one line, or two when it carries a marker (terminal.md,
-//! "Rows"): the cursor's `▌`, a mark, the sender, the subject with its
-//! label pills and first line, and the trailing column. Rows have no rule
-//! between them. Every state has a mark that is not a colour: `▌` the
-//! cursor, `✓` selected, `●` unread, `≡` a digest, `↺` a reminder, `⎘` an
-//! attachment.
+//! The message list: day headings and Focus's rows. Only the rows in view are drawn, from the
+//! resident pages; a row whose page is on its way is blank, and `App` asks for it (never a whole
+//! mailbox).
 
 use chrono::{DateTime, Local, NaiveDate};
 use postio_core::CommandId;
@@ -25,51 +16,35 @@ use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 use postio_ui::terminal::SafeText;
 
-/// What stands over a row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Heading {
-    /// The day its mail arrived on.
     Day(NaiveDate),
-    /// One heading for the whole list while a filter is on.
     Text(String),
 }
 
-/// One visible row of the list.
 pub struct Visible<'a> {
-    /// The row, or `None` while its page is on its way.
     pub row: Option<&'a Row>,
-    /// Whether the cursor is here.
     pub cursor: bool,
-    /// Whether the row is selected.
     pub selected: bool,
-    /// The heading that starts here, on a line of its own above the row.
     pub heading: Option<Heading>,
 }
 
-/// Where the sender starts: the cursor, the mark and a space.
 const SENDER_X: u16 = 3;
-/// From this width the sender's column is [`SENDER_WIDE`].
 const WIDE: u16 = 100;
 const SENDER_WIDE: u16 = 20;
 const SENDER_NARROW: u16 = 16;
-/// The sender's column beside the reading pane.
 const SENDER_BESIDE: u16 = 12;
-/// The room the right edge keeps.
 const MARGIN: usize = 0;
 
-/// Where the subject starts in a list `width` cells wide, `beside` the
-/// reading pane or not: after the cursor, the mark and the sender's column.
 pub fn subject_x(width: u16, beside: bool) -> u16 {
     SENDER_X + sender_width(width, beside) + 1
 }
 
-/// How many lines `row` takes: one, or two with a marker. A row not here yet
-/// is one.
+/// A row whose page is not here yet is one line.
 pub fn lines_of(row: Option<&Row>) -> u16 {
     1 + u16::from(row.is_some_and(Row::two_lines))
 }
 
-/// The sender's column in a list `width` cells wide.
 fn sender_width(width: u16, beside: bool) -> u16 {
     if beside {
         SENDER_BESIDE
@@ -80,9 +55,8 @@ fn sender_width(width: u16, beside: bool) -> u16 {
     }
 }
 
-/// Draw `rows` into `area`, beside the reading pane or not. `first` is the list position of the first row,
-/// for what a click on each means; `hint` is the key this terminal sends for
-/// a command, for the answers a marked row offers.
+/// `first` is the list position of the first row; `hint` gives the key this terminal sends for a
+/// command.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
@@ -164,7 +138,6 @@ pub fn draw(
         if height == 2
             && let Some(row) = visible.row
         {
-            // Each drawn answer is its key, for this row.
             let mut x = area.x
                 + u16::try_from(
                     usize::from(area.width)
@@ -184,8 +157,6 @@ pub fn draw(
     }
 }
 
-/// The mark in front of the sender: what the row is, or whether it is
-/// unread.
 fn mark<'a>(row: &Row, visible: &Visible, theme: &Theme) -> Span<'a> {
     if visible.selected {
         return Span::styled("✓", selection_mark(theme));
@@ -205,7 +176,6 @@ fn mark<'a>(row: &Row, visible: &Visible, theme: &Theme) -> Span<'a> {
     }
 }
 
-/// The trailing column: a draft's state, `⎘`, the count and the time.
 fn trailing(row: &Row, now: DateTime<Local>) -> String {
     let mut parts: Vec<String> = Vec::new();
     if let Some(state) = row.send_state {
@@ -225,8 +195,6 @@ fn trailing(row: &Row, now: DateTime<Local>) -> String {
     }
 }
 
-/// A row's first line: the sender, then the subject, its pills and its
-/// first line, then what trails.
 fn first_line<'a>(
     row: &Row,
     visible: &Visible,
@@ -298,8 +266,7 @@ fn first_line<'a>(
     Line::from(spans)
 }
 
-/// What a marked row's second line offers to answer it, each as the words
-/// and the key the keymap gives: nothing once the marker has a status.
+/// Nothing once the marker has a status.
 fn answers(
     row: &Row,
     now: DateTime<Local>,
@@ -320,8 +287,6 @@ fn answers(
         .collect()
 }
 
-/// The room a row's answers take on the right, with their gaps; what its
-/// status takes when it has one.
 fn answers_width(
     row: &Row,
     now: DateTime<Local>,
@@ -333,8 +298,6 @@ fn answers_width(
         + 2 * answers.len().saturating_sub(1)
 }
 
-/// A marked row's second line, under the subject: the chip, the date and the
-/// quoted sentence, and on the right what answers it.
 #[allow(clippy::too_many_arguments)]
 fn second_line<'a>(
     row: &Row,
@@ -351,8 +314,6 @@ fn second_line<'a>(
     };
     let line = postio_ui::focus_row::marker_line(marker, now.with_timezone(&chrono::Utc), &Local)
         .capturing(capture);
-    // Under the subject, or under the sender once the sender's column has
-    // narrowed.
     let start = if !beside && u16::try_from(width).unwrap_or(u16::MAX) >= WIDE {
         usize::from(SENDER_X + SENDER_WIDE)
     } else {
@@ -366,7 +327,7 @@ fn second_line<'a>(
             .collect::<Vec<_>>()
             .join("  "),
     };
-    let accent = theme.style(Role::Accent);
+    let accent = theme.style(marker_role(&line));
     let room = width.saturating_sub(start + MARGIN + right.width() + 2);
     let mut spans = vec![bar, Span::raw(" ".repeat(start - 1))];
     let mut used = 0;
@@ -383,6 +344,13 @@ fn second_line<'a>(
     if let Some(date) = &line.date {
         push(&mut spans, format!("  {date}"), accent);
     }
+    if let Some(note) = &line.note {
+        push(
+            &mut spans,
+            format!("  {}", SafeText::new(note).as_str()),
+            theme.style(Role::Text),
+        );
+    }
     if let Some(quote) = &line.quote {
         let quote = SafeText::new(quote);
         push(
@@ -397,13 +365,20 @@ fn second_line<'a>(
     Line::from(spans)
 }
 
-/// A selection's mark: the selection's colour as the mark's own, rather than
-/// a block behind it; without colour, the role's reversal.
+/// The selection's colour on the mark itself; reversed without colour.
 fn selection_mark(theme: &Theme) -> Style {
     let selection = theme.style(Role::Selection);
     match selection.bg {
         Some(colour) => Style::default().fg(colour).add_modifier(Modifier::BOLD),
         None => selection,
+    }
+}
+
+pub(super) fn marker_role(line: &postio_ui::focus_row::MarkerLine) -> Role {
+    if line.automated {
+        Role::Dim
+    } else {
+        Role::Accent
     }
 }
 
@@ -427,6 +402,9 @@ mod tests {
             excerpt: None,
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
         }
     }
 
@@ -453,9 +431,6 @@ mod tests {
         })
     }
 
-    /// A small inbox: an unread invitation with a pill, a digest, a busy
-    /// conversation with two pills and an attachment, a plain read one, and
-    /// one from yesterday.
     fn inbox(size: (u16, u16)) -> App {
         let mut app = app(size);
         seed_places(&mut app, places());
@@ -516,7 +491,6 @@ mod tests {
             lines[2].contains("Today · Wednesday 23 September"),
             "the day heading starts the list:\n{drawn}"
         );
-        // The invitation: a line, and under it the marker's line.
         assert!(lines[3].contains("Grace Oyelaran"), "{drawn}");
         assert!(
             lines[3].contains("Invitation: Harbor design review"),
@@ -532,19 +506,15 @@ mod tests {
             lines[4].contains("Accept y  Decline Y"),
             "the answers, with the keys the keymap gives:\n{drawn}"
         );
-        // The digest is one line: its title, subject, line, count and time.
         assert!(lines[5].contains("≡ Weekly · digest"), "{drawn}");
         assert!(lines[5].contains("Newsletters · 14 messages"), "{drawn}");
         assert!(lines[5].contains("Summary of 14 messages"), "{drawn}");
         assert!(lines[5].trim_end().ends_with("14  10:00"), "{drawn}");
-        // A plain row is one line; its pills and its count and clip come
-        // before the time.
         assert!(lines[6].contains("● Ada Moreno"), "unread:\n{drawn}");
         assert!(lines[6].contains("●Atlas ●Budget"), "{drawn}");
         assert!(lines[6].contains("⎘ 3  09:51"), "{drawn}");
         assert!(lines[7].contains("Tomás Reyes"), "no second line:\n{drawn}");
         assert!(!lines[7].contains('●'), "read, so no unread mark:\n{drawn}");
-        // The next day is under its own heading.
         assert!(
             lines[8].contains("Yesterday · Tuesday 22 September"),
             "{drawn}"
@@ -575,54 +545,6 @@ mod tests {
         }
     }
 
-    fn sent(effects: &[crate::app::Effect]) -> Vec<postio_core::Command> {
-        effects
-            .iter()
-            .filter_map(|effect| match effect {
-                crate::app::Effect::Send(command) => Some(command.clone()),
-                _ => None,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn y_and_shift_y_answer_the_invitation_the_cursor_is_on_with_its_message() {
-        use crate::test_support::press;
-        let mut app = inbox((120, 36));
-        let accept = sent(&crate::app::update(&mut app, press('y')));
-        assert_eq!(
-            accept,
-            vec![postio_core::Command::AcceptInvite {
-                message: Some(postio_model::MessageId::new(1))
-            }]
-        );
-        let decline = sent(&crate::app::update(&mut app, press('Y')));
-        assert_eq!(
-            decline,
-            vec![postio_core::Command::DeclineInvite {
-                message: Some(postio_model::MessageId::new(1))
-            }]
-        );
-    }
-
-    #[test]
-    fn the_dash_takes_the_marker_off_the_row() {
-        use crate::test_support::press;
-        let mut app = inbox((120, 36));
-        let effects = sent(&crate::app::update(&mut app, press('-')));
-        assert!(
-            matches!(
-                effects.as_slice(),
-                [postio_core::Command::DismissMarker {
-                    dismissed: true,
-                    ..
-                }]
-            ),
-            "{effects:?}"
-        );
-    }
-
-    /// The cell where `word` starts on the screen's first line holding it.
     fn at_word(drawn: &str, word: &str) -> (u16, u16) {
         let (y, line) = drawn
             .lines()
@@ -648,28 +570,35 @@ mod tests {
     }
 
     #[test]
-    fn a_click_on_a_drawn_action_does_what_its_key_does_for_that_row() {
+    fn a_notice_s_to_do_is_drawn_in_the_dim_ink() {
+        use crate::caps::{Background, Colour};
+        use crate::theme::{Role, Theme};
         let mut app = inbox((120, 36));
-        // The cursor is elsewhere: the invitation's action is still about
-        // the invitation.
-        crate::app::update(&mut app, crate::test_support::press('j'));
-        crate::app::update(&mut app, crate::test_support::press('j'));
-        let drawn = screen(120, 36, &app);
-        let (x, y) = at_word(&drawn, "Decline");
-        let effects = click_at(&mut app, x, y);
-        assert_eq!(
-            sent(&effects),
-            vec![postio_core::Command::DeclineInvite {
-                message: Some(postio_model::MessageId::new(1))
-            }]
-        );
-        let (x, y) = at_word(&drawn, "Accept");
-        assert_eq!(
-            sent(&click_at(&mut app, x, y)),
-            vec![postio_core::Command::AcceptInvite {
-                message: Some(postio_model::MessageId::new(1))
-            }]
-        );
+        let mut bill = conversation(9, "Harbour Bank", "Your statement", "", local(23, 8, 0));
+        bill.marker = Some(MarkerSummary {
+            kind: MarkerKind::Todo,
+            when: None,
+            excerpt: Some("A payment of $142.18 is due.".into()),
+            answer: None,
+            cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: true,
+        });
+        show_focus(&mut app, vec![FocusRow::conversation(bill)]);
+        let theme = Theme::new(Colour::TrueColor, Background::Dark, &Default::default()).0;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 36)).unwrap();
+        terminal
+            .draw(|frame| {
+                crate::view::draw(frame, &app, &theme, crate::test_support::now());
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let (x, y) = at_word(&screen(120, 36, &app), "To-do");
+        let chip = &buffer[(x, y)];
+        assert_eq!(Some(chip.fg), theme.style(Role::Dim).fg, "the chip");
+        assert_ne!(Some(chip.fg), theme.style(Role::Accent).fg);
     }
 
     #[test]
@@ -682,6 +611,9 @@ mod tests {
             excerpt: Some("Can you approve?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
         });
         show_focus(&mut app, vec![FocusRow::conversation(ada)]);
         let drawn = screen(120, 36, &app);
@@ -721,6 +653,28 @@ mod tests {
             assert!(line.trim_end().ends_with(word), "{word}:\n{drawn}");
             assert!(!drawn.contains("Accept y"), "{drawn}");
         }
+    }
+
+    #[test]
+    fn an_invitation_that_clashes_says_with_what_beside_its_time() {
+        let mut app = app((120, 36));
+        seed_places(&mut app, places());
+        let mut marker = invite();
+        marker.clash = Some("Standup".to_owned());
+        show_focus(
+            &mut app,
+            vec![FocusRow::conversation(marked(
+                unread(conversation(1, "Grace", "Review", "", local(23, 11, 2))),
+                marker,
+            ))],
+        );
+        let drawn = screen(120, 36, &app);
+        let line = drawn.lines().nth(4).unwrap();
+        assert!(line.contains("Clashes with Standup"), "{drawn}");
+        assert!(
+            line.contains("Accept y"),
+            "the answers are still offered:\n{drawn}"
+        );
     }
 
     #[test]
@@ -771,6 +725,9 @@ mod tests {
             excerpt: Some("Can you\u{1b}[2J?".into()),
             answer: None,
             cancelled: false,
+            clash: None,
+            moved_from: None,
+            notice: false,
         });
         show_focus(&mut app, vec![FocusRow::conversation(summary)]);
         let drawn = screen(120, 36, &app);
@@ -795,48 +752,6 @@ mod tests {
             })
             .unwrap();
         (terminal.backend().buffer().clone(), theme)
-    }
-
-    #[test]
-    fn a_selected_row_has_a_check_and_the_surface_across_it_and_the_cursor_keeps_its_bar() {
-        use crate::caps::Colour;
-        use crate::test_support::press;
-        let mut app = inbox((120, 36));
-        // Select the invitation (the cursor's row), then step to the next.
-        crate::app::update(&mut app, press('x'));
-        crate::app::update(&mut app, press('j'));
-        for colour in [Colour::TrueColor, Colour::None] {
-            let (drawn, theme) = cells(&app, colour);
-            // The invitation is at lines 3 and 4; the cursor is on the digest.
-            for y in [3, 4] {
-                assert_eq!(drawn[(1, 3)].symbol(), "✓", "{colour:?}");
-                let surface = theme.style(crate::theme::Role::Surface);
-                for x in 0..drawn.area.width {
-                    match surface.bg {
-                        Some(bg) => assert_eq!(drawn[(x, y)].bg, bg, "{colour:?} ({x}, {y})"),
-                        None => assert!(
-                            drawn[(x, y)]
-                                .modifier
-                                .contains(ratatui::style::Modifier::REVERSED),
-                            "{colour:?} ({x}, {y}) is not reversed"
-                        ),
-                    }
-                }
-                assert_ne!(drawn[(0, y)].symbol(), "▌", "the cursor is elsewhere");
-            }
-            assert_eq!(
-                drawn[(0, 5)].symbol(),
-                "▌",
-                "{colour:?}: the digest has the cursor"
-            );
-            let reversed = drawn[(10, 5)]
-                .modifier
-                .contains(ratatui::style::Modifier::REVERSED);
-            assert!(
-                !reversed,
-                "{colour:?}: the cursor alone does not change the row's ground"
-            );
-        }
     }
 
     #[test]

@@ -1,50 +1,7 @@
-//! The `.eml` test corpus and its loader.
-//!
-//! Every crate in Postio has to be testable without a network connection —
-//! CLAUDE.md makes that a hard rule: *no test in the default suite may touch the
-//! network.* This module is what makes that possible. It carries a curated set
-//! of raw RFC 5322 messages, embedded into the binary at compile time with
-//! [`include_bytes!`], and hands them out by name or by category.
-//!
-//! The files themselves live in `crates/postio-model/tests/corpus/`, one
-//! `.eml` per fixture, with a `README.md` next to them explaining what each one
-//! exercises. Nothing here is real: every address is under an RFC 2606 reserved
-//! domain, and every body was invented for this corpus.
-//!
-//! # Availability
-//!
-//! This module is behind the off-by-default `test-corpus` cargo feature so that
-//! ordinary builds of `postio-model` carry none of it. Downstream crates opt in
-//! from their dev-dependencies only:
-//!
-//! ```toml
-//! [dev-dependencies]
-//! postio-model = { workspace = true, features = ["test-corpus"] }
-//! ```
-//!
-//! # Using it
-//!
-//! ```
-//! use postio_model::test_corpus;
-//!
-//! // One fixture by name, with or without the `.eml` suffix.
-//! let raw = test_corpus::load("plain-text-simple").bytes();
-//! assert!(raw.starts_with(b"Return-Path:"));
-//!
-//! // Or every fixture in a category.
-//! for fixture in test_corpus::by_category(test_corpus::Category::BrokenReferences) {
-//!     println!("{}: {}", fixture.name(), fixture.description());
-//! }
-//! ```
-//!
-//! # Scope
-//!
-//! The loader deliberately deals in **bytes**, not parsed messages. MIME parsing
-//! into the domain model is a separate concern that consumes this corpus; if the
-//! loader parsed, every parser test would be testing the parser against itself.
-//! Fixtures are also not all valid UTF-8 — several exist precisely because they
-//! are ISO-8859-1, Shift_JIS or windows-1252 on the wire — so [`Fixture::bytes`]
-//! is the primary accessor and [`Fixture::as_str`] is fallible by design.
+//! The `.eml` test corpus, embedded with `include_bytes!` so no test needs the network. Behind the
+//! off-by-default `test-corpus` feature; dependents opt in from dev-dependencies.
+//! The loader deals in bytes, not parsed messages, or parser tests would test the parser against
+//! itself; `Fixture::as_str` is fallible because some fixtures are not UTF-8.
 
 use std::borrow::Cow;
 
@@ -54,86 +11,45 @@ use crate::ids::{AccountId, MailboxId};
 use crate::message::Message;
 use crate::mime;
 
-/// Path of the corpus directory, relative to the workspace root.
-///
-/// Useful in error messages and in tests that want to walk the directory rather
-/// than the embedded table.
 pub const CORPUS_DIR: &str = "crates/postio-model/tests/corpus";
 
-/// What a fixture is *for*: the behaviour it is meant to put under test.
-///
-/// A fixture usually carries several categories — a Japanese newsletter is both
-/// [`Category::Html`] and [`Category::NonUtf8Charset`] — so callers should treat
-/// these as tags, not as a taxonomy.
+/// A fixture usually carries several categories; treat them as tags, not a taxonomy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[non_exhaustive]
 pub enum Category {
-    /// A `text/plain` body, the baseline case.
     PlainText,
-    /// A `text/html` body: newsletters, marketing mail, rich replies.
     Html,
-    /// `multipart/alternative` — the reader has to pick one part, never both.
     MultipartAlternative,
-    /// `multipart/mixed` — a body plus attachments.
     MultipartMixed,
-    /// `multipart/related` — parts referenced from the HTML by `cid:`.
     MultipartRelated,
-    /// Nesting deeper than one level of multipart.
     NestedMultipart,
-    /// Images displayed inline through a `cid:` reference.
     InlineImage,
-    /// Carries at least one attachment part.
     Attachment,
-    /// Carries an attachment big enough that buffering it whole is a mistake.
     LargeAttachment,
-    /// The raw bytes are not UTF-8: ISO-8859-1, Shift_JIS, UTF-7, windows-1252.
     NonUtf8Charset,
-    /// Uses `Content-Transfer-Encoding: base64`.
     Base64,
-    /// Uses `Content-Transfer-Encoding: quoted-printable`.
     QuotedPrintable,
-    /// RFC 2047 encoded words in the headers (subjects, display names).
     EncodedWord,
-    /// Header block that a strict parser would reject; recovery is the point.
     MalformedHeaders,
-    /// MIME structure that is broken or truncated rather than merely unusual.
     MalformedStructure,
-    /// Required headers are absent — no `Message-ID`, no `Date`, no body.
     MissingHeaders,
-    /// Part of a conversation the JWZ threading pass has to reassemble.
     Threading,
-    /// Fixtures for the threading rules proper: forks, the subject window, own
-    /// replies, replies filed in another folder, and list mail that must group
-    /// by references and never by subject (spec 013).
     ThreadingRules,
-    /// `References`/`In-Reply-To` that are absent, malformed or dangling.
     BrokenReferences,
-    /// Carries `List-Id` and the rest of the RFC 2369 list headers.
     MailingList,
-    /// OpenPGP: `multipart/signed` or `multipart/encrypted`.
     Pgp,
-    /// Loads resources from the network — remote images, tracking pixels.
     RemoteContent,
-    /// Carries a `text/calendar` part or an `.ics` attachment.
     Calendar,
     /// A bounce: `multipart/report` with a `message/delivery-status` part.
     DeliveryStatus,
-    /// A layout its sender designed: columns, blocks, colours, buttons. The
-    /// fixtures rendering fidelity is judged on (spec 006 SC-002).
     Designed,
-    /// Tries to escape its box, execute, phone home, or exhaust the renderer.
     Hostile,
-    /// Colour choices that stress legibility across light, dark and high
-    /// contrast: a white page, dark text on nothing, sender dark styling.
     ThemeContrast,
-    /// Text that tries to instruct an assistant reading the mail:
-    /// instruction-shaped and tool-shaped. It is data, never instructions
-    /// (ADR 0009 Q4, ADR 0010).
+    /// Data, never instructions (ADR 0009 Q4, ADR 0010).
     PromptInjection,
 }
 
 impl Category {
-    /// Every category, in declaration order.
     pub const ALL: &'static [Category] = &[
         Category::PlainText,
         Category::Html,
@@ -165,7 +81,6 @@ impl Category {
         Category::PromptInjection,
     ];
 
-    /// The category's stable, lower-kebab-case name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Category::PlainText => "plain-text",
@@ -199,7 +114,6 @@ impl Category {
         }
     }
 
-    /// Look a category up by the name [`Category::as_str`] returns.
     pub fn from_name(name: &str) -> Option<Category> {
         Category::ALL.iter().copied().find(|c| c.as_str() == name)
     }
@@ -211,11 +125,6 @@ impl std::fmt::Display for Category {
     }
 }
 
-/// One `.eml` fixture: its raw bytes plus what it is there to exercise.
-///
-/// Values of this type are `'static` and embedded in the binary; there is no
-/// filesystem access at run time, which is what lets other crates use the
-/// corpus without knowing where the repository lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Fixture {
     name: &'static str,
@@ -226,80 +135,57 @@ pub struct Fixture {
 }
 
 impl Fixture {
-    /// The fixture's name: its file name without the `.eml` suffix.
     pub const fn name(&self) -> &'static str {
         self.name
     }
 
-    /// The fixture's file name, including the `.eml` suffix.
     pub const fn file_name(&self) -> &'static str {
         self.file_name
     }
 
-    /// Path to the fixture relative to the workspace root.
     pub fn source_path(&self) -> String {
         format!("{CORPUS_DIR}/{}", self.file_name)
     }
 
-    /// One line on what this fixture exercises and why it is in the corpus.
     pub const fn description(&self) -> &'static str {
         self.description
     }
 
-    /// The behaviours this fixture is tagged with.
     pub const fn categories(&self) -> &'static [Category] {
         self.categories
     }
 
-    /// Whether this fixture carries `category`.
     pub fn has_category(&self, category: Category) -> bool {
         self.categories.contains(&category)
     }
 
-    /// The message exactly as it would arrive from a server.
-    ///
-    /// Line endings are CRLF except where a fixture exists precisely because
-    /// they are not, and the bytes are not necessarily valid UTF-8.
+    /// CRLF line endings except where a fixture exists because they are not; not necessarily valid
+    /// UTF-8.
     pub const fn bytes(&self) -> &'static [u8] {
         self.bytes
     }
 
-    /// Length of the raw message in bytes.
     pub const fn len(&self) -> usize {
         self.bytes.len()
     }
 
-    /// Whether the fixture is empty. Nothing in the corpus is; this exists
-    /// because clippy asks for it wherever there is a `len`.
+    /// Nothing in the corpus is empty; clippy asks for this beside `len`.
     pub const fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
 
-    /// The raw message as `&str`, or `None` when it is not valid UTF-8.
-    ///
-    /// Several fixtures are deliberately ISO-8859-1, Shift_JIS or windows-1252,
-    /// so a caller that needs text must decide what to do about them.
+    /// `None` when not valid UTF-8; several fixtures are deliberately ISO-8859-1, Shift_JIS or
+    /// windows-1252.
     pub fn as_str(&self) -> Option<&'static str> {
         std::str::from_utf8(self.bytes).ok()
     }
 
-    /// The raw message as text, replacing invalid sequences with `U+FFFD`.
-    ///
-    /// Convenient for assertions about header names, which are ASCII in every
-    /// fixture regardless of what the body is encoded in.
     pub fn text_lossy(&self) -> Cow<'static, str> {
         String::from_utf8_lossy(self.bytes)
     }
 
-    /// Parses this fixture into the domain [`Message`], via
-    /// [`mime::parse`].
-    ///
-    /// A thin convenience so threading, search and reader tests do not each
-    /// invoke the parser and [`ParsedMessage::into_message`](crate::mime::ParsedMessage::into_message)
-    /// by hand. `account_id` and `mailbox_id` are both `1`, and `received_at`
-    /// is a fixed sentinel: none of these fixtures came from a real mailbox,
-    /// and a caller that cares about scoping or receipt time is not using
-    /// this corpus for that.
+    /// `account_id` and `mailbox_id` are both `1` and `received_at` is a fixed sentinel: a caller
+    /// that cares about scoping or receipt time is not using the corpus for that.
     pub fn parse(&self) -> Message {
         mime::parse(self.bytes).into_message(
             AccountId::new(1),
@@ -309,14 +195,12 @@ impl Fixture {
     }
 }
 
-/// A fixed, arbitrary receive time for [`Fixture::parse`].
 fn sentinel_received_at() -> DateTime<Utc> {
     DateTime::from_timestamp(1_700_000_000, 0).expect("a valid fixed unix timestamp")
 }
 
 macro_rules! corpus {
     ( $( $name:literal : [ $( $cat:ident ),+ $(,)? ] => $doc:literal ),+ $(,)? ) => {
-        /// Every fixture in the corpus, in file-name order.
         static FIXTURES: &[Fixture] = &[
             $(
                 Fixture {
@@ -494,6 +378,8 @@ corpus! {
         "The canonical text/plain + text/html pair, with a preamble and an epilogue that must both be discarded.",
     "multipart-boundary-never-appears": [MalformedStructure, MultipartAlternative] =>
         "A multipart whose boundary parameter names a delimiter that appears nowhere in the body, which is what a gateway that rewrote one and not the other leaves behind.",
+    "multipart-boundary-quoted-in-body": [MalformedStructure, MultipartMixed, PlainText, Attachment] =>
+        "A body that quotes its own boundary three ways: mid-line, at a line start followed by words, and as the prefix of a longer token. None is a delimiter, so the whole text survives and the attachment after it is still found.",
     "nested-multipart": [NestedMultipart, MultipartMixed, MultipartAlternative, MultipartRelated, InlineImage, Attachment] =>
         "mixed > alternative > related, three levels deep, with an inline image and a trailing attachment.",
     "pgp-encrypted": [Pgp, MultipartMixed] =>
@@ -550,39 +436,24 @@ corpus! {
         "One honest question, then instructions and a tool call aimed at an assistant: none of it may become an action, a request or a marker.",
 }
 
-/// Every fixture in the corpus, in file-name order.
 pub fn all() -> &'static [Fixture] {
     FIXTURES
 }
 
-/// How many fixtures the corpus holds.
 pub fn count() -> usize {
     FIXTURES.len()
 }
 
-/// The name of every fixture, in file-name order.
 pub fn names() -> impl Iterator<Item = &'static str> {
     FIXTURES.iter().map(Fixture::name)
 }
 
-/// Look up one fixture by name, with or without its `.eml` suffix.
-///
-/// Returns `None` if there is no such fixture; see [`load`] for the panicking
-/// form, which is usually what a test wants.
 pub fn get(name: &str) -> Option<&'static Fixture> {
     let stem = name.strip_suffix(".eml").unwrap_or(name);
     FIXTURES.iter().find(|f| f.name == stem)
 }
 
-/// Look up one fixture by name, panicking with the list of known names if it
-/// is missing.
-///
-/// This is the one-call entry point: `test_corpus::load("html-newsletter")`.
-///
-/// # Panics
-///
-/// If no fixture has that name. A typo in a test should fail loudly and say
-/// what the alternatives were.
+/// Panics listing the known names if there is no such fixture, so a typo in a test fails loudly.
 pub fn load(name: &str) -> &'static Fixture {
     get(name).unwrap_or_else(|| {
         let known: Vec<&str> = names().collect();
@@ -593,10 +464,6 @@ pub fn load(name: &str) -> &'static Fixture {
     })
 }
 
-/// Every fixture tagged with `category`, in file-name order.
-///
-/// This is how a test asks for "all the broken-header ones" without hard-coding
-/// a list that goes stale the moment someone adds a fixture.
 pub fn by_category(category: Category) -> Vec<&'static Fixture> {
     FIXTURES
         .iter()
@@ -604,9 +471,7 @@ pub fn by_category(category: Category) -> Vec<&'static Fixture> {
         .collect()
 }
 
-/// Every fixture tagged with *all* of `categories`.
-///
-/// With an empty slice this returns the whole corpus.
+/// With an empty slice, the whole corpus.
 pub fn by_categories(categories: &[Category]) -> Vec<&'static Fixture> {
     FIXTURES
         .iter()

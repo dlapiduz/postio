@@ -1,9 +1,3 @@
-//! The review queue and the merge sheet, from the controller's side
-//! (specs/011-focus-contacts S10, handoff screen 07): `g w` reads the queue
-//! and opens the sheet, `x` marks and `m` merges the marked, Return merges,
-//! `n` says they are two people, Escape is Later, and the arrows choose whose
-//! name is kept.
-
 use crate::search_support::{asks, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
@@ -99,7 +93,6 @@ fn card(id: i64, name: &str) -> ContactCardRead {
     }
 }
 
-/// `g c`, the overview answered, page 0 read: the view as a person sees it.
 fn open(focus: &mut FocusController) -> Vec<Effect> {
     let effects = run(focus, CommandId::OpenContacts);
     let [(ticket, Request::ContactsOverview)] = asks(&effects)[..] else {
@@ -183,7 +176,6 @@ fn posted(effects: &[Effect]) -> Vec<Command> {
         .collect()
 }
 
-/// `g w`, answered with the queue.
 fn review(focus: &mut FocusController) -> Vec<Effect> {
     open(focus);
     let effects = run(focus, CommandId::ContactsSuggestions);
@@ -202,7 +194,7 @@ fn g_w_reads_the_queue_and_opens_the_sheet_on_its_first_group() {
     let effects = review(&mut focus);
     let view = sheet(&effects).expect("the sheet is drawn");
     assert_eq!(view.title, "These 2 look like the same person");
-    assert_eq!(view.position.as_deref(), Some("1 of 2"));
+    assert_eq!(view.position.as_deref(), Some("2 sets left"));
     assert_eq!(view.cards.iter().filter(|c| c.kept).count(), 1);
     assert_eq!(view.cards[0].name, "Ada Moreno");
 }
@@ -259,7 +251,11 @@ fn return_merges_into_the_kept_record_and_shows_the_next_group() {
     assert_eq!(name, "Ada Moreno");
     let next = sheet(&effects).expect("the next group is drawn");
     assert_eq!(next.cards[0].name, "Ben Adeyemi");
-    assert_eq!(next.position.as_deref(), Some("2 of 2"));
+    assert_eq!(
+        next.position.as_deref(),
+        Some("1 set left"),
+        "the count shrinks as the strip's does"
+    );
 
     let effects = run(&mut focus, CommandId::ContactShowMail);
     assert_eq!(posted(&effects).len(), 1);
@@ -424,8 +420,6 @@ fn split_takes_an_address_off_a_merged_person_and_a_lone_address_stays() {
     assert_eq!(id.get(), 9);
 }
 
-/// An import lands with the view up: the counts are read again, and then
-/// where the first new person is. Returns that question.
 fn imported(
     focus: &mut FocusController,
     made: Vec<ContactId>,
@@ -476,7 +470,6 @@ fn after_an_import_the_cursor_goes_to_the_first_new_person_and_the_review_looks_
     );
     assert_eq!(focus.contacts_cursor(), Some(2));
 
-    // The review looks at what the import found, once.
     let effects = run(&mut focus, CommandId::ContactsSuggestions);
     let first = asks(&effects)
         .into_iter()
@@ -521,10 +514,6 @@ fn an_import_with_contacts_closed_remembers_where_to_go_and_what_to_review() {
     );
 }
 
-/// Bringing people in from the Mac's Contacts says the people changed (the
-/// engine's `ContactsChanged`) and then which of them are new. With the view
-/// up they are on screen: the rows are read again and the cursor goes to the
-/// first one, even when it is not on the tab being shown.
 #[test]
 fn people_brought_in_from_contacts_are_shown_with_the_view_up() {
     let mut focus = mac();
@@ -548,7 +537,6 @@ fn people_brought_in_from_contacts_are_shown_with_the_view_up() {
     );
     assert_eq!(person, ContactId::new(7));
 
-    // On another tab the person is not in the list; the list is still current.
     let effects = focus.handle_on(
         Input::Reply(ticket, Reply::ContactPosition { person, at: None }),
         &NoRows,
@@ -561,11 +549,8 @@ fn people_brought_in_from_contacts_are_shown_with_the_view_up() {
     );
 }
 
-/// An import changes the people and says who is new; the engine's
-/// `ContactsChanged` re-reads the counts. However those answers arrive, the
-/// cursor ends on the first new person: a position answered before the new
-/// counts must not be undone by the restart they cause (#2027, where the
-/// GTK suite saw the cursor stay on the first row).
+/// However those answers arrive, the cursor ends on the first new person: a position answered
+/// before the new counts must not be undone by the restart they cause (#2027).
 #[test]
 fn the_cursor_reaches_the_imported_person_when_the_new_counts_come_last() {
     let mut focus = mac();
@@ -616,5 +601,106 @@ fn the_cursor_reaches_the_imported_person_when_the_new_counts_come_last() {
         focus.contacts_cursor(),
         Some(3),
         "the cursor is on the imported person, not where the restart put it"
+    );
+}
+
+#[test]
+fn undo_under_the_sheet_is_the_apps_undo() {
+    let mut focus = mac();
+    review(&mut focus);
+    let _ = run(&mut focus, CommandId::ContactShowMail);
+    let effects = run(&mut focus, CommandId::Undo);
+    assert_eq!(
+        posted(&effects),
+        [Command::Undo],
+        "the foot's \"Undo with z\" takes the merge back"
+    );
+    assert!(
+        sheet(&run(&mut focus, CommandId::NextMessage)).is_some(),
+        "the sheet stays up on the next group"
+    );
+}
+
+#[test]
+fn the_list_keeps_its_rows_while_a_change_is_read_again() {
+    let mut focus = mac();
+    review(&mut focus);
+    let shown_before = focus.contacts_row(0).map(|row| row.name);
+    assert!(shown_before.is_some(), "the first person is drawn");
+    let _ = run(&mut focus, CommandId::ContactShowMail);
+    let changed = focus.handle_on(
+        Input::Event(postio_core::Event::ContactsChanged {
+            names_changed: true,
+        }),
+        &NoRows,
+    );
+    assert_eq!(
+        focus.contacts_row(0).map(|row| row.name),
+        shown_before,
+        "the old rows are drawn while the change is read, never a blank list"
+    );
+    let ticket = asks(&changed)
+        .into_iter()
+        .find_map(|(ticket, request)| {
+            matches!(request, Request::ContactsOverview).then_some(ticket)
+        })
+        .expect("the counts are read again");
+    let mut merged = overview(None);
+    merged.total -= 1;
+    for (_, count) in &mut merged.tabs {
+        *count = count.saturating_sub(1);
+    }
+    let effects = focus.handle_on(
+        Input::Reply(ticket, Reply::ContactsOverview(Ok(merged))),
+        &NoRows,
+    );
+    assert_eq!(
+        focus.contacts_row(0).map(|row| row.name),
+        shown_before,
+        "one person fewer still draws the old rows until the page lands"
+    );
+    assert!(
+        asks(&effects)
+            .iter()
+            .any(|(_, request)| matches!(request, Request::ContactsPage { page: 0, .. })),
+        "and the page is read again without the view asking: {effects:?}"
+    );
+}
+
+#[test]
+fn a_change_under_the_sheet_reads_the_queue_again_keeping_the_group_shown() {
+    let mut focus = mac();
+    review(&mut focus);
+    let _ = run(&mut focus, CommandId::ContactShowMail);
+    let changed = focus.handle_on(
+        Input::Event(postio_core::Event::ContactsChanged {
+            names_changed: true,
+        }),
+        &NoRows,
+    );
+    let ticket = asks(&changed)
+        .into_iter()
+        .find_map(|(ticket, request)| match request {
+            Request::ContactReview { first } => {
+                assert_eq!(first, [ContactId::new(3), ContactId::new(4)], "Ben's first");
+                Some(ticket)
+            }
+            _ => None,
+        })
+        .expect("the undo's group may be back: the queue is read again");
+    let mut back = queue();
+    back.rotate_left(1);
+    let _ = run(&mut focus, CommandId::NextMessage);
+    let effects = focus.handle_on(Input::Reply(ticket, Reply::ContactReview(back)), &NoRows);
+    let view = sheet(&effects).expect("redrawn");
+    assert_eq!(
+        view.cards[0].name, "Ben Adeyemi",
+        "the group on screen stays"
+    );
+    assert!(view.cards[1].kept, "with the record chosen to keep");
+    assert_eq!(
+        view.position.as_deref(),
+        Some("2 sets left"),
+        "the undone merge's group is counted again, as the strip counts it"
     );
 }

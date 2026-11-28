@@ -1,48 +1,8 @@
-//! What the two indexes cost next to the text they are built from, measured.
-//!
-//! #407 asked for the saving from moving bodies out of `search_documents` to
-//! be recorded, and a number arrived at by arithmetic would have been worth
-//! nothing: the question is how many *pages* SQLite stops carrying, and that
-//! depends on the tokenizer, the b-tree fanout and how much of a mail corpus
-//! is repeated words. So this builds a store, fills it, and weighs it.
-//!
-//! That saving has since been taken — `b4a54bfe` dropped
-//! `search_documents.body` and the bodies left SQLite — and this measured a
-//! `sum(length(body))` over that column until #1466. It went on doing so for
-//! two changes, broken, because it was `#[ignore]`d for being slow and
-//! nothing anywhere ran the ignored tests; the tier #1450 built is what
-//! finally executed it, and it failed on the first run.
-//!
-//! What is left is the live half, and it is the half worth keeping: what the
-//! metadata and the body index cost against the corpus that produced them.
-//! The corpus is measured at its source — the strings `a_body` builds —
-//! rather than from a column, which is both what the schema now permits and
-//! the better question: it compares an index against its input rather than
-//! against a second copy of it.
-//!
-//! **Weighed on disk, because this engine has no `dbstat`.** There is no
-//! per-b-tree accounting to ask for, so the store is measured as a file
-//! between steps and each figure is a delta. Coarser than `dbstat` in that it
-//! cannot separate a table from its index; truer in that it counts everything
-//! the step adds to the file, which is the number that reaches a disk.
-//!
-//! A bench, not a test: it asserts nothing, and what it prints is only
-//! meaningful next to the account it was run against. It spent a while in
-//! `postio-index`'s test suite on the nightly timer, where it cost ~208 s of
-//! every full suite to print numbers nobody read there. Here `bench.yml`
-//! keeps it compiling and a person runs it when they want the numbers:
-//!
-//! ```text
-//! cargo bench -p postio-bench --bench body_index_size
-//! ```
-
 use postio_index::index::{ensure_schema, index_body};
 use postio_model::{BodyState, EmailAddress, Message};
 use postio_storage::repository::MessageRepository;
 use postio_storage::test_support;
 
-/// Mail-shaped text: a few hundred words with the repetition real mail has —
-/// a quoted parent, a signature, the same handful of names.
 fn a_body(n: usize) -> String {
     let quoted = "> On Monday the analytical engine was mentioned again, and the \
                   question of whether the mill can be made to fold a card back \
@@ -62,10 +22,8 @@ fn a_body(n: usize) -> String {
     text
 }
 
-/// What the store weighs on disk, right now.
-///
-/// The log is folded back into the file first, or this reads a database whose
-/// newest pages are still in `postio.db-wal`.
+/// The log is folded into the file first, or this reads a database whose newest pages are still in
+/// `postio.db-wal`.
 async fn store_bytes(store: &postio_storage::test_support::TempStore) -> i64 {
     store.truncate_log().await.expect("fold the log back in");
     std::fs::metadata(store.directory().join("postio.db"))
@@ -96,7 +54,6 @@ async fn main() {
         text += a_body(n).len() as i64;
         ids.push(message.id.get());
     }
-    // The mail and its metadata index, with no body text anywhere yet.
     let metadata = store_bytes(&database).await - empty;
 
     for (n, id) in ids.iter().enumerate() {

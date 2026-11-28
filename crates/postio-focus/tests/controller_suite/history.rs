@@ -1,11 +1,3 @@
-//! Back and forward between the inbox and search results (spec 010 US2
-//! scenario 4, FR-020, D17, research R9).
-//!
-//! ⌘[ and ⌘] (and the swipe, which the Mac reports as the same commands)
-//! move through what the main window has shown the way a browser moves
-//! through pages: the inbox comes back as it was left, and so do the
-//! results -- their query, tab, sort, focus ring and checked rows.
-
 use crate::search_support::*;
 use postio_core::CommandId;
 use postio_focus::Intent;
@@ -36,7 +28,6 @@ fn back_shows_the_inbox_on_its_cursor_and_selection() {
     let selection = focus.selection();
 
     let _ = search(&mut focus, "atlas budget", &rows);
-    // The results' keys are the results': the inbox behind does not move.
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
     let _ = run(&mut focus, CommandId::ToggleSelection, &rows);
 
@@ -162,8 +153,6 @@ fn back_with_nothing_behind_does_nothing() {
 
 #[test]
 fn esc_from_a_search_run_from_the_results_goes_to_the_inbox() {
-    // Esc's last rung is the inbox (D18), not the search before; ⌘] comes
-    // back to the results Esc left.
     let rows = List::of(3);
     let mut focus = mac();
     let _ = focus.landed(&rows, true);
@@ -176,4 +165,17 @@ fn esc_from_a_search_run_from_the_results_goes_to_the_inbox() {
     assert_eq!(query_view(&effects).expect("the field").words, "harbor");
     let effects = run(&mut focus, CommandId::HistoryBack, &rows);
     assert_eq!(shown(&effects).first(), Some(&Intent::LeaveResults));
+}
+
+#[test]
+fn going_to_a_place_from_the_results_leaves_them() {
+    let rows = List::of(3);
+    let mut focus = mac();
+    let _ = focus.landed(&rows, true);
+    let _ = search(&mut focus, "atlas budget", &rows);
+    assert!(focus.in_results());
+    let effects = run(&mut focus, CommandId::GoToInbox, &rows);
+    assert_eq!(shown(&effects).first(), Some(&Intent::LeaveResults));
+    assert!(!focus.in_results());
+    assert_eq!(focus.key_context(), KeyContext::List);
 }

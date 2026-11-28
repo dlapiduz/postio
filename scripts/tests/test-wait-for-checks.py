@@ -24,8 +24,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -35,8 +33,6 @@ SCRIPT = HERE / "wait-for-checks.sh"
 
 FAILURES: list[str] = []
 
-# Each stub call appends to a counter file and prints the reply for that call,
-# so "nothing, nothing, then a check" is expressible as a list.
 GH_STUB = """#!/usr/bin/env bash
 n=$(cat "$STUB_DIR/calls" 2>/dev/null || echo 0)
 echo $((n + 1)) > "$STUB_DIR/calls"
@@ -62,12 +58,6 @@ exit 0
 """
 
 
-# A workflow of our own, not this repo's real ci.yml. Reading that file
-# incidentally worked until it stopped having a live `pull_request` trigger
-# (paused 2026-08-25 for private-repo Actions minutes -- see ci.yml) and two
-# cases here silently started testing the wrong branch of the script's logic.
-# A fixture that never changes for operational reasons is what this suite
-# actually needs: CODE schedules a check, PROSE does not, always.
 FIXTURE_CI_YML = """\
 name: CI
 on:
@@ -142,9 +132,6 @@ def main() -> int:
         print(f"missing {SCRIPT}", file=sys.stderr)
         return 1
 
-    # The regression. A five-crate change whose workflow never registers must
-    # refuse to merge. Before #139 this printed "nothing to wait for" and the
-    # caller merged.
     case(
         "a code change with no check ever must refuse to merge",
         diff=CODE,
@@ -152,8 +139,6 @@ def main() -> int:
         expected_status=1,
         expect_output="Not merging",
     )
-    # The other half of the same race: the check is simply late. Reading that
-    # as "nothing scheduled" cost a re-run on three consecutive issues.
     case(
         "a check that registers late is waited for, not given up on",
         diff=CODE,
@@ -175,8 +160,6 @@ def main() -> int:
         expected_status=1,
         expect_output="Checks failed",
     )
-    # The failure the old heuristic existed to avoid: ci.yml ignores prose on
-    # purpose, so a docs branch must not block on a check nobody scheduled.
     case(
         "a prose-only change does not block on a check nobody scheduled",
         diff=PROSE,
@@ -184,8 +167,6 @@ def main() -> int:
         expected_status=0,
         expect_output="nothing to wait for",
     )
-    # ...but if one shows up anyway -- a rerun, a workflow_dispatch, a filter
-    # this script read differently from GitHub -- its verdict still counts.
     case(
         "a check that appears on a prose branch anyway is still obeyed",
         diff=PROSE,
@@ -194,8 +175,6 @@ def main() -> int:
         expected_status=1,
         expect_output="Checks failed",
     )
-    # An empty JSON array is `gh`'s other way of saying nothing is registered,
-    # and reading it as a check would merge on the strength of a stale answer.
     case(
         "an empty check array is not a registered check",
         diff=CODE,
@@ -203,11 +182,6 @@ def main() -> int:
         expected_status=1,
         expect_output="Not merging",
     )
-    # #161: `--watch --fail-fast` returned success two seconds before CI's own
-    # FAILURE conclusion was recorded, and issue-land.sh merged the red
-    # commit. `watch_status=0` here plays that exact race -- the watch call
-    # claims success -- and the second, non-watching read has to be the one
-    # that actually refuses.
     case(
         "watch claiming success is not trusted on its own -- issue #161",
         diff=CODE,

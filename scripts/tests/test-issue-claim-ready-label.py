@@ -37,8 +37,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -153,9 +151,6 @@ def main() -> int:
         base = Path(raw)
         repo, stub_dir = world(base)
 
-        # Default queue. #11 is p0 and #10 only p1, so if the label were being
-        # ignored the ranking would hand back #11 -- which makes this a real
-        # assertion rather than an accident of ordering.
         result = run_claim(repo, stub_dir, base, "--dry-run")
         case(
             "the default queue offers the ready issue",
@@ -168,7 +163,6 @@ def main() -> int:
             "a macOS issue was offered to an ordinary claim",
         )
 
-        # The other queue.
         result = run_claim(repo, stub_dir, base, "--ready-label", "ready-mac", "--dry-run")
         case(
             "--ready-label offers the macOS issue",
@@ -186,9 +180,6 @@ def main() -> int:
             "the second queue bypassed the never-claimable labels",
         )
 
-        # The skip reason has to name the queue, or a session that passed the
-        # wrong one reads "not labelled ready" and goes looking for the wrong
-        # problem.
         result = run_claim(repo, stub_dir, base, "--ready-label", "nonexistent-queue", "--dry-run")
         out = result.stdout + result.stderr
         case(
@@ -197,7 +188,6 @@ def main() -> int:
             f"the label is not named in the output:\n{out}",
         )
 
-        # Environment variable, and the flag winning over it.
         result = run_claim(repo, stub_dir, base, "--dry-run", env_label="ready-mac")
         case(
             "POSTIO_READY_LABEL selects the queue",

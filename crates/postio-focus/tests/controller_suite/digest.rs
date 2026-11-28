@@ -1,16 +1,4 @@
-//! The digest window and the digest rule dialog, from the controller's side
-//! (specs/009-focus-macos T108; spec 007 US10, US13, US14; screens 22-24).
-//!
-//! What GTK's `digest.rs`, `rule_dialog.rs` and the window's digest handlers
-//! did, asserted here so the Mac's digest window behaves the same: a digest
-//! opens on its summary when the person has brought a model and on its plain
-//! list otherwise (C6); `]`/`[` walk the references; Return opens a
-//! reference's email in the digest's own window and Esc comes back to the
-//! same reference; `⇧A` archives the delivery; `D` stops digesting a sender
-//! only once confirmed; `d` opens the rule dialog filled in. On the Mac a
-//! message from the digest's list opens in the digest's window too (M4).
-
-use crate::search_support::{asks, shown};
+use crate::search_support::{asks, footer_of, shown};
 use chrono::Utc;
 use postio_config::paths::Platform;
 use postio_config::{Config, FocusConfig};
@@ -27,7 +15,6 @@ use postio_ui::keymap::KeyContext;
 
 const DELIVERY: i64 = 40;
 
-/// A message of the digest, or of the list: `id`, from `address`.
 fn message(id: i64, name: &str, address: &str, subject: &str) -> MessageSummary {
     MessageSummary {
         id: MessageId::new(id),
@@ -47,7 +34,6 @@ fn message(id: i64, name: &str, address: &str, subject: &str) -> MessageSummary 
     }
 }
 
-/// The list: a digest's row on top, then two conversations.
 struct List;
 
 impl List {
@@ -108,7 +94,6 @@ fn linux() -> FocusController {
     FocusController::new(Policy::for_platform(Platform::Freedesktop))
 }
 
-/// `[focus]` with the Newsletters rule, and a model when `model`.
 fn config(model: bool) -> FocusConfig {
     let mut text =
         "[[focus.digests]]\nname = \"Newsletters\"\nmatch = [\"from:news@ledger.example\"]\n\
@@ -136,7 +121,6 @@ fn drawn(effects: &[Effect]) -> Option<DigestView> {
         })
 }
 
-/// What the delivery holds: three messages from Ledger and Forge.
 fn held() -> Vec<MessageSummary> {
     vec![
         message(1, "Ledger", "news@ledger.example", "Rates"),
@@ -145,7 +129,6 @@ fn held() -> Vec<MessageSummary> {
     ]
 }
 
-/// A summary citing the first and third messages.
 fn summary() -> DigestSummary {
     let statement = |topic: &str, number: u32, message: i64, excerpt: &str| SummaryStatement {
         topic: topic.to_owned(),
@@ -166,8 +149,6 @@ fn summary() -> DigestSummary {
     }
 }
 
-/// `Return` on the digest's row with `[focus]` as `config`, and the reads
-/// answered: what the window draws once they land.
 fn open(focus: &mut FocusController, config: FocusConfig) -> (Vec<Effect>, Vec<Effect>) {
     let _ = focus.handle(Input::Config(config));
     let _ = focus.landed(&List, true);
@@ -222,7 +203,6 @@ fn a_digest_opens_on_its_summary_with_a_model_and_on_its_list_without() {
         .collect();
     assert_eq!(numbers, [1, 2], "numbered references");
 
-    // C6: no model, no summary asked for, and the list is what opens.
     let mut focus = mac();
     let (opening, landed) = open(&mut focus, config(false));
     assert!(
@@ -242,7 +222,6 @@ fn brackets_step_the_references_and_stop_at_the_ends() {
     let _ = open(&mut focus, config(true));
     let view = drawn(&run(&mut focus, CommandId::NextReference)).expect("redrawn");
     assert_eq!(view.focused_reference, Some(1));
-    // The list's focus follows the reference: `D` and `U` act on its mail.
     assert_eq!(view.focused, Some(2));
     let view = drawn(&run(&mut focus, CommandId::NextReference)).expect("redrawn");
     assert_eq!(view.focused_reference, Some(1), "clamped at the last");
@@ -290,7 +269,6 @@ fn undoing_the_window_s_archive_puts_the_cursor_back_on_the_digests_row() {
     let mut focus = mac();
     let _ = open(&mut focus, config(true));
     let _ = run(&mut focus, CommandId::Archive);
-    // The window closed; the cursor moves off the row that is going.
     let _ = run(&mut focus, CommandId::NextMessage);
     let _ = focus.handle(Input::Event(postio_core::Event::UndoPerformed {
         description: "Archived a digest".into(),
@@ -350,7 +328,6 @@ fn shift_d_stops_digesting_the_sender_only_once_confirmed() {
             kept: None,
         })]
     );
-    // An answer for a question since replaced does nothing.
     assert!(
         focus
             .handle_on(Input::Confirmed(confirm.token), &List)
@@ -395,7 +372,6 @@ fn on_the_mac_a_message_from_the_digests_list_opens_in_the_digests_window() {
     assert!(!shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Digest)));
     assert_eq!(drawn(&effects).expect("in place").page, DigestPage::Email);
     assert_eq!(focus.key_context(), KeyContext::Digest);
-    // `j` walks the digest's messages in place.
     let effects = run(&mut focus, CommandId::NextMessage);
     assert!(shown(&effects).contains(&Intent::OpenMessage {
         message: MessageId::new(3),
@@ -406,7 +382,6 @@ fn on_the_mac_a_message_from_the_digests_list_opens_in_the_digests_window() {
     let back = drawn(&run(&mut focus, CommandId::Back)).expect("back to the list");
     assert_eq!(back.page, DigestPage::List);
 
-    // Linux stacks: its reading dialog opens over the digest.
     let mut focus = linux();
     let _ = open(&mut focus, config(false));
     let effects = run(&mut focus, CommandId::OpenMessage);
@@ -426,10 +401,7 @@ fn a_digest_takes_no_verb_meant_for_the_list_behind_it() {
     let mut focus = mac();
     let _ = open(&mut focus, config(false));
     assert_eq!(focus.key_context(), KeyContext::Digest);
-    // The list's cursor on a conversation, behind the digest.
     let _ = focus.handle_on(Input::Point(1), &List);
-    // Not `Archive`: in a digest it archives the digest (`archive_thread`'s
-    // old job, and the next test's).
     for command in [CommandId::Delete, CommandId::ToggleRead] {
         let effects = run(&mut focus, command);
         assert!(asks(&effects).is_empty(), "{command:?}: {effects:?}");
@@ -483,7 +455,6 @@ fn d_opens_the_rule_dialog_filled_in_with_the_senders_and_a_preview() {
     );
     assert_eq!(view.more.as_deref(), Some("and 8 more"));
 
-    // Create writes the rule, closes, and says so.
     let effects = focus.handle_on(Input::RuleCreate, &List);
     let [
         (
@@ -530,10 +501,8 @@ fn d_in_a_digest_edits_its_rule() {
     assert_eq!(view.from.as_deref(), Some("from:news@ledger.example"));
 }
 
-/// Escape on the rule sheet, and its Cancel (which is Back): the controller
-/// closes it and the Mac says nothing back, so the dialog is off the stack
-/// at once and the list's keys work again, not swallowed by a dialog that
-/// is no longer there.
+/// The controller closes the rule sheet and the Mac says nothing back, so the list's keys are not
+/// swallowed.
 #[test]
 fn back_on_the_rule_dialog_gives_the_keyboard_back() {
     let mut focus = mac();
@@ -556,4 +525,59 @@ fn back_on_the_rule_dialog_gives_the_keyboard_back() {
         rule(&run(&mut focus, CommandId::DigestRule)).is_some(),
         "and `d` opens a fresh dialog"
     );
+}
+
+/// The row before it must not stay up with reply, forward and archive for a message the cursor has
+/// left (#2203).
+#[test]
+fn the_footer_on_a_digest_row_names_the_digest_not_the_row_before() {
+    let mut focus = linux();
+    let _ = run(&mut focus, CommandId::FirstMessage);
+    let away = run(&mut focus, CommandId::NextMessage);
+    assert_eq!(focus.cursor(), Some(1));
+    let before = footer_of(&away).expect("a footer on a conversation");
+    assert_ne!(before.title, "");
+    let back = run(&mut focus, CommandId::PrevMessage);
+    assert_eq!(focus.cursor(), Some(0));
+    let footer = footer_of(&back).expect("the footer follows the cursor onto the digest");
+    assert_eq!(footer.title, "Newsletters \u{b7} 3 messages");
+    let said: Vec<&str> = footer.keys.iter().map(|(_, l)| l.as_str()).collect();
+    assert_eq!(said, ["move", "open", "archive digest"]);
+}
+
+#[test]
+fn a_rule_named_from_a_list_of_rules_opens_its_dialog_and_a_missing_one_says_so() {
+    let mut focus = mac();
+    let _ = focus.handle(Input::Config(config(false)));
+    let effects = focus.handle_on(
+        Input::EditRule {
+            name: "Newsletters".to_owned(),
+        },
+        &List,
+    );
+    let view = rule(&effects).expect("the dialog opens");
+    assert_eq!(
+        view.heading,
+        postio_ui::digest::edit_rule_heading("Newsletters")
+    );
+    assert_eq!(view.from.as_deref(), Some("from:news@ledger.example"));
+    assert!(
+        asks(&effects)
+            .iter()
+            .any(|(_, request)| matches!(request, Request::DigestPreview { .. })),
+        "{effects:?}"
+    );
+
+    let mut other = mac();
+    let effects = other.handle_on(
+        Input::EditRule {
+            name: "Gone".to_owned(),
+        },
+        &List,
+    );
+    assert!(rule(&effects).is_none());
+    assert!(shown(&effects).iter().any(|intent| matches!(
+        intent,
+        Intent::Toast { text, .. } if text == postio_ui::focus_target::RULE_MISSING
+    )));
 }

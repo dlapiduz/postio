@@ -31,8 +31,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Past this, it is worth a person's attention: a handful of leaked temp dirs
-# from one test run is normal wear, not a leak worth stopping to look at.
 WARN_BYTES = 200 * 1024 * 1024  # 200 MiB
 WARN_ENTRIES = 50
 

@@ -1,7 +1,3 @@
-//! `A`: open an attachment or a link (US2 scenario 9, T071). The message's
-//! links and parts are offered, each link's full target shown before
-//! anything opens, and nothing opens until one is chosen.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -9,9 +5,6 @@ use crate::support::{self, Fixture};
 
 pub fn o_offers_the_links_and_parts_and_opens_only_what_is_chosen() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let message = fixture.file_with_attachment("Invoice", "report.pdf").await;
         fixture
@@ -21,10 +14,7 @@ pub fn o_offers_the_links_and_parts_and_opens_only_what_is_chosen() {
             )
             .await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 1).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 1).await;
         let launched: Rc<RefCell<Vec<String>>> = Rc::default();
         window.set_launcher({
             let launched = Rc::clone(&launched);

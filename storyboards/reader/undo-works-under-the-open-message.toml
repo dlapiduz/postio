@@ -9,6 +9,12 @@
 # the message the person was reading back in the list, and the open message
 # goes back to it with the list's cursor: the two never point at different
 # conversations (US2 scenario 2).
+#
+# The conversation is expanded, and the window opened from its last child.
+# Deleting it leaves the list where it was, and the window goes on to the row
+# that took the thread's place; undo brings the thread back expanded, with
+# the cursor on that child, so closing the window shows the list it was
+# opened over (#2238).
 source = { kind = "commit", ref = "88c1f0f7" }
 proof  = "pinned"
 apps   = ["focus"]
@@ -43,13 +49,22 @@ command = "next_message"
 [[step]]
 command = "next_message"
 [[step]]
+id      = "opened"
 command = "open_message"
 settle  = { until = { view = "reader" } }
+check   = { rows.count = 67, cursor.index = 10 }
 [[step]]
 command = "delete"
-check   = { view = "reader", rows.count = 60, notice.undo = true }
+check   = { view = "reader", rows.count = 60, cursor.index = 4, notice.undo = true, notice.text = "Deleted 1 thread (6 messages)", app.focus.footer.labels = "reply to this | forward this | archive thread", app.focus.list.scroll = { same_as = "opened" } }
+expect  = "The conversation is deleted and the window goes on to the next message, the row that took the thread's place, with that message's window footer (#2227). The list behind does not scroll: the Today heading and the rows above stay where they were. The toast counts the thread and the six messages that went with it (#2232)."
 
 [[step]]
+id      = "undone"
 command = "undo"
-check   = { rows.count = 61, reading.id = "90", cursor.id = "90", view = "reader", app.focus.reading.position = "Message 4 of 60 · thread of 6" }
-expect  = "Undo restores the conversation, as it does from the list, and takes the open message back to it: the cursor is on it, and the header's place is its own."
+check   = { rows.count = 67, cursor.index = 10, reading.id = "90", view = "reader", app.focus.reading.position = "Message 6 of 6", app.focus.list.scroll = { same_as = "opened" } }
+expect  = "Undo restores the conversation, as it does from the list, expanded as it was, and takes the open message back to it: the cursor is on the child the window was opened from, and the header's place is its own in the thread, as when it was first opened."
+
+[[step]]
+command = "back"
+check   = { view = "list", keyboard.region = "list", rows.count = 67, cursor.index = 10, app.focus.list.scroll = { same_as = "opened" } }
+expect  = "Closing the window shows the list it was opened over: the thread expanded, the cursor on its last child, nothing scrolled."

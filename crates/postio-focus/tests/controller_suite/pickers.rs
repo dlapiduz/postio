@@ -1,17 +1,3 @@
-//! The pickers at the row and the toast's policy, from the controller's side
-//! (specs/009-focus-macos T088; research R2, slice 9).
-//!
-//! What GTK's window and pickers did -- `open_when`, `open_labels`,
-//! `open_moves`, the picker chosen becoming a sent command, and the toast's
-//! rules in `postio-widgets` -- asserted here so both frontends get it: `s`,
-//! `h`, `l` and `m` open their picker at the cursor's row, or at the open
-//! message; a number key picks a numbered row; a typed date reads the same
-//! on either platform; Space puts a label on or takes it off, and a name
-//! nobody has makes one; Move offers the last two destinations as `1` and
-//! `2`; what is chosen goes where the picker aimed when it opened; and the
-//! toast stays eight seconds, a new one replaces the old, and a queued
-//! send's own Undo is the one Undo runs first.
-
 use crate::search_support::{asks, shown};
 use chrono::{DateTime, Local, TimeZone, Utc};
 use postio_config::paths::Platform;
@@ -26,7 +12,6 @@ use postio_model::{
 use postio_ui::keymap::KeyContext;
 use postio_ui::pickers;
 
-/// A list of conversations, each from Ada about "Subject n".
 struct List {
     rows: Vec<RowFacts>,
 }
@@ -64,7 +49,6 @@ impl Rows for List {
     }
 }
 
-/// Saturday 26 September 2026, 16:09 here: the clock every test stops.
 fn saturday_afternoon() -> DateTime<Local> {
     local_at(2026, 9, 26, 16, 9)
 }
@@ -93,7 +77,6 @@ fn asked(effects: &[Effect]) -> Vec<Request> {
         .collect()
 }
 
-/// The picker as it was opened among `effects`.
 fn opened(effects: &[Effect]) -> PickerView {
     shown(effects)
         .into_iter()
@@ -104,7 +87,6 @@ fn opened(effects: &[Effect]) -> PickerView {
         .unwrap_or_else(|| panic!("no picker opened in {effects:?}"))
 }
 
-/// The picker's last view among `effects`: opened or redrawn.
 fn view(effects: &[Effect]) -> PickerView {
     shown(effects)
         .into_iter()
@@ -116,7 +98,6 @@ fn view(effects: &[Effect]) -> PickerView {
         .unwrap_or_else(|| panic!("no picker drawn in {effects:?}"))
 }
 
-/// The token of the row named `name`.
 fn token(view: &PickerView, name: &str) -> u64 {
     view.rows
         .iter()
@@ -129,7 +110,6 @@ fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effe
     focus.handle_on(Input::Command(command), rows)
 }
 
-/// The one command sent among `effects`, with where it went.
 fn sent(effects: &[Effect]) -> (Command, Vec<MessageTarget>) {
     let sends: Vec<(Command, Vec<MessageTarget>)> = asked(effects)
         .into_iter()
@@ -159,8 +139,6 @@ fn folder(id: i64, name: &str, role: MailboxRole) -> Mailbox {
     folder
 }
 
-/// The labels one account has: Atlas on both of the first two
-/// conversations, Harbor on none.
 fn labels_read() -> LabelsRead {
     LabelsRead {
         account: AccountId::new(1),
@@ -173,7 +151,6 @@ fn labels_read() -> LabelsRead {
     }
 }
 
-/// Answer the one picker read among `effects` with `reply`.
 fn answer(
     focus: &mut FocusController,
     effects: &[Effect],
@@ -216,7 +193,6 @@ fn s_h_l_and_m_open_their_picker_at_the_cursors_row() {
         assert_eq!(view.target, "Ada Example \u{b7} Subject 1");
         assert_eq!(focus.key_context(), KeyContext::Picker, "{kind:?}");
 
-        // Back closes it, and the keyboard goes home.
         let back = run(&mut focus, CommandId::Back, &rows);
         assert!(closes_the_picker(&back), "{back:?}");
         assert!(shown(&back).contains(&Intent::KeyboardHome));
@@ -257,7 +233,6 @@ fn the_label_and_move_pickers_read_what_they_list_when_they_open() {
 fn from_the_open_message_a_picker_hangs_from_it_and_aims_at_the_message() {
     let rows = List::of(3);
     let mut focus = mac();
-    // Row 0 is selected; the message open is row 2's.
     focus.handle_on(Input::Point(0), &rows);
     run(&mut focus, CommandId::ToggleSelection, &rows);
     focus.handle_on(Input::Point(2), &rows);
@@ -446,7 +421,6 @@ fn space_toggles_a_label_on_the_aim_and_return_closes() {
     assert_eq!(harbor.detail, "0");
     assert!(harbor.key.is_none(), "labels are not numbered");
 
-    // Space on Harbor puts it on both conversations; the picker stays.
     let effects = focus.handle_on(Input::PickerToggle(token(&listed, "Harbor")), &rows);
     let (command, aims) = sent(&effects);
     assert_eq!(
@@ -475,7 +449,6 @@ fn space_toggles_a_label_on_the_aim_and_return_closes() {
             .applied
     );
 
-    // Space on Atlas takes it off.
     let effects = focus.handle_on(Input::PickerToggle(token(&listed, "Atlas")), &rows);
     assert_eq!(
         sent(&effects).0,
@@ -486,7 +459,6 @@ fn space_toggles_a_label_on_the_aim_and_return_closes() {
         }
     );
 
-    // Return closes, and the selection it acted on goes.
     let effects = run(&mut focus, CommandId::PickerConfirm, &rows);
     assert!(closes_the_picker(&effects));
     assert!(asked(&effects).is_empty(), "Return sends nothing more");
@@ -628,7 +600,6 @@ fn a_move_just_made_is_recent_before_the_store_has_noted_it() {
     let effects = run(&mut focus, CommandId::Move, &rows);
     let effects = answer(&mut focus, &effects, &rows, |stamp| Reply::Folders {
         stamp,
-        // The store has not noted the move yet.
         answer: Ok(FoldersRead {
             folders: folders(),
             recent: vec![MailboxId::new(3)],
@@ -662,7 +633,6 @@ fn what_is_chosen_goes_where_the_picker_aimed_when_it_opened() {
         }),
     };
     let effects = answer(&mut focus, &effects, &rows, reply);
-    // A click elsewhere in the list moves the cursor behind the picker.
     focus.handle_on(Input::Point(2), &rows);
     let effects = focus.handle_on(
         Input::PickerChoose(token(&view(&effects), "Receipts")),
@@ -681,7 +651,6 @@ fn an_answer_for_a_picker_since_closed_changes_nothing() {
     let mut focus = mac();
     focus.handle_on(Input::Point(0), &rows);
     let effects = run(&mut focus, CommandId::AddLabel, &rows);
-    // Closed however it was: Esc in its field, a click outside.
     focus.handle_on(Input::SurfaceClosed(SurfaceKind::Picker), &rows);
     assert_eq!(focus.key_context(), KeyContext::List);
     let late = answer(&mut focus, &effects, &rows, |stamp| Reply::Labels {
@@ -774,7 +743,6 @@ fn a_queued_sends_own_undo_runs_first_until_a_new_toast_replaces_it() {
         "once: the next Undo is the stack's"
     );
 
-    // A scheduled send says so; a toast after it takes its Undo away.
     let effects = focus.handle(Input::SendQueued {
         draft,
         at: Some(Utc::now()),
@@ -803,7 +771,6 @@ fn a_label_typed_before_the_labels_land_is_made_once_they_do() {
     let mut focus = mac();
     focus.handle_on(Input::Point(0), &rows);
     let opening = run(&mut focus, CommandId::AddLabel, &rows);
-    // Typed and confirmed before the read lands: no account to make it in.
     focus.handle_on(
         Input::PickerTyped {
             text: "Receipts".to_owned(),
@@ -871,4 +838,26 @@ fn a_name_typed_early_that_turns_out_to_exist_is_put_on_not_made() {
         }
     );
     assert!(closes_the_picker(&effects));
+}
+
+#[test]
+fn a_reminder_for_the_draft_is_handed_back_and_sends_nothing() {
+    let rows = List::of(1);
+    let mut focus = mac();
+    let effects = focus.open_draft_reminder("Plans");
+    let view = opened(&effects);
+    assert_eq!(view.kind, PickerKind::Remind);
+    assert_eq!(view.target, "Plans");
+    let effects = focus.handle_on(Input::PickerChoose(token(&view, "Tomorrow")), &rows);
+    assert!(closes_the_picker(&effects), "{effects:?}");
+    assert!(
+        asked(&effects).is_empty(),
+        "no mail was aimed at: {effects:?}"
+    );
+    assert!(
+        shown(&effects).contains(&Intent::DraftReminder {
+            at: local_at(2026, 9, 27, 9, 0).to_utc()
+        }),
+        "{effects:?}"
+    );
 }

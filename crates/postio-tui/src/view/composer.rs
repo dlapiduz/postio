@@ -1,5 +1,3 @@
-//! The composer, in the reading pane (US3).
-
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
@@ -12,12 +10,8 @@ use crate::theme::{Role, Theme};
 use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 
-/// The width of the field labels, so the values line up.
 const LABEL: u16 = 9;
 
-/// The composer in `area`: its three header rows -- Detach, the title and
-/// close; what will be sent and what has happened to the draft; the verbs --
-/// then a hairline, and under it the fields and the body.
 pub fn screen(
     frame: &mut Frame,
     area: Rect,
@@ -44,7 +38,6 @@ pub fn screen(
         );
     };
 
-    // Row 1: Detach, the title, Esc ✕.
     let detach = match app.hint(postio_core::CommandId::DetachComposer) {
         Some(key) => format!("Detach {}", cap(&key)),
         None => "Detach".to_owned(),
@@ -76,7 +69,6 @@ pub fn screen(
         Rect::new(at, area.y, u16::try_from(title.width()).unwrap_or(0), 1),
     );
 
-    // Row 2: what will be sent, and what has happened to the draft.
     let words = composer.words();
     let summary = format!(
         "Markdown · {}",
@@ -99,7 +91,6 @@ pub fn screen(
         ),
     );
 
-    // Row 3: the verbs, the first the one a message is for.
     let remind_key = app
         .keymap()
         .bindings(postio_core::CommandId::RemindIfNoReply)
@@ -160,17 +151,24 @@ pub fn screen(
         Rect::new(area.x, area.y + 3, area.width, 1),
     );
 
-    // The fields and the body.
-    let body = Rect::new(area.x, area.y + 4, area.width, area.height - 4);
+    let writing = app.writing();
+    let top = thread_rows(frame, area, area.y + 4, writing, theme, hits);
+    let body = Rect::new(
+        area.x,
+        top,
+        area.width,
+        (area.y + area.height).saturating_sub(top),
+    );
     draw(
         frame,
         body,
         composer,
         app.preview_shown(),
         app.focus() == crate::app::Focus::Composer
+            && !writing.on_chooser
             && app.scheduling().is_none()
             && app.path_prompt().is_none(),
-        &[],
+        writing.quoted,
         theme,
         hits,
     );
@@ -182,8 +180,115 @@ pub fn screen(
     }
 }
 
-/// Draw `composer` into `area`; with `focused`, the terminal's cursor goes
-/// where the next letter will land.
+fn thread_rows(
+    frame: &mut Frame,
+    area: Rect,
+    y: u16,
+    writing: &crate::app::Writing,
+    theme: &Theme,
+    hits: &mut Hits,
+) -> u16 {
+    use crate::surface::Part;
+    use crate::view::bottom::cap;
+    use unicode_width::UnicodeWidthStr;
+    let mut rows = Rect::new(area.x + 1, y, area.width.saturating_sub(2), 0);
+    let end = area.y + area.height;
+    let (dim, text) = (theme.style(Role::Dim), theme.style(Role::Text));
+    let room = usize::from(rows.width);
+    let mut put =
+        |frame: &mut Frame, hits: &mut Hits, spans: Vec<(Span<'static>, Option<Target>)>| {
+            let y = rows.y + rows.height;
+            if y >= end {
+                return;
+            }
+            let mut x = rows.x;
+            for (span, target) in spans {
+                let wide = u16::try_from(span.content.width())
+                    .unwrap_or(u16::MAX)
+                    .min((rows.x + rows.width).saturating_sub(x));
+                let rect = Rect::new(x, y, wide, 1);
+                frame.render_widget(Line::from(span), rect);
+                if let Some(target) = target {
+                    hits.add(rect, target);
+                }
+                x = x.saturating_add(wide + 2);
+            }
+            rows.height += 1;
+        };
+    let plain = |words: String, style| vec![(Span::styled(fit(&words, room), style), None)];
+    if let Some(chooser) = &writing.chooser {
+        let mark = if writing.on_chooser { "▌" } else { " " };
+        put(
+            frame,
+            hits,
+            plain(format!("{mark}{}", chooser.heading), dim),
+        );
+        for (index, card) in chooser.cards.iter().enumerate() {
+            let chosen = card.form == chooser.selected;
+            let key = card.key.as_deref().map(cap).unwrap_or_default();
+            let said = format!(
+                " {} {key} {} \u{b7} {}",
+                if chosen { "●" } else { "○" },
+                card.title,
+                card.detail
+            );
+            let style = if chosen {
+                theme.style(Role::Accent).add_modifier(Modifier::BOLD)
+            } else {
+                text
+            };
+            let target = Some(Target::Surface(Part::ForwardCard, index));
+            put(
+                frame,
+                hits,
+                vec![(Span::styled(fit(&said, room), style), target)],
+            );
+        }
+    }
+    if let Some(older) = &writing.older {
+        put(
+            frame,
+            hits,
+            plain(older.title.clone(), text.add_modifier(Modifier::BOLD)),
+        );
+        for line in crate::view::wrap::wrap(&Line::styled(older.detail.clone(), dim), room) {
+            put(frame, hits, plain(line.to_string(), dim));
+        }
+        let actions = older
+            .actions
+            .iter()
+            .zip(["show_newer", "reply_to_latest"])
+            .map(|(action, id)| {
+                let said = match &action.key {
+                    Some(key) => format!("{} {}", action.label, cap(key)),
+                    None => action.label.clone(),
+                };
+                (Span::styled(said, text), Some(Target::ComposerAction(id)))
+            })
+            .collect();
+        put(frame, hits, actions);
+    }
+    // Everything in them came from a sender.
+    for newer in &writing.newer {
+        let who = newer.from.as_ref().map_or("Someone", |from| from.display());
+        let when = newer.received_at.with_timezone(&chrono::Local);
+        let said = format!(
+            "{who} \u{b7} {}  {}",
+            when.format("%a %-d %b %H:%M"),
+            newer.preview.as_deref().unwrap_or_default()
+        );
+        put(
+            frame,
+            hits,
+            plain(SafeText::new(&said).as_str().to_owned(), dim),
+        );
+    }
+    if writing.chooser.is_some() || writing.older.is_some() {
+        put(frame, hits, plain("─".repeat(room), dim));
+    }
+    (rows.y + rows.height).min(end)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
     frame: &mut Frame,
@@ -191,7 +296,7 @@ pub fn draw(
     composer: &Composer,
     preview: Option<postio_config::Preview>,
     focused: bool,
-    actions: &[Action],
+    quoted: bool,
     theme: &Theme,
     hits: &mut Hits,
 ) {
@@ -248,7 +353,6 @@ pub fn draw(
             y = draw_suggestions(frame, area, y, composer, theme);
         }
     }
-    // A rule between the headers and the body, as a sent message has.
     if y < area.y + area.height {
         frame.render_widget(
             Line::styled("─".repeat(usize::from(area.width)), theme.style(Role::Dim)),
@@ -257,14 +361,7 @@ pub fn draw(
         y += 1;
     }
     let mut height = (area.y + area.height).saturating_sub(y);
-    // The buttons along the foot, as the desktop's composer has them: what
-    // each does, and the key this terminal can send for it.
-    if !actions.is_empty() && height > 2 {
-        height -= 1;
-        draw_actions(frame, area.x, y + height, area.width, actions, theme, hits);
-    }
-    // The draft's files, under the body: each by name and size, the way the
-    // desktop lists them. A forwarded file's name is the sender's.
+    // A forwarded file's name is the sender's.
     let files = composer.attachments();
     let shown = files.len().min(ATTACHMENTS);
     let mut listed: Vec<Line> = files[..shown]
@@ -287,6 +384,31 @@ pub fn draw(
             theme.style(Role::Dim),
         ));
     }
+    let key = postio_ui::terminal::deliverable_binding(
+        postio_core::Keymap::defaults(),
+        postio_core::CommandId::AttachRemoteImage,
+        false,
+    )
+    .unwrap_or_default();
+    let remote = composer.remote_rows(&key);
+    if !remote.is_empty() {
+        listed.push(Line::styled(
+            postio_ui::compose::NOT_ATTACHED_YET,
+            theme.style(Role::Dim),
+        ));
+    }
+    for (alt, words) in remote {
+        let alt = SafeText::new(if alt.is_empty() { "image" } else { &alt });
+        listed.push(Line::from(vec![
+            Span::styled("\u{1f5bc} ", theme.style(Role::Dim)),
+            Span::styled(alt.as_str().to_owned(), theme.style(Role::Text)),
+            Span::styled(format!("  {words}"), theme.style(Role::Dim)),
+            Span::styled(
+                format!("  {} {key}", postio_ui::compose::DOWNLOAD_AND_ATTACH),
+                theme.style(Role::Dim),
+            ),
+        ]));
+    }
     let needed = u16::try_from(listed.len()).unwrap_or(u16::MAX);
     if needed > 0 && height > needed {
         height -= needed;
@@ -295,23 +417,36 @@ pub fn draw(
             frame.render_widget(line, Rect::new(area.x, row, area.width, 1));
         }
     }
-    // A reply's quote, folded to one line under the body: it is sent, it is
-    // not edited here, and it would otherwise push what is being written off
-    // the screen.
-    let quoted = composer.quote_lines();
-    if quoted > 0 && height > 1 {
-        height -= 1;
-        let summary = match quoted {
-            1 => "▸ Quoted message, 1 line".to_owned(),
-            lines => format!("▸ Quoted message, {lines} lines"),
+    // Folded unless the controller says otherwise: it is sent, not edited here, and whole it
+    // would push what is being written off the screen.
+    let lines = composer.quote_lines();
+    if lines > 0 && height > 1 {
+        let text = composer.quote();
+        let shown: Vec<&str> = match quoted {
+            true => text.lines().take(usize::from(height / 2)).collect(),
+            false => Vec::new(),
         };
-        frame.render_widget(
-            Line::styled(
-                fit(&summary, usize::from(area.width)),
-                theme.style(Role::Quote),
-            ),
-            Rect::new(area.x, y + height, area.width, 1),
+        height -= 1 + u16::try_from(shown.len()).unwrap_or(0);
+        let summary = format!(
+            "{} Quoted message, {lines} line{}",
+            if quoted { "▾" } else { "▸" },
+            if lines == 1 { "" } else { "s" }
         );
+        let style = theme.style(Role::Quote);
+        let words = std::iter::once(summary).chain(shown.iter().map(|line| (*line).to_owned()));
+        for (offset, said) in words.enumerate() {
+            let row = Rect::new(
+                area.x,
+                y + height + u16::try_from(offset).unwrap_or(0),
+                area.width,
+                1,
+            );
+            frame.render_widget(
+                Line::styled(fit(&said, usize::from(area.width)), style),
+                row,
+            );
+            hits.add(row, Target::ComposerAction("expand_quoted"));
+        }
     }
     if height == 0 {
         return;
@@ -346,7 +481,6 @@ pub fn draw(
     }
 }
 
-/// The message as it will arrive, from its top, in `area`.
 fn draw_preview(frame: &mut Frame, area: Rect, composer: &Composer) {
     let lines = composer.preview().lines();
     for (offset, line) in lines.into_iter().take(usize::from(area.height)).enumerate() {
@@ -355,15 +489,10 @@ fn draw_preview(frame: &mut Frame, area: Rect, composer: &Composer) {
     }
 }
 
-/// How many of a draft's files are listed by name before the rest are
-/// counted.
 const ATTACHMENTS: usize = 4;
 
-/// How many suggestions are shown at once.
 const SUGGESTIONS: usize = 5;
 
-/// Recipient suggestions under the field being typed in, from row `y`;
-/// answers the row after them.
 fn draw_suggestions(
     frame: &mut Frame,
     area: Rect,
@@ -393,51 +522,6 @@ fn draw_suggestions(
     y
 }
 
-/// The schedule-send picker, over the bottom of the composer: the four
-/// One of the composer's buttons: its key as this terminal sends it, what it
-/// says, and the command it runs.
-pub type Action = (String, &'static str, &'static str);
-
-/// The buttons, left to right: the first is the one a message is for, and
-/// is filled; the rest are words with their keys.
-fn draw_actions(
-    frame: &mut Frame,
-    x: u16,
-    y: u16,
-    width: u16,
-    actions: &[Action],
-    theme: &Theme,
-    hits: &mut Hits,
-) {
-    let mut at = x;
-    let end = x + width;
-    for (index, (key, word, id)) in actions.iter().enumerate() {
-        let label = format!(" {word} {key} ");
-        let wide = u16::try_from(unicode_width::UnicodeWidthStr::width(label.as_str()))
-            .unwrap_or(u16::MAX);
-        if at + wide > end {
-            break;
-        }
-        let line = if index == 0 {
-            let filled = theme.style(Role::Surface).add_modifier(Modifier::BOLD);
-            Line::from(vec![
-                Span::styled(format!(" {word} "), filled.patch(theme.style(Role::Accent))),
-                Span::styled(format!("{key} "), filled),
-            ])
-        } else {
-            Line::from(vec![
-                Span::styled(format!(" {word} "), theme.style(Role::Text)),
-                Span::styled(format!("{key} "), theme.style(Role::Dim)),
-            ])
-        };
-        let rect = Rect::new(at, y, wide, 1);
-        frame.render_widget(line, rect);
-        hits.add(rect, Target::ComposerAction(id));
-        at += wide + 1;
-    }
-}
-
-/// times, each with the number that picks it and when that is.
 pub fn draw_schedule(
     frame: &mut Frame,
     area: Rect,
@@ -463,8 +547,6 @@ pub fn draw_schedule(
         theme.style(Role::Accent).add_modifier(Modifier::BOLD),
     )];
     for (index, (label, when)) in times.iter().enumerate() {
-        // The day only when it is not today: "18:00" this evening, "Tue
-        // 08:00" otherwise.
         let at = if when.date_naive() == now.date_naive() {
             when.format("%H:%M").to_string()
         } else {
@@ -484,8 +566,6 @@ pub fn draw_schedule(
     }
 }
 
-/// The path prompt (FR-027), over the last row of the composer, with the
-/// terminal's cursor at its end.
 pub fn draw_path_prompt(frame: &mut Frame, area: Rect, typed: &str, theme: &Theme) {
     let area = Rect::new(
         area.x + 2,
@@ -592,7 +672,6 @@ mod tests {
             verbs.find("Send ").unwrap() < verbs.find("Send later").unwrap(),
             "{drawn}"
         );
-        // The fields and the body are inside, under the hairline.
         let tee: Vec<char> = lines[5].chars().collect();
         assert_eq!((tee[14], tee[105]), ('├', '┤'), "{drawn}");
         assert!(
@@ -614,7 +693,6 @@ mod tests {
     #[test]
     fn the_subtitle_counts_the_words_and_says_when_the_draft_was_saved() {
         let mut app = composing((120, 36), DraftKind::Reply);
-        // Into the body, then two words.
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
         update(&mut app, key(KeyCode::Tab, KeyModifiers::NONE));
@@ -629,6 +707,7 @@ mod tests {
             &mut app,
             Input::DraftSaved {
                 generation: 1,
+                composition: None,
                 saved: Ok(postio_model::DraftId::new(4)),
             },
         );
@@ -678,12 +757,10 @@ mod tests {
             "{drawn}"
         );
         assert!(!lines[1].contains("Inbox"), "the strip gave way:\n{drawn}");
-        // Escape brings it back to the frame, the draft still being written.
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert!(!app.composer_detached());
         assert_eq!(app.front(), Front::Composer);
         assert!(screen(120, 36, &app).contains('╭'));
-        // And the same key detaches again, and again brings it back.
         assert_eq!(
             app.hint(postio_core::CommandId::DetachComposer).as_deref(),
             Some("alt+o")
@@ -752,7 +829,6 @@ mod tests {
             }),
         );
         assert!(app.path_prompt().is_some(), "Attach asks for a path");
-        // Close: the draft goes where an Escape takes it.
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         let (y, line) = lines_of(&screen(120, 36, &app))
             .into_iter()
@@ -782,7 +858,7 @@ mod tests {
     }
 
     #[test]
-    fn replying_from_the_open_message_writes_in_the_frame_and_escape_goes_back_to_the_message() {
+    fn replying_from_the_open_message_writes_in_the_frame_and_escape_goes_back_to_the_list() {
         let mut app = inbox((120, 36));
         update(&mut app, key(KeyCode::Enter, KeyModifiers::NONE));
         update(
@@ -822,9 +898,8 @@ mod tests {
         update(&mut app, key(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(
             app.front(),
-            Front::Reader,
-            "back to the message it answered"
+            Front::List,
+            "the composer replaced the message"
         );
-        assert!(screen(120, 36, &app).contains("Hello"));
     }
 }

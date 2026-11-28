@@ -1,15 +1,8 @@
-//! What a store holds, what it costs, and what the background lanes still
-//! owe -- counts, sizes, ids and header tokens, never mail.
-//!
-//! The reports `postio-diag` prints, over a connection to a store it opened
-//! -- the live one, or a copy.
-//!
-//! Every report issues `SELECT` and `PRAGMA` and nothing else.
+//! The reports `postio-diag` prints: counts, sizes, ids and header tokens, never mail. Every report
+//! issues `SELECT` and `PRAGMA` only.
 
 use std::fmt::Write as _;
 
-/// One line of a report: `say!(self, "...", args)`, or `say!(self)` for a
-/// blank one.
 macro_rules! say {
     ($report:expr) => {
         $report.line(format_args!(""))
@@ -21,7 +14,6 @@ macro_rules! say {
 
 use postio_storage::sql::{self, RowExt};
 
-/// The reports there are, and what each tells.
 pub const COMMANDS: &[(&str, &str)] = &[
     (
         "census",
@@ -37,13 +29,15 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "what the background lanes still owe: backfill, index, queue",
     ),
     (
+        "classify",
+        "the classifier over every inbox: filed, held, considered and marked, as counts and ids",
+    ),
+    (
         "search <words>",
         "the search box's own query, timed: hits, whether a spelling was offered",
     ),
 ];
 
-/// Run report `command` over `connection`, a store whose file is `file`
-/// bytes, and answer its text.
 pub async fn report(
     connection: postio_storage::Checkout,
     file: u64,
@@ -77,11 +71,7 @@ struct Report {
 pub(crate) type Outcome = Result<(), postio_storage::Error>;
 
 impl Report {
-    /// `words` searched the way the search box searches them, timed, twice:
-    /// as typed, and quoted. A quoted word is never offered a spelling, so
-    /// the difference is what the offer cost -- the pass that runs only
-    /// when a search finds nothing. Counts and timings; the offered word is
-    /// the mailbox's own, and is not printed.
+    /// `words` searched as typed and quoted; the difference is what the spelling offer costs.
     async fn search(&self, words: &str) -> Outcome {
         use postio_model::AccountScope;
         use postio_search::ResultOrder;
@@ -122,7 +112,6 @@ impl Report {
         Ok(())
     }
 
-    /// Add a line to the report's text.
     fn line(&self, text: std::fmt::Arguments<'_>) {
         let mut out = self.out.lock().expect("the report's text");
         let _ = out.write_fmt(text);
@@ -133,7 +122,6 @@ impl Report {
         sql::scalar(&self.connection, sql, ()).await.unwrap_or(-1)
     }
 
-    /// What the store holds and what it costs.
     async fn census(&self) -> Outcome {
         let messages = self.count("SELECT count(*) FROM messages").await;
         let bodied = self
@@ -164,9 +152,7 @@ impl Report {
         say!(self, "header rows     {headers:>12}");
         say!(self, "queued ops      {queued:>12}");
 
-        // Where the bytes are: the *content* each table holds, since this
-        // engine has no `dbstat` (ADR 0038). The difference between these
-        // sums and the file is index and page overhead.
+        // Content bytes per table: this engine has no `dbstat` (ADR 0038).
         let header_bytes = self
             .count("SELECT coalesce(sum(length(name) + length(value)), 0) FROM message_headers")
             .await;
@@ -218,7 +204,6 @@ impl Report {
             );
         }
 
-        // The interaction budget, on a real store rather than a fixture.
         let deep = std::time::Instant::now();
         let _ = self
             .count(
@@ -278,10 +263,7 @@ impl Report {
         Ok(())
     }
 
-    /// The bodies carrying the decode caveat, and what their parts declared.
-    ///
-    /// A part's media type, charset and transfer encoding are structure, not
-    /// mail; the body is read only to answer two booleans about it.
+    /// The bodies carrying the decode caveat; each is read only to answer two booleans.
     async fn encoding(&self) -> Outcome {
         let total = self.count("SELECT count(*) FROM messages").await;
         let bodied = self
@@ -355,8 +337,6 @@ impl Report {
         Ok(())
     }
 
-    /// Rows per page, with and without the body columns: the number that
-    /// decides how many pages a list or a hydrate has to read and decrypt.
     async fn shape(&self) -> Outcome {
         let page = self.count("PRAGMA page_size").await.max(1);
         let (rows, body, rest): (i64, i64, i64) = sql::one(
@@ -420,7 +400,6 @@ impl Report {
         Ok(())
     }
 
-    /// What the background lanes still owe.
     async fn pending(&self) -> Outcome {
         say!(self, "bodies, by state:");
         let states = sql::all(
@@ -441,8 +420,6 @@ impl Report {
                     AND uid IS NOT NULL AND remote_id IS NOT NULL AND deleted_locally = 0",
             )
             .await;
-        // `n/a` on a store from before `body_parsed_with` existed, rather
-        // than a number that would be a guess.
         let refetch = sql::scalar(
             &self.connection,
             "SELECT count(*) FROM messages
@@ -486,9 +463,8 @@ impl Report {
     }
 }
 
-/// The structural tokens of a stored part-header block: media type, charset
-/// and transfer encoding, and how the block ends. Anything else in the block
-/// -- a filename, a description -- is somebody's mail and is not printed.
+/// The structural tokens of a stored part-header block; anything else (a filename, a description)
+/// is mail and is not printed.
 fn tokens(headers: Option<&str>) -> String {
     let Some(headers) = headers else {
         return "no headers".to_owned();
@@ -530,4 +506,219 @@ fn bytes(n: u64) -> String {
         unit += 1;
     }
     format!("{value:.1} {}", UNITS[unit])
+}
+
+/// Every inbox through the filing and body stages, writing nothing and asking no model.
+pub async fn classify(
+    connection: postio_storage::Checkout,
+    focus: &postio_config::FocusConfig,
+) -> Result<String, String> {
+    classify_inner(&connection, focus)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+const CLASSIFY_WINDOW: u32 = 200;
+
+async fn classify_inner(
+    connection: &postio_storage::Checkout,
+    focus: &postio_config::FocusConfig,
+) -> Result<String, Box<dyn std::error::Error>> {
+    use postio_classify::{Asked, BodyMessage, OwnText, Tally};
+    use postio_model::{MailboxRole, MessageBody};
+    use postio_storage::repository::{AccountRepository, MessageRepository, ThreadRepository};
+    use postio_sync::{FiledMessage, FocusFiling};
+
+    let filing = FocusFiling::from_config(focus);
+    let rules = Corrections(focus.filter.clone());
+    let messages = MessageRepository::new(connection);
+    let mut tally = Tally::new();
+    let mut own = None;
+    let inboxes = ThreadRepository::new(connection).unified_inboxes().await?;
+    for (account, inbox) in inboxes {
+        let identities = match AccountRepository::new(connection).get(account).await? {
+            Some(account) => {
+                let mut identities = account.identities.clone();
+                if !identities
+                    .iter()
+                    .any(|identity| identity.address.same_address(&account.address))
+                {
+                    identities.push(postio_model::Identity::new(
+                        account.id,
+                        account.address.clone(),
+                    ));
+                }
+                identities
+            }
+            None => Vec::new(),
+        };
+        let mut after = None;
+        loop {
+            let window = messages
+                .focus_inbox_window(inbox, after, CLASSIFY_WINDOW)
+                .await?;
+            let Some(last) = window.last() else {
+                break;
+            };
+            after = Some((last.1, last.0));
+            let mut rows = Vec::with_capacity(window.len());
+            for (id, _) in &window {
+                if let Some(row) = messages.get(*id).await? {
+                    rows.push(row);
+                }
+            }
+            let filed: Vec<FiledMessage<'_>> = rows
+                .iter()
+                .map(|row| FiledMessage {
+                    message: row,
+                    thread: row.thread_id,
+                    role: MailboxRole::Inbox,
+                })
+                .collect();
+            let outcomes = filing.outcomes(connection, &filed).await?;
+            for (filed, outcome) in filed.iter().zip(&outcomes) {
+                tally.filing(filed.message.id, outcome);
+                if outcome.filter.is_none() && outcome.hold.is_none() {
+                    let in_the_table =
+                        filed.message.from.iter().any(|from| {
+                            postio_classify::Rules::senders(&rules).find(from).is_some()
+                        });
+                    tally.unfiled(filed.message, in_the_table);
+                    if let Some(reason) =
+                        postio_classify::at_filing(filed, &Unguarded, &rules).filter
+                    {
+                        let guard = guard_of(connection, &rules, filed, &mut own).await?;
+                        tally.kept(filed.message.id, reason.kind, guard);
+                    }
+                }
+                let asked = BodyMessage {
+                    filed: *filed,
+                    identities: &identities,
+                };
+                let guard = postio_classify::asked(&asked, &rules);
+                if guard == Asked::Neither {
+                    tally.body(filed.message.id, guard, None);
+                    continue;
+                }
+                let Some(stored) = messages.body(filed.message.id).await? else {
+                    tally.body(filed.message.id, guard, None);
+                    continue;
+                };
+                let own = postio_body::own_text(&MessageBody {
+                    text: stored.text,
+                    html: stored.html,
+                });
+                let outcome =
+                    postio_classify::at_body(&asked, &OwnText::new(&own), &NoGuards, &rules);
+                tally.body(filed.message.id, guard, Some(&outcome));
+            }
+        }
+    }
+    Ok(tally.render())
+}
+
+async fn guard_of(
+    connection: &postio_storage::Checkout,
+    rules: &Corrections,
+    filed: &postio_sync::FiledMessage<'_>,
+    own: &mut Option<std::collections::BTreeSet<String>>,
+) -> Result<&'static str, postio_storage::Error> {
+    use postio_storage::repository::{
+        CorrespondentRepository, IdentityRepository, ThreadRepository,
+    };
+    let Some(thread) = filed.thread else {
+        return Ok("no conversation");
+    };
+    let senders = &filed.message.from;
+    if senders.is_empty() {
+        return Ok("no sender");
+    }
+    if senders.iter().any(|sender| rules.0.never_filters(sender)) {
+        return Ok("never filter");
+    }
+    if own.is_none() {
+        *own = Some(
+            IdentityRepository::new(connection)
+                .own_addresses()
+                .await?
+                .iter()
+                .filter_map(postio_model::EmailAddress::domain)
+                .map(str::to_ascii_lowercase)
+                .collect(),
+        );
+    }
+    let domains = own.as_ref().expect("read above");
+    if senders.iter().any(|sender| {
+        sender
+            .domain()
+            .is_some_and(|domain| domains.contains(&domain.to_ascii_lowercase()))
+    }) {
+        return Ok("own domain");
+    }
+    if !CorrespondentRepository::new(connection)
+        .written_to(senders)
+        .await?
+        .is_empty()
+    {
+        return Ok("wrote to");
+    }
+    if ThreadRepository::new(connection).took_part(thread).await? {
+        return Ok("took part");
+    }
+    Ok("none")
+}
+
+struct Unguarded;
+
+impl postio_classify::Facts for Unguarded {
+    fn wrote_to(&self, _: &postio_model::EmailAddress) -> bool {
+        false
+    }
+    fn took_part(&self, _: postio_model::ThreadId) -> bool {
+        false
+    }
+    fn own_domain(&self, _: &postio_model::EmailAddress) -> bool {
+        false
+    }
+    fn never_filter(&self, _: &postio_model::EmailAddress) -> bool {
+        false
+    }
+}
+
+struct Corrections(postio_config::FocusFilter);
+
+impl postio_classify::Rules for Corrections {
+    fn senders(&self) -> &postio_classify::Senders {
+        postio_classify::Senders::shipped()
+    }
+
+    fn stops(
+        &self,
+        sender: &postio_model::EmailAddress,
+        kind: postio_classify::MarkerKind,
+    ) -> bool {
+        let kind = match kind {
+            postio_classify::MarkerKind::Question => "question",
+            postio_classify::MarkerKind::Todo => "todo",
+            postio_classify::MarkerKind::Invite => return false,
+        };
+        self.0.stops(sender, kind)
+    }
+}
+
+struct NoGuards;
+
+impl postio_classify::Facts for NoGuards {
+    fn wrote_to(&self, _: &postio_model::EmailAddress) -> bool {
+        true
+    }
+    fn took_part(&self, _: postio_model::ThreadId) -> bool {
+        true
+    }
+    fn own_domain(&self, _: &postio_model::EmailAddress) -> bool {
+        true
+    }
+    fn never_filter(&self, _: &postio_model::EmailAddress) -> bool {
+        true
+    }
 }

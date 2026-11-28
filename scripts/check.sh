@@ -1,23 +1,29 @@
 #!/usr/bin/env bash
-# Run every repository invariant. This is THE gate command: issue-land.sh runs
-# it before committing, CI runs the same checks, and running it by hand is how
-# you ask "is this tree clean?" without remembering seven script names.
-#
-# Each check lives in scripts/checks/ and runs standalone too — useful when
-# fixing one violation. check-no-personal-data.py redacts what it finds by
-# default (CI logs are public); run it directly with --reveal while fixing:
-#
-#   python3 scripts/checks/check-no-personal-data.py --reveal
-#
-# Adding an invariant = dropping a check-*.py into scripts/checks/ (with a
-# self-test in scripts/tests/). Nothing else to wire up.
+# Run every repository invariant: the gate `issue-land.sh` runs before committing and CI runs. Each
+# check in scripts/checks/ runs standalone.
+# `check-no-personal-data.py` redacts by default (CI logs are public); run it with --reveal while
+# fixing.
+# A new invariant is a check-*.py in scripts/checks/ with a self-test in scripts/tests/.
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# In parallel: one after another they took 63 s of a loaded landing's 95 s, and none writes what
+# another reads. Each one's output is kept and printed in order, so a failure reads as it did.
+JOBS="${POSTIO_CHECK_JOBS:-4}"
+OUT="$(mktemp -d)"
+trap 'rm -rf "$OUT"' EXIT
+
+ls scripts/checks/check-*.py | xargs -P "$JOBS" -I{} sh -c '
+    log="$2/$(basename "$1")"
+    python3 "$1" > "$log.out" 2> "$log.err" || : > "$log.failed"' _ {} "$OUT"
+
 FAILED=0
 for check in scripts/checks/check-*.py; do
-    if ! python3 "$check"; then
+    log="$OUT/$(basename "$check")"
+    cat "$log.out" 2>/dev/null
+    cat "$log.err" >&2 2>/dev/null
+    if [ -e "$log.failed" ] || [ ! -e "$log.out" ]; then
         echo "FAILED: $check" >&2
         FAILED=1
     fi

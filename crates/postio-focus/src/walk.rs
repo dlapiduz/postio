@@ -1,11 +1,6 @@
-//! Walking a thread in the message window (spec 013 US3, research R8).
-//!
-//! The window shows one message at a time; the controller holds the thread
-//! it belongs to, so `[` `]` `{` `}` and `g u` are decided here and both
-//! frontends only draw. A walk is made when a message opens, from the thread
-//! read that opened it (or one asked for), and ends with the window.
-//! A message shown by stepping is marked read the way one opened is, by the
-//! frontend's dwell (FR-017, spec 007 FR-046): showing never marks at once.
+//! Walking a thread in the message window: `[` `]` `{` `}` and `g u` are decided here and both
+//! frontends only draw. A message shown by stepping is marked read by the frontend's dwell, never
+//! at once.
 
 use chrono::Local;
 use postio_core::CommandId;
@@ -18,61 +13,36 @@ use crate::feed::Step;
 use crate::surfaces::{Host, Origin, ReaderVerb};
 use crate::{Effect, FocusController, Intent, Request, SurfaceKind, ToastKind};
 
-/// How many chips the bar is composed for until the window says (a 72-point
-/// chip each, in the narrowest window).
 pub(crate) const DEFAULT_ROOM: u32 = 8;
 
-/// The matches of the search a window was opened from (spec 013 US6): the
-/// messages of the thread that matched, in date order, and which one the
-/// window opened on.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ThreadMatches {
-    /// The search.
     pub(crate) query: postio_search::ParsedQuery,
-    /// The matching messages, oldest first.
     pub(crate) messages: Vec<MessageId>,
-    /// The one the window last showed, an index into `messages`.
     pub(crate) at: usize,
 }
 
-/// The thread of the message on screen.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Walk {
-    /// What the last read of the thread said, with what was read since.
     pub(crate) view: ThreadView,
-    /// The message on screen.
     pub(crate) shown: MessageId,
-    /// The list row the window was opened from: how the cursor's row is
-    /// known not to be a different message.
     pub(crate) row: MessageId,
-    /// The `(index, total)` the window was opened at in its list.
     pub(crate) place: (u32, u32),
-    /// Replies that arrived while the window was open and have not been
-    /// shown: the banner names the latest (FR-018).
     pub(crate) pending_new: Vec<MessageId>,
     /// Messages deleted from the window: a read that still lists them (the
     /// store has not caught up) does not bring them back.
     pub(crate) gone: Vec<MessageId>,
-    /// The search's matches in this thread, when the window was opened on
-    /// one of them.
     pub(crate) matches: Option<ThreadMatches>,
-    /// The message on screen was missing from a re-read: where it went is
-    /// being asked, and the thread as it was read waits for the answer.
     pub(crate) follow: Option<Follow>,
 }
 
-/// A re-read that no longer holds the message on screen, while its new
-/// thread is looked for.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Follow {
-    /// The thread as the re-read said.
     pub(crate) view: ThreadView,
-    /// The thread the message is in now, once known.
     pub(crate) to: Option<ThreadId>,
 }
 
 impl Walk {
-    /// Where the message on screen is among the members.
     fn at(&self) -> Option<usize> {
         self.view
             .members
@@ -81,7 +51,6 @@ impl Walk {
     }
 }
 
-/// A window opened, and the thread read it waits for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Opening {
     pub(crate) thread: ThreadId,
@@ -91,9 +60,6 @@ pub(crate) struct Opening {
 }
 
 impl FocusController {
-    /// The shown message has no more of its own find matches in this
-    /// direction (spec 013 US6): on to the next matched message, or say it
-    /// is the last.
     pub(crate) fn match_edge(&mut self, forward: bool) -> Vec<Step> {
         let Some(walk) = self.walk.as_ref() else {
             return Vec::new();
@@ -101,8 +67,6 @@ impl FocusController {
         let (Some(matches), Some(shown)) = (walk.matches.as_ref(), walk.at()) else {
             return Vec::new();
         };
-        // Where the matched messages are among the members, whichever one
-        // is on screen now.
         let places: Vec<usize> = walk
             .view
             .members
@@ -125,27 +89,21 @@ impl FocusController {
         }
     }
 
-    /// Whether `message` is the one a walk of the open thread is showing:
-    /// an `OpenMessage` for it is a step in place, and the frontend does not
-    /// begin the window again.
+    /// An `OpenMessage` for it is a step in place, and the frontend does not begin the window
+    /// again.
     pub fn walking(&self, message: MessageId, row: Option<MessageId>) -> bool {
         self.walk
             .as_ref()
             .is_some_and(|walk| walk.shown == message && Some(walk.row) == row)
     }
 
-    /// A message was shown in the window: begin its walk. `effects` are what
-    /// the input just produced, `rows` the list with any expansion's children
-    /// among them. Steps asking for the thread read when it is not in hand.
     pub(crate) fn walk_after(&mut self, effects: &[Effect], rows: &dyn Rows) -> Vec<Step> {
         if !self.surfaces.has(SurfaceKind::Message) {
             let from_a_match = self.walk.take().is_some_and(|walk| walk.matches.is_some());
             self.walk_asked = None;
             self.walk_seed = None;
-            // The window is gone, and its bar with it.
             self.bar_up = false;
-            // A window opened on a match is closed: the ring goes back to
-            // the child it came from.
+            self.footer.lone = None;
             return if from_a_match {
                 self.results_returned()
             } else {
@@ -165,17 +123,16 @@ impl FocusController {
             return Vec::new();
         };
         let seed = self.walk_seed.take();
-        // The step that put this message up is its own walk's.
         if self.walk.as_ref().is_some_and(|walk| walk.shown == message) {
             return Vec::new();
         }
         self.walk = None;
         self.walk_asked = None;
-        if host != Host::Own || self.surfaces.origin() != Origin::List {
-            return self.walk_unbarred();
+        self.footer.lone = None;
+        let over_list = host == Host::Own && self.surfaces.origin() == Origin::List;
+        if !over_list {
+            return self.unbarred(message, false, rows);
         }
-        // The row the cursor is on, when it is the message shown (or the
-        // row a thread opened it from), says which thread it is of.
         let facts = self
             .cursor
             .position()
@@ -183,13 +140,19 @@ impl FocusController {
             .filter(|facts| facts.id == message || self.opened_for(facts.id, Some(message)))
             .or_else(|| self.hit_facts(message));
         let Some(facts) = facts else {
-            return self.walk_unbarred();
+            return self.unbarred(message, true, rows);
         };
         let Some(&thread) = facts.threads.first() else {
-            return self.walk_unbarred();
+            return self.unbarred(message, true, rows);
         };
-        // A conversation of one message has no thread to walk: nothing is
-        // asked for it.
+        if self
+            .results
+            .as_ref()
+            .and_then(|results| results.lone_subject(message))
+            .is_some()
+        {
+            return self.unbarred(message, true, rows);
+        }
         if self
             .cursor
             .position()
@@ -199,7 +162,7 @@ impl FocusController {
             .is_some_and(|count| count <= 1)
             && seed.is_none()
         {
-            return self.walk_unbarred();
+            return self.unbarred(message, true, rows);
         }
         match seed.filter(|view| view.thread == thread) {
             Some(view) => self.begin_walk(
@@ -223,7 +186,32 @@ impl FocusController {
         }
     }
 
-    /// A thread was read: the walk waiting for it begins.
+    pub(crate) fn cursor_to_walk(&mut self, rows: &dyn Rows) -> Vec<Step> {
+        if !self.surfaces.has(SurfaceKind::Message) || self.surfaces.origin() != Origin::List {
+            return Vec::new();
+        }
+        let Some(thread) = self.walk.as_ref().map(|walk| walk.view.thread) else {
+            return Vec::new();
+        };
+        if self
+            .cursor
+            .row(rows)
+            .is_some_and(|row| row.threads.first() == Some(&thread))
+        {
+            return Vec::new();
+        }
+        let Some((at, row)) = rows
+            .position_of_thread(thread)
+            .and_then(|at| Some((at, rows.facts(at)?.id)))
+        else {
+            return Vec::new();
+        };
+        if let Some(walk) = self.walk.as_mut() {
+            walk.row = row;
+        }
+        self.cursor.place(at, rows)
+    }
+
     pub(crate) fn walk_read(&mut self, thread: ThreadId, view: &ThreadView) -> Vec<Step> {
         match self.walk_asked.filter(|asked| asked.thread == thread) {
             Some(opening) if self.surfaces.reading() == Some(opening.shown) => {
@@ -244,9 +232,49 @@ impl FocusController {
         }
     }
 
-    /// The bar, kicker and banners of a walk that is over, taken away. Said
-    /// once, and only when one is up: a window whose walk never began has
-    /// nothing to clear (spec 013 T085).
+    fn unbarred(&mut self, message: MessageId, over_list: bool, rows: &dyn Rows) -> Vec<Step> {
+        self.footer.lone = self
+            .lone_footer(message, over_list, rows)
+            .map(|footer| crate::footer::Lone { message, footer });
+        self.walk_unbarred()
+    }
+
+    fn lone_footer(
+        &self,
+        message: MessageId,
+        over_list: bool,
+        rows: &dyn Rows,
+    ) -> Option<postio_ui::scope::FooterView> {
+        let keymap = self.keymap();
+        let row = rows
+            .position_of(message)
+            .and_then(|position| rows.row(position));
+        let row = row.as_ref().and_then(|row| row.as_conversation());
+        let subject = |row: &postio_ui::focus_list::Conversation| {
+            row.summary
+                .representative
+                .subject
+                .clone()
+                .unwrap_or_else(|| crate::thread_expand::NO_SUBJECT.to_owned())
+        };
+        if over_list
+            && let Some(row) = row
+            && let Some(verbs) =
+                postio_ui::focus_dialog::send_verbs(row.summary.representative.send_state)
+        {
+            return Some(scope::outgoing(&subject(row), verbs, keymap));
+        }
+        if let Some(subject) = self
+            .results
+            .as_ref()
+            .and_then(|results| results.lone_subject(message))
+        {
+            return Some(scope::over_results(scope::lone(&subject, keymap), keymap));
+        }
+        let row = row.filter(|_| over_list)?;
+        Some(scope::lone(&subject(row), keymap))
+    }
+
     pub(crate) fn walk_unbarred(&mut self) -> Vec<Step> {
         if !std::mem::take(&mut self.bar_up) {
             return Vec::new();
@@ -261,8 +289,6 @@ impl FocusController {
         ]
     }
 
-    /// The thread a window waits on could not be read: its walk will not
-    /// begin, and the bar of the window before it must not stay.
     pub(crate) fn walk_unread(&mut self, thread: ThreadId) -> Vec<Step> {
         if self.walk_asked.is_some_and(|asked| asked.thread == thread) {
             self.walk_asked = None;
@@ -271,14 +297,11 @@ impl FocusController {
         Vec::new()
     }
 
-    /// A thread was read and is gone: the window walking it has nothing left
-    /// to show.
     pub(crate) fn walk_gone(&mut self, thread: ThreadId) -> Vec<Step> {
         let unread = self.walk_unread(thread);
         let Some(walk) = self.walk.as_mut() else {
             return unread;
         };
-        // The thread the window was sent to is gone as well.
         let sent = walk
             .follow
             .as_ref()
@@ -301,9 +324,6 @@ impl FocusController {
         vec![Step::Ask(Request::ThreadOf(shown))]
     }
 
-    /// A thread the open window walks changed: its arrivals are pending
-    /// until shown, and it is read again. The message on screen never
-    /// changes here (FR-018).
     pub(crate) fn walk_heard(&mut self, event: &postio_core::Event) -> Vec<Step> {
         let walk = self.walk.as_mut();
         match event {
@@ -337,9 +357,8 @@ impl FocusController {
                 };
                 vec![Step::Ask(Request::ReadThread(walk.view.thread))]
             }
-            // A member of the thread changed in place -- the message the
-            // window opened on was marked read by the dwell: the bar's
-            // count and dots say what the list's row says.
+            // A member changed in place (marked read by the dwell): the bar's count and dots say
+            // what the list's row says.
             postio_core::Event::MessagesChanged { messages, .. } => {
                 let Some(walk) = walk.filter(|walk| {
                     walk.view
@@ -355,8 +374,6 @@ impl FocusController {
         }
     }
 
-    /// The open walk's thread, read again: the bar, kicker and banners are
-    /// drawn from it, with `shown` where it was.
     fn walk_refresh(&mut self, view: &ThreadView) -> Vec<Step> {
         let Some(walk) = self.walk.as_mut() else {
             return Vec::new();
@@ -372,8 +389,6 @@ impl FocusController {
         view.members
             .retain(|member| !walk.gone.contains(&member.id));
         if !view.members.iter().any(|member| member.id == walk.shown) {
-            // Not deleted from here: ask where it went before saying it is
-            // gone. One question at a time.
             if walk.gone.contains(&walk.shown) {
                 return self.walk_displaced(view);
             }
@@ -394,10 +409,6 @@ impl FocusController {
         steps
     }
 
-    /// Where the message on screen is now (spec 013 US5): in another thread
-    /// (a split moved it, an undo brought it back) the walk goes there and
-    /// nothing is said; in none (deleted) the window moves on as for any
-    /// message gone.
     pub(crate) fn walk_followed(
         &mut self,
         message: MessageId,
@@ -421,10 +432,6 @@ impl FocusController {
         }
     }
 
-    /// The message on screen is not in the thread any more (`view` is the
-    /// thread as it is): show the nearest member that remains, the next
-    /// newer one before the next older, and say so; with none left, the
-    /// window closes (spec 013, edge cases).
     fn walk_displaced(&mut self, view: ThreadView) -> Vec<Step> {
         let Some(walk) = self.walk.as_mut() else {
             return Vec::new();
@@ -437,7 +444,6 @@ impl FocusController {
         let (target, is_newer) = match (newer, older) {
             (Some(member), _) => (Some(member.id), true),
             (None, Some(member)) => (Some(member.id), false),
-            // Nothing of the old thread is left; whatever it holds now.
             (None, None) => (view.members.last().map(|member| member.id), true),
         };
         let Some(target) = target else {
@@ -459,7 +465,6 @@ impl FocusController {
         steps
     }
 
-    /// The thread has no message left to show: the window closes.
     pub(crate) fn walk_close(&mut self) -> Vec<Step> {
         self.walk = None;
         self.walk_asked = None;
@@ -472,9 +477,6 @@ impl FocusController {
         steps
     }
 
-    /// The message on screen was deleted from the window: the window moves
-    /// at once, as a deleted row does (local-first), and the thread is read
-    /// again to confirm.
     pub(crate) fn walk_deleted_shown(&mut self) -> Vec<Step> {
         let Some(walk) = self.walk.as_mut() else {
             return Vec::new();
@@ -490,7 +492,6 @@ impl FocusController {
         steps
     }
 
-    /// The banner for the latest reply not yet shown.
     fn new_reply(&self) -> Option<thread_bar::BannerView> {
         let walk = self.walk.as_ref()?;
         let latest = walk.pending_new.last()?;
@@ -518,7 +519,6 @@ impl FocusController {
                 .filter(|found| found.messages.get(found.at) == Some(&opening.shown)),
         };
         if walk.at().is_none() {
-            // The thread does not hold the message on screen: no walk.
             return self.walk_unbarred();
         }
         self.walk = Some(walk);
@@ -526,7 +526,6 @@ impl FocusController {
         self.walk_intents()
     }
 
-    /// The bar, kicker, banner and Reply to row of the message on screen.
     fn walk_intents(&self) -> Vec<Step> {
         let Some(walk) = &self.walk else {
             return Vec::new();
@@ -552,29 +551,39 @@ impl FocusController {
         if let Some(banner) = self.match_banner(walk) {
             steps.push(Step::Show(Intent::MatchBanner(Some(banner))));
         }
-        // The footer behind the window says what r acts on from here: the
-        // message on screen, whatever row the window came from.
-        if many {
-            let member = &walk.view.members[at];
-            let about = FooterAbout {
-                subject: walk.view.subject.as_deref().unwrap_or("(no subject)"),
-                count: walk.view.members.len(),
-                index: at,
-                sender: crate::thread_expand::sender_of(member),
-            };
-            let focus = ScopeFocus::Window {
-                thread: walk.view.thread,
-                message: member.id,
-            };
-            steps.push(Step::Show(Intent::Footer(scope::footer(
-                focus, &about, keymap,
-            ))));
-        }
         steps
     }
 
-    /// The banner of a window opened from a search: where the shown match
-    /// is among the thread's.
+    pub(crate) fn walk_footer(&self) -> Option<scope::FooterView> {
+        let walk = self.walk.as_ref()?;
+        let at = walk.at()?;
+        let keymap = self.keymap();
+        let subject = walk
+            .view
+            .subject
+            .as_deref()
+            .unwrap_or(crate::thread_expand::NO_SUBJECT);
+        if walk.view.members.len() <= 1 && self.results.is_none() {
+            return Some(scope::lone(subject, keymap));
+        }
+        let member = &walk.view.members[at];
+        let about = FooterAbout {
+            subject,
+            count: walk.view.members.len(),
+            index: at,
+            sender: crate::thread_expand::sender_of(member),
+        };
+        let focus = ScopeFocus::Window {
+            thread: walk.view.thread,
+            message: member.id,
+        };
+        let footer = scope::footer(focus, &about, keymap);
+        Some(match self.results {
+            Some(_) => scope::over_results(footer, keymap),
+            None => footer,
+        })
+    }
+
     fn match_banner(&self, walk: &Walk) -> Option<thread_bar::MatchBannerView> {
         let matches = walk.matches.as_ref()?;
         let numbers: Vec<u32> = matches
@@ -600,7 +609,6 @@ impl FocusController {
         thread_bar::bar(&walk.view, at, matched, self.bar_room, now)
     }
 
-    /// The window's width allows `room` chips: draw the bar again.
     pub(crate) fn bar_room(&mut self, room: u32) -> Vec<Step> {
         self.bar_room = room;
         let Some(walk) = &self.walk else {
@@ -612,8 +620,6 @@ impl FocusController {
         vec![Step::Show(Intent::ThreadBar(self.walk_bar(walk, at)))]
     }
 
-    /// A walking key in the message window, or `None` when there is no walk
-    /// (the frontend's own stepping is still its own then).
     pub(crate) fn walk_command(&mut self, id: CommandId) -> Option<Vec<Step>> {
         let walk = self.walk.as_ref()?;
         // From a search, find first steps the message's own matches; the
@@ -641,16 +647,12 @@ impl FocusController {
             }
             _ => return None,
         };
-        // Past an end, or already there, nothing moves.
         let Some(target) = target.filter(|target| *target != at) else {
             return Some(Vec::new());
         };
         Some(self.walk_show(target))
     }
 
-    /// A click on the chip of the member at `index`: shown as `]` and `[`
-    /// would have shown it. The one on screen, a member that is not there,
-    /// and a window with no walk do nothing.
     pub(crate) fn chip_clicked(&mut self, index: u32) -> Vec<Step> {
         let Some(walk) = self.walk.as_ref() else {
             return Vec::new();
@@ -662,7 +664,6 @@ impl FocusController {
         self.walk_show(target)
     }
 
-    /// Show the member at `target`, marking it read.
     pub(crate) fn walk_show(&mut self, target: usize) -> Vec<Step> {
         let Some(walk) = self.walk.as_mut() else {
             return Vec::new();

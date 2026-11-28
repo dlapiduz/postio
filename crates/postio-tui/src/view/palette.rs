@@ -1,5 +1,3 @@
-//! The command palette, and the finder's other modes, over the screen (US4).
-
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
@@ -10,10 +8,8 @@ use crate::app::PaletteView;
 use crate::theme::{Role, Theme};
 use crate::view::fit;
 
-/// How wide the palette is, at most.
 const WIDTH: u16 = 72;
 
-/// Draw `palette` centred near the top of `area`.
 pub fn draw(frame: &mut Frame, area: Rect, palette: &PaletteView, theme: &Theme) {
     let width = WIDTH.min(area.width.saturating_sub(4));
     let rows = u16::try_from(palette.rows.len()).unwrap_or(u16::MAX);
@@ -55,7 +51,6 @@ pub fn draw(frame: &mut Frame, area: Rect, palette: &PaletteView, theme: &Theme)
         ]),
         Rect::new(inner.x, inner.y, inner.width, 1),
     );
-    // A rule between what is typed and what it found.
     frame.render_widget(
         Line::styled("─".repeat(usize::from(inner.width)), theme.style(Role::Dim)),
         Rect::new(inner.x, inner.y + 1, inner.width, 1),
@@ -70,7 +65,6 @@ pub fn draw(frame: &mut Frame, area: Rect, palette: &PaletteView, theme: &Theme)
     ));
 
     let shown = usize::from(inner.height.saturating_sub(2));
-    // Keep the chosen row in view.
     let first = palette.selected.saturating_sub(shown.saturating_sub(1));
     for (offset, (index, row)) in palette
         .rows
@@ -82,7 +76,6 @@ pub fn draw(frame: &mut Frame, area: Rect, palette: &PaletteView, theme: &Theme)
     {
         let y = inner.y + 2 + u16::try_from(offset).unwrap_or(u16::MAX);
         let chosen = index == palette.selected;
-        // The chosen row as the list's cursor row is: raised, with a bar.
         let base = if chosen {
             frame.buffer_mut().set_style(
                 Rect::new(inner.x, y, inner.width, 1),
@@ -96,7 +89,6 @@ pub fn draw(frame: &mut Frame, area: Rect, palette: &PaletteView, theme: &Theme)
         let room = usize::from(inner.width)
             .saturating_sub(unicode_width::UnicodeWidthStr::width(chord) + 3);
         let title = fit(&row.title, room);
-        // The letters the query matched, marked.
         let mut spans = vec![Span::styled(
             if chosen { "▌ " } else { "  " },
             theme.style(Role::Focus),

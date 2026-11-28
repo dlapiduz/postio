@@ -1,13 +1,5 @@
-//! The search seed (spec 010 T002): two years of invented mail in the shape
-//! of the search design's screens.
-//!
-//! About five hundred messages in conversations of one to twelve, spread
-//! over twenty-four months and ending at the demo's today. The mail the
-//! screens show is written out by hand (the Atlas threads, with their
-//! senders, labels, files and open asks); the rest is generated from a table
-//! of topics so the store is deep enough to page, to facet by month and to
-//! rank. Every name is invented, every address is on `example.com`, and
-//! the generator is deterministic: the same store every run.
+//! The search seed: about 500 invented messages over 24 months, generated
+//! deterministically, every address on `example.com`.
 
 use chrono::{DateTime, Datelike, Duration, Utc};
 use postio_model::{
@@ -22,7 +14,6 @@ use postio_storage::{BlobStore, Connection, Store};
 use crate::files::{SearchFile, search_files};
 use crate::{Ask, marker, record_correspondents, synced, today};
 
-/// The people of the seed, by index.
 const PEOPLE: [(&str, &str); 13] = [
     ("Ada Moreno", "ada@example.com"),
     ("Tomás Reyes", "tomas@example.com"),
@@ -49,15 +40,11 @@ const FINANCE: usize = 6;
 const RAVI: usize = 7;
 const SHOP: usize = 12;
 
-/// Who a turn is from: a person of [`PEOPLE`], or the account itself.
 type From = Option<usize>;
 
-/// A file on a message: a stored blob of [`search_files`] by name, or a
-/// part the server has not delivered.
 struct Part {
     name: &'static str,
     mime: &'static str,
-    /// Its size when there is no stored blob to measure.
     size: u64,
     stored: bool,
 }
@@ -80,21 +67,16 @@ const fn remote(name: &'static str, size: u64) -> Part {
     }
 }
 
-/// One conversation to file.
 struct Thread {
     subject: String,
     folder: &'static str,
     label: Option<&'static str>,
-    /// When its newest message came, before today.
     newest: Duration,
-    /// The gap between its messages.
     step: Duration,
     turns: Vec<(From, String)>,
-    /// On the newest message.
     parts: Vec<Part>,
     ask: Option<Ask>,
     flagged: bool,
-    /// The first message was replied to.
     answered: bool,
     unread: bool,
 }
@@ -110,8 +92,6 @@ fn turns(items: &[(From, &str)]) -> Vec<(From, String)> {
         .collect()
 }
 
-/// A label's colour, as the design draws its pill's dot: Atlas is
-/// screen 06's orange; the others are colours of their own.
 fn label_color(name: &str) -> Option<&'static str> {
     match name {
         "Atlas" => Some("#c08a2e"),
@@ -121,7 +101,6 @@ fn label_color(name: &str) -> Option<&'static str> {
     }
 }
 
-/// The conversations the screens show, written out.
 fn curated() -> Vec<Thread> {
     let quiet = Duration::hours(7);
     let thread = |subject: &str, folder, label, newest, turns| Thread {
@@ -350,14 +329,12 @@ fn curated() -> Vec<Thread> {
     ]
 }
 
-/// A kind of conversation the generator repeats across the two years.
 struct Topic {
     subject: &'static str,
     label: Option<&'static str>,
     folder: &'static str,
     people: [usize; 2],
     lines: [&'static str; 4],
-    /// Says both words; only the recent year gets these.
     atlas_budget: bool,
 }
 
@@ -559,17 +536,13 @@ const TOPICS: [Topic; 15] = [
     },
 ];
 
-/// Conversation sizes the generator cycles through: ones, twos, a long one.
 const SIZES: [usize; 16] = [1, 2, 1, 3, 1, 4, 2, 1, 5, 1, 2, 3, 12, 1, 2, 6];
 
-/// How many generated conversations there are.
 const GENERATED: usize = 150;
 
 fn generated() -> Vec<Thread> {
     let mut threads = Vec::with_capacity(GENERATED);
     for index in 0..GENERATED {
-        // Two weeks back to about twenty-four months, a conversation every
-        // four and a half days or so, at a different hour each time.
         let age = 14 + (index as i64) * 47 / 10;
         let newest = days(age) + Duration::minutes(((index as i64) * 397) % 600);
         let mut pick = (index * 7) % TOPICS.len();
@@ -611,17 +584,12 @@ fn generated() -> Vec<Thread> {
     threads
 }
 
-/// Screen 05's example, "invoices from ada last month": three invoices
-/// from Ada in the calendar month before the demo's today, on days 11, 16
-/// and 27 before its last (the design's 19, 14 and 3 August), so the
-/// example finds them whatever day the demo runs. Each says "invoices",
-/// the word the example keeps; none says Atlas or budget, or carries a
-/// label, so the screens' other searches and counts stay as they were.
+/// Three Ada invoices in the previous calendar month, so "invoices from ada
+/// last month" finds them on any day; none says Atlas or budget or has a label.
 fn invoices() -> Vec<Thread> {
     use chrono::{Datelike as _, Local};
     let today = today().with_timezone(&Local);
     let into_month = i64::from(today.day());
-    // The last day of last month, and the month before it.
     let last = today - days(into_month);
     let before = last - days(i64::from(last.day()));
     let month = last.format("%Y-%m");
@@ -667,12 +635,8 @@ fn address(from: From) -> EmailAddress {
     }
 }
 
-/// Stores every [`search_files`] blob into `blobs` and names each one.
-///
-/// Blob ids are keyed digests of the bytes, so a store opened under the
-/// test keys (`postio_storage::test_support::blob_keys`) answers with the
-/// ids the seeded attachment rows carry. A host over [`seeded`](crate::seeded)'s
-/// store calls this on the blob store it starts with.
+/// Stores every [`search_files`] blob into `blobs` and names each one. The
+/// store must be opened under `postio_storage::test_support::blob_keys`.
 ///
 /// # Errors
 ///
@@ -686,14 +650,11 @@ pub fn store_search_blobs(
         .collect()
 }
 
-/// The search seed's store and its account.
 pub async fn search_demo() -> (Store, AccountId) {
     let database = postio_storage::test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
     let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;
-    // The mail "You" wrote is sent as one of the account's own addresses:
-    // an identity, so search knows it is the person's own (the People tab
-    // leaves it out, and what you sent counts as sent).
+    // An identity, so search treats the mail "You" wrote as the person's own.
     postio_storage::repository::IdentityRepository::new(&connection)
         .create(&mut postio_model::Identity::new(account.id, address(None)))
         .await
@@ -706,7 +667,6 @@ pub async fn search_demo() -> (Store, AccountId) {
     let today = today();
     synced(&connection, inbox, today).await;
 
-    // The bytes' ids, from a scratch blob store opened under the test keys.
     let scratch = tempfile::tempdir().expect("scratch for the blobs");
     let blobs = BlobStore::open(
         scratch.path().to_path_buf(),
@@ -722,8 +682,7 @@ pub async fn search_demo() -> (Store, AccountId) {
     threads.extend(generated());
     // After the rest, so every other thread keeps its place and its ids.
     threads.extend(invoices());
-    // One transaction for the five hundred messages, rather than one per
-    // write: every repository's own scope nests inside it as a savepoint.
+    // One transaction, not one per write; repository scopes nest as savepoints.
     postio_storage::sql::batch(&connection, "BEGIN IMMEDIATE")
         .await
         .expect("begin the mail");
@@ -768,11 +727,8 @@ pub async fn search_demo() -> (Store, AccountId) {
     postio_index::index::ensure_schema(&connection)
         .await
         .expect("the search index");
-    // Indexed as the body indexer would have by now: a seed whose bodies
-    // only the subject search can see shows no body passage and no quoted
-    // text until a background pass runs. After `ensure_schema`, whose first
-    // run empties the body index it creates; all at once, which builds the
-    // index over them once rather than once per body (#2020).
+    // After `ensure_schema`, whose first run empties the body index; all at
+    // once, so the index is built once rather than per body (#2020).
     let bodies: Vec<(i64, &str)> = bodies
         .iter()
         .map(|(message, body)| (message.get(), body.as_str()))
@@ -780,9 +736,6 @@ pub async fn search_demo() -> (Store, AccountId) {
     postio_index::index::index_bodies(&connection, &bodies)
         .await
         .expect("the bodies indexed");
-    // Screen 01's recent searches: run yesterday, on the weekday before,
-    // and the week before that, each with what it finds here -- a recent
-    // search says the count it runs to.
     let searches = postio_storage::searches::SearchRepository::new(&connection);
     for (query, days) in recent_searches(today.date_naive()) {
         let found = found(&connection, &query, today).await;
@@ -795,8 +748,6 @@ pub async fn search_demo() -> (Store, AccountId) {
     (database, account.id)
 }
 
-/// Screen 01's recent searches and how many days ago each ran: the
-/// Receipts one since the first of the month before last.
 fn recent_searches(today: chrono::NaiveDate) -> [(String, i64); 3] {
     let since = today
         .with_day(1)
@@ -815,8 +766,6 @@ fn recent_searches(today: chrono::NaiveDate) -> [(String, i64); 3] {
     ]
 }
 
-/// How many conversations `query` finds, and whether that is a floor: as
-/// the results count it, from the words lowered as the bar lowers them.
 async fn found(connection: &Connection, query: &str, now: DateTime<Utc>) -> (u64, bool) {
     let parsed = postio_search::natural::lower(query, now.date_naive(), &|_| None)
         .forgiving()
@@ -973,9 +922,6 @@ async fn file_thread(
 mod tests {
     use super::*;
 
-    /// Every recent search in the seed says the count it runs to, and finds
-    /// something: a recent row promising 48 that opens on 27 is a lie the
-    /// review caught.
     #[tokio::test]
     async fn the_recent_searches_say_what_they_find() {
         let (store, _) = search_demo().await;

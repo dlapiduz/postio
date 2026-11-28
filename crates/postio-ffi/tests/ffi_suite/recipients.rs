@@ -1,17 +1,9 @@
-//! Recipient suggestions on the Mac (specs/009-focus-macos T074): the one
-//! completion rule every app ranks by (`postio_ui::recipients::suggest`),
-//! over the account's directory and, beside it, the people the Mac's own
-//! Contacts lends for the keystroke.
-
 use chrono::Utc;
 use postio_ffi::{ExternalContactFfi, Session, SessionOptions};
 use postio_model::{EmailAddress, Message};
 use postio_storage::repository::{ContactGroupRepository, ContactRepository};
 use postio_storage::test_support;
 
-/// A session over an account whose directory holds a correspondent written
-/// to three times, a contact the person deleted, and a group; and the
-/// account's id.
 async fn directory() -> (std::sync::Arc<Session>, i64) {
     let database = test_support::memory().await;
     let account = {
@@ -40,7 +32,6 @@ async fn directory() -> (std::sync::Arc<Session>, i64) {
             .record_message(&mail(None, "adamant@example.net"), &own)
             .await
             .expect("a sighting");
-        // The person deleted this one: their address is offered nowhere.
         postio_storage::sql::execute(
             &connection,
             "UPDATE contacts SET state = 'deleted' WHERE id IN

@@ -1,25 +1,8 @@
-//! How a message body is shown: in the app's own colours, or as sent, on
-//! paper (the message dialog redesign, T205-T214 in
-//! `specs/007-postio-focus/tasks.md`).
-//!
-//! The rule is that the sender's colours never meet the app's surface, so
-//! every body gets exactly one of the two, in light mode as in dark. Which one
-//! decides the reading column's width too, which is why the decision is a
-//! value of its own rather than a flag inside the renderer.
-//!
-//! Everything here is a pure function of markup that has **already been
-//! sanitised** ([`crate::sanitize`]): scripts, forms, handlers and remote
-//! content are gone before anything here looks at it, so neither treatment
-//! can bring one back.
-//!
-//! * [`classify`] decides: paper if the HTML paints its own page, has a
-//!   fixed-width layout table at least [`LAYOUT_TABLE_MIN`] wide, or an image
-//!   wider than [`WIDE_IMAGE`]; app colours otherwise (T210).
-//! * [`app_colours`] and [`app_colours_css`] are the app-colours treatment:
-//!   the sender's colours, backgrounds, faces, sizes and line heights go, the
-//!   structure stays (T211).
-//! * [`light_only`] is the paper treatment's half of the sender's stylesheet:
-//!   a sheet that is always light keeps only the light design (T212).
+//! How a message body is shown: in the app's own colours (`app_colours`), or as sent, on paper. The
+//! sender's colours never meet the app's surface, so every body gets exactly one, in light and
+//! dark; `classify` decides, and the decision also fixes the column width.
+//! Everything is a pure function of markup already sanitised, so neither treatment can bring back a
+//! script or remote content.
 
 use std::collections::HashSet;
 
@@ -32,28 +15,18 @@ use markup5ever_rcdom::{Handle, NodeData, RcDom, SerializableHandle};
 
 use crate::sanitize::{BODY_CLASS, Sanitized, split_declarations};
 
-/// One body's treatment.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Treatment {
-    /// The sender's colours, backgrounds and fonts removed; the app's ink on
-    /// the dialog's surface, in a 480px column. Plain text always, and HTML
-    /// that does not paint its own page.
     #[default]
     AppColours,
-    /// Rendered as sent on a white sheet, dimmed a little in dark mode and
-    /// never inverted, in a column up to 640px. HTML that paints its own page.
     Paper,
 }
 
-/// The attribute the reader stamps on a body's container to say which
-/// treatment it is drawn in, and what the renderer reads back.
-///
-/// Postio's own name: the sanitiser keeps no `data-` attribute a sender
-/// writes, so a message cannot claim a treatment for itself.
+/// Postio's own name: the sanitiser keeps no `data-` attribute a sender writes, so a message cannot
+/// claim a treatment for itself.
 pub const TREATMENT_ATTRIBUTE: &str = "data-postio-treatment";
 
 impl Treatment {
-    /// The value [`TREATMENT_ATTRIBUTE`] carries for this treatment.
     pub fn attribute_value(self) -> &'static str {
         match self {
             Treatment::AppColours => "app",
@@ -61,7 +34,6 @@ impl Treatment {
         }
     }
 
-    /// The treatment a [`TREATMENT_ATTRIBUTE`] value names, if it names one.
     pub fn from_attribute(value: &str) -> Option<Treatment> {
         match value {
             "app" => Some(Treatment::AppColours),
@@ -70,7 +42,6 @@ impl Treatment {
         }
     }
 
-    /// The other one: what `⇧O` switches to.
     pub fn other(self) -> Treatment {
         match self {
             Treatment::AppColours => Treatment::Paper,
@@ -79,52 +50,32 @@ impl Treatment {
     }
 }
 
-/// Why a body was put on paper: the first of the rule's triggers it met.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Trigger {
-    /// A background colour or image on the page itself: `<body>` or
-    /// `<html>`, or a `body` rule in the sender's stylesheet.
     PageBackground,
-    /// A background on a block that holds most of the message's text: a
-    /// wrapper table, a container `div`.
     CoveringBackground,
-    /// A layout table, or a cell in one, fixed at [`LAYOUT_TABLE_MIN`]
-    /// pixels or wider.
     WideTable,
-    /// An image wider than [`WIDE_IMAGE`] pixels.
     WideImage,
 }
 
 impl Trigger {
-    /// Whether this trigger is about colour (the page paints itself) rather
-    /// than about layout: what the render-mode line says about it.
     pub fn is_background(self) -> bool {
         matches!(self, Trigger::PageBackground | Trigger::CoveringBackground)
     }
 }
 
-/// The narrowest fixed layout table that puts a body on paper, in CSS
-/// pixels. A layout this wide was built for a page, not for a 480px column.
+/// A layout this wide was built for a page, not a 480px column.
 pub const LAYOUT_TABLE_MIN: f32 = 480.0;
 
-/// An image wider than this, in CSS pixels, puts a body on paper.
 pub const WIDE_IMAGE: f32 = 300.0;
 
-/// The share of a message's text a background has to sit behind to count as
-/// covering most of the content.
 pub const MOST_OF_THE_CONTENT: f32 = 0.5;
 
-/// A background at or above this relative luminance is a client's default
-/// white page, not a design: a reply stamped `bgcolor="#ffffff"` is
-/// correspondence (`html-white-page-reply` in the corpus), and putting it on
-/// paper would only take the app's ink away from it.
+/// At or above this luminance a background is a client's default white page, not a design: a reply
+/// stamped `bgcolor="#ffffff"` is correspondence, and paper would take the app's ink away.
 pub const PLAIN_WHITE: f64 = 0.95;
 
-/// Which treatment a sanitised HTML body gets (T210).
-///
-/// Paper if any of [`paper_trigger`]'s triggers is met; app colours
-/// otherwise. The same answer in light mode and dark: nothing here knows the
-/// theme, so a message looks the same in both apart from the surface.
+/// The same answer in light and dark: nothing here knows the theme.
 pub fn classify(sanitized: &Sanitized) -> Treatment {
     match paper_trigger(sanitized) {
         Some(_) => Treatment::Paper,
@@ -132,15 +83,9 @@ pub fn classify(sanitized: &Sanitized) -> Treatment {
     }
 }
 
-/// The first paper trigger a sanitised body meets, if any.
-///
-/// The page's own background is read from [`Sanitized::canvas`], because the
-/// sanitiser lifts it off `<body>`, and from the sender's scoped stylesheet
-/// ([`Sanitized::styles`]), where a `body` rule names the message's own
-/// container. Everything else is read from the markup.
-///
-/// Read after sanitising, so a remote background image counts only while
-/// remote images are allowed: blocked, it is not in the markup to paint.
+/// The page's own background comes from `Sanitized::canvas` (lifted off `<body>`) and the scoped
+/// stylesheet's `body` rule; the rest from the markup. A remote background image counts only while
+/// remote images are allowed.
 pub fn paper_trigger(sanitized: &Sanitized) -> Option<Trigger> {
     let canvas = &sanitized.canvas;
     let page_paints = canvas.background.as_deref().is_some_and(colour_paints)
@@ -158,12 +103,8 @@ pub fn paper_trigger(sanitized: &Sanitized) -> Option<Trigger> {
     found
 }
 
-/// What the sender's scoped stylesheet paints: the page itself, or blocks
-/// named by a class or id.
 #[derive(Default)]
 struct BackgroundRules {
-    /// A rule on the message's container -- a `body` or `html` rule, before
-    /// scoping -- paints a background.
     page: bool,
     classes: HashSet<String>,
     ids: HashSet<String>,
@@ -173,8 +114,8 @@ impl BackgroundRules {
     fn from(styles: &str) -> BackgroundRules {
         let mut rules = BackgroundRules::default();
         for item in items(styles) {
-            // Top level only: a background under a media query is a
-            // responsive or dark-mode variant, not the page as designed.
+            // Top level only: a background under a media query is a responsive or dark-mode
+            // variant.
             let Item::Block { prelude, body } = item else {
                 continue;
             };
@@ -192,9 +133,6 @@ impl BackgroundRules {
                 if rest.is_empty() {
                     rules.page = true;
                 } else if let Some(last) = rest.split_whitespace().last() {
-                    // The element a rule lands on is named by its last
-                    // compound; a simple `.class`, `tag.class` or `#id` is
-                    // all this looks for.
                     if let Some((_, class)) = last.split_once('.') {
                         rules.classes.insert(class.to_owned());
                     } else if let Some((_, id)) = last.split_once('#') {
@@ -207,13 +145,10 @@ impl BackgroundRules {
     }
 }
 
-/// A scoped selector without the message-container prefix the sanitiser
-/// put in front of it ([`crate::sanitize::message_selector`]).
 fn unscoped(selector: &str) -> &str {
     let Some(rest) = selector.strip_prefix(&format!(".{BODY_CLASS}")) else {
         return selector;
     };
-    // `[data-postio-message="…"]` when the message is scoped.
     let rest = match rest.strip_prefix('[') {
         Some(attribute) => attribute.split_once(']').map_or("", |(_, after)| after),
         None => rest,
@@ -221,8 +156,6 @@ fn unscoped(selector: &str) -> &str {
     rest.trim()
 }
 
-/// The elements a background on which can cover "most of the content": the
-/// blocks mail lays itself out with, not a highlighted word.
 const CONTAINERS: &[&str] = &[
     "div", "table", "tbody", "thead", "tfoot", "tr", "td", "th", "center", "section", "article",
     "main", "header", "footer", "body",
@@ -274,8 +207,6 @@ fn find_triggers(
                 None
             };
         if let Some(trigger) = candidate {
-            // The colour triggers outrank the layout ones: they are what the
-            // render-mode line explains first.
             let better = match found {
                 None => true,
                 Some(current) => !current.is_background() && trigger.is_background(),
@@ -296,9 +227,7 @@ fn find_triggers(
     }
 }
 
-/// Whether a block holding `inside` of the message's `total` characters of
-/// text holds most of it. A message with no text at all -- one picture --
-/// is covered by any painted block around it.
+/// A message with no text, such as one picture, is covered by any painted block around it.
 fn covers_most(inside: usize, total: usize) -> bool {
     if total == 0 {
         return true;
@@ -306,7 +235,6 @@ fn covers_most(inside: usize, total: usize) -> bool {
     inside as f32 >= total as f32 * MOST_OF_THE_CONTENT
 }
 
-/// How many non-blank characters of text are under `node`.
 fn text_length(node: &Handle) -> usize {
     let own = match &node.data {
         NodeData::Text { contents } => contents
@@ -331,7 +259,6 @@ fn attribute(attrs: &[Attribute], wanted: &str) -> Option<String> {
         .map(|attr| attr.value.trim().to_owned())
 }
 
-/// A style's declarations as lowercased property and trimmed value.
 fn declarations(style: &str) -> Vec<(String, String)> {
     split_declarations(style)
         .into_iter()
@@ -345,9 +272,7 @@ fn declarations(style: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// A length in CSS pixels, as an attribute (`600`) or a declaration
-/// (`600px`, `450pt`) spells one. Percentages and font-relative units are
-/// not fixed widths and answer `None`.
+/// Percentages and font-relative units are not fixed widths and answer `None`.
 pub fn px_length(value: &str) -> Option<f32> {
     let value = value
         .trim()
@@ -369,9 +294,6 @@ pub fn px_length(value: &str) -> Option<f32> {
         .map(|n| n * factor)
 }
 
-/// Whether a declaration paints a background: a `background-color` that
-/// [`colour_paints`], or a `background`/`background-image` naming an image
-/// or a painting colour.
 fn background_paints(property: &str, value: &str) -> bool {
     match property {
         "background-color" => colour_paints(value),
@@ -384,8 +306,6 @@ fn background_paints(property: &str, value: &str) -> bool {
     }
 }
 
-/// A value's space-separated tokens, keeping a function's arguments with it:
-/// `rgb(1, 2, 3) no-repeat` is two tokens.
 fn value_tokens(value: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut depth = 0usize;
@@ -412,17 +332,13 @@ fn value_tokens(value: &str) -> Vec<&str> {
     out
 }
 
-/// An sRGB colour, 8 bits a channel, and its alpha.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Colour {
-    /// Red, green and blue.
     pub rgb: [u8; 3],
-    /// Opacity, `0.0..=1.0`.
     pub alpha: f32,
 }
 
 impl Colour {
-    /// WCAG relative luminance.
     pub fn luminance(self) -> f64 {
         let channel = |c: u8| {
             let c = f64::from(c) / 255.0;
@@ -436,8 +352,6 @@ impl Colour {
         0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
     }
 
-    /// How far apart its strongest and weakest channels are, `0.0..=1.0`:
-    /// zero for black, white and every grey between.
     pub fn chroma(self) -> f64 {
         let max = self.rgb.iter().copied().max().unwrap_or(0);
         let min = self.rgb.iter().copied().min().unwrap_or(0);
@@ -445,9 +359,7 @@ impl Colour {
     }
 }
 
-/// A CSS colour as mail writes one: hex, `rgb()`/`rgba()`, or one of the
-/// names mail actually uses. `None` for anything else, `transparent`
-/// included -- see [`colour_paints`] for what an unknown name means there.
+/// `None` for anything else, `transparent` included; see `colour_paints`.
 pub fn parse_colour(value: &str) -> Option<Colour> {
     let value = value
         .trim()
@@ -539,10 +451,7 @@ pub fn parse_colour(value: &str) -> Option<Colour> {
     Some(Colour { rgb, alpha: 1.0 })
 }
 
-/// Whether a background colour actually paints a page: not `transparent`
-/// or a keyword that defers to something else, not fully transparent, and
-/// not [`PLAIN_WHITE`]. A colour this cannot read -- `hsl()`, an unusual
-/// name -- counts as painting: the sender chose something.
+/// An unreadable colour (`hsl()`, an unusual name) counts as painting: the sender chose something.
 pub fn colour_paints(value: &str) -> bool {
     let lower = value.trim().to_ascii_lowercase();
     let lower = lower.trim_end_matches("!important").trim();
@@ -567,11 +476,8 @@ pub fn colour_paints(value: &str) -> bool {
     }
 }
 
-/// The properties the app-colours treatment takes away (T211).
-///
-/// Colour, the page and the type: what made the sender's mail look like the
-/// sender's. `background-*` is all of them, image included, because a picture
-/// behind text is the same problem as a colour behind it.
+/// Colour, page and type. `background-*` includes images, since a picture behind text is the same
+/// problem as a colour.
 fn stripped(property: &str) -> bool {
     matches!(
         property,
@@ -579,8 +485,6 @@ fn stripped(property: &str) -> bool {
     ) || property.starts_with("background-")
 }
 
-/// The attributes the app-colours treatment takes away: colours, faces,
-/// sizes and backgrounds, as HTML 4 spelled them.
 const STRIPPED_ATTRIBUTES: &[&str] = &[
     "bgcolor",
     "color",
@@ -593,43 +497,25 @@ const STRIPPED_ATTRIBUTES: &[&str] = &[
     "alink",
 ];
 
-/// Inline elements whose colour a sender may have chosen to say something --
-/// a red "URGENT" -- rather than to set their text colour. A colour on one of
-/// these is kept, if it has colour in it at all, for the renderer to hold to
-/// the contrast floor; a colour on a block is the sender's ink and goes.
+/// A colour on one of these may be meant (a red "URGENT") and is kept for the renderer's contrast
+/// floor; a colour on a block is the sender's ink and goes.
 const PHRASING: &[&str] = &[
     "span", "font", "b", "strong", "i", "em", "u", "mark", "small", "s", "del", "ins", "sub",
     "sup", "code", "cite", "q",
 ];
 
-/// The least [`Colour::chroma`] a kept colour needs: below it the colour is a
-/// grey -- the black, charcoal and silver senders set their text in -- and
-/// says nothing but "this is my ink".
+/// Below it the colour is a grey (black, charcoal, silver) and says only "this is my ink".
 pub const DELIBERATE_CHROMA: f64 = 0.3;
 
-/// The class the app-colours treatment marks a data table with: one that
-/// draws a grid (a header cell, a `border`, ruled cells), which the app's
-/// stylesheet redraws in its own hairlines. A layout table gets none and
-/// keeps no lines at all.
+/// A data table that draws a grid, which the app's stylesheet redraws in its own hairlines; a
+/// layout table gets none.
 pub const GRID_CLASS: &str = "postio-grid";
 
-/// The app-colours treatment of sanitised markup (T211).
-///
-/// Takes away every colour, background, face, size and line height the
-/// sender set, as declarations and as attributes, and keeps the structure:
-/// bold, italic, underline, headings, lists, blockquotes, tables, links and
-/// inline images. Three things beyond the list, each so the app's rhythm is
-/// the one the eye reads:
-///
-/// * A colour on an inline element that has colour in it
-///   ([`DELIBERATE_CHROMA`]) is kept, outside a link: the renderer keeps it
-///   only where it reaches the contrast floor against the surface, and
-///   draws it in ink otherwise.
-/// * A table that draws a grid is marked [`GRID_CLASS`], and loses its own
-///   borders, padding and width so the app's rules draw it.
-/// * Paragraphs lose their margins, and an empty one -- the `&nbsp;` an
-///   office client puts between paragraphs -- goes: the app's 12px gap is
-///   the gap.
+/// Strips every colour, background, face, size and line height as declarations and attributes,
+/// keeping structure. A deliberate colour on an inline element outside a link is kept for the
+/// renderer's contrast floor.
+/// A grid table gets `GRID_CLASS` and loses its own borders, padding and width; paragraphs lose
+/// margins, and an empty one (an office client's `&nbsp;`) goes.
 pub fn app_colours(html: &str) -> String {
     let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
     let Some(body) = find_body(&dom.document) else {
@@ -642,17 +528,13 @@ pub fn app_colours(html: &str) -> String {
         traversal_scope: TraversalScope::ChildrenOnly(None),
         ..SerializeOpts::default()
     };
-    // Writing into a Vec cannot fail.
     let _ = serialize(&mut bytes, &handle, options);
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-/// Which of the app's two colour schemes a [`Surface`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scheme {
-    /// `prefers-color-scheme: light`.
     Light,
-    /// `prefers-color-scheme: dark`.
     Dark,
 }
 
@@ -665,73 +547,50 @@ impl Scheme {
     }
 }
 
-/// A ground the message body is drawn on: the scheme it belongs to, and the
-/// colour behind the text. The app's ink needs no field -- a colour that
-/// fails the floor is taken out of the markup, and the text falls back to
-/// the stylesheet's ink.
+/// The app's ink needs no field: a colour that fails the floor is taken out of the markup and the
+/// text falls back to the stylesheet's ink.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Surface {
-    /// The scheme this is the ground of.
     pub scheme: Scheme,
-    /// The opaque colour behind the body text.
     pub background: [u8; 3],
 }
 
-/// The reader's ground in light: `--r-ground` in
-/// `postio-ui/data/reader-tokens.css`. `postio-body` cannot depend on
-/// `postio-ui`, so the number is copied; keep the two in step.
+/// `--r-ground` in `postio-ui/data/reader-tokens.css`, copied because `postio-body` cannot depend
+/// on `postio-ui`; keep the two in step.
 pub const LIGHT_SURFACE: Surface = Surface {
     scheme: Scheme::Light,
     background: [0xf5, 0xf5, 0xf8],
 };
 
-/// The reader's ground in dark: `--r-ground` under `prefers-color-scheme:
-/// dark` in `postio-ui/data/reader-tokens.css`.
+/// `--r-ground` under `prefers-color-scheme: dark` in `postio-ui/data/reader-tokens.css`; keep in
+/// step.
 pub const DARK_SURFACE: Surface = Surface {
     scheme: Scheme::Dark,
     background: [0x2e, 0x2e, 0x31],
 };
 
-/// Both grounds, in the order the rules are written.
 pub const SURFACES: [Surface; 2] = [LIGHT_SURFACE, DARK_SURFACE];
 
-/// The contrast the app holds text to (WCAG AA), the renderer's floor in
-/// every theme but high contrast.
 pub const CONTRAST_FLOOR: f64 = 4.5;
 
-/// The least a paper body is scaled to fit its column (the handoff's
-/// SPEC.md section 3): below it, text would be too small to read, so the
-/// sheet stays at this scale and the view scrolls it sideways instead.
-/// Every renderer fits paper to this one number.
+/// Below this scale text would be too small to read, so the sheet stays at it and the view scrolls
+/// sideways. Every renderer fits paper to this number.
 pub const PAPER_FIT_FLOOR: f64 = 0.85;
 
-/// The class prefix [`guard_kept_colours`] marks an element with.
 pub const KEPT_CLASS: &str = "postio-kept-";
 
-/// WCAG contrast ratio of two colours, `1.0..=21.0`. Alpha is ignored; see
-/// [`guard_kept_colours`] for how a translucent colour is judged.
 pub fn contrast_ratio(a: Colour, b: Colour) -> f64 {
     let (la, lb) = (a.luminance(), b.luminance());
     let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
     (hi + 0.05) / (lo + 0.05)
 }
 
-/// The contrast guard of the app-colours treatment, decided in the markup
-/// (T060, T061) for a webview that cannot run `postio-render`'s guard.
-///
-/// Takes the output of [`app_colours`]. Each element still carrying an
-/// inline `color` loses it, and is marked `postio-kept-N` (N counting up in
-/// document order from 0). One `<style>` appended to the fragment gives that
-/// class the colour only in the schemes whose surface it reaches
-/// [`CONTRAST_FLOOR`] against: a plain rule when it reads on every surface,
-/// a `@media (prefers-color-scheme: ...)` rule when only some, and nothing
-/// when none -- the text then takes the app's ink, as `postio_render`'s
-/// guard does. This needs no script, so it holds in a webview with
-/// JavaScript off.
-///
-/// A colour with alpha is judged as drawn, composited over each surface. A
-/// colour that cannot be parsed is dropped. Markup with no kept colour comes
-/// back byte for byte.
+/// The contrast guard decided in the markup, for a webview that cannot run `postio-render`'s guard.
+/// Each element still carrying an inline `color` loses it and gets `postio-kept-N`; one appended
+/// `<style>` gives that class the colour only in the schemes whose surface it reaches
+/// `CONTRAST_FLOOR` against, so it holds with JavaScript off.
+/// Alpha is judged composited over each surface; an unparseable colour is dropped; markup with no
+/// kept colour comes back byte for byte.
 pub fn guard_kept_colours(html: &str, surfaces: &[Surface]) -> String {
     let dom = parse_document(RcDom::default(), ParseOpts::default()).one(html);
     let Some(body) = find_body(&dom.document) else {
@@ -749,7 +608,6 @@ pub fn guard_kept_colours(html: &str, surfaces: &[Surface]) -> String {
         traversal_scope: TraversalScope::ChildrenOnly(None),
         ..SerializeOpts::default()
     };
-    // Writing into a Vec cannot fail.
     let _ = serialize(&mut bytes, &handle, options);
     let mut out = String::from_utf8_lossy(&bytes).into_owned();
     let sheet: String = rules.concat();
@@ -830,7 +688,6 @@ fn guard_node(node: &Handle, surfaces: &[Surface], rules: &mut Vec<String>, chan
     }
 }
 
-/// Whether `colour`, composited over the surface, reaches the floor.
 fn reads_on(colour: Colour, surface: &Surface) -> bool {
     let a = f64::from(colour.alpha);
     let mix =
@@ -921,7 +778,6 @@ fn treat(node: &Handle, in_link: bool, in_grid: bool) {
             add_class(&mut attrs, GRID_CLASS);
         }
     }
-    // Spacer paragraphs go: whitespace and `&nbsp;` with nothing else in.
     node.children.borrow_mut().retain(|child| !is_spacer(child));
     for child in node.children.borrow().iter() {
         treat(child, in_link, in_grid);
@@ -943,9 +799,6 @@ fn add_class(attrs: &mut Vec<Attribute>, class: &str) {
     });
 }
 
-/// Whether a table draws a grid -- a data table -- rather than arranging a
-/// page: a header cell, a `border`, or a cell that rules itself. Nested
-/// tables answer for themselves.
 fn draws_grid(table: &Handle) -> bool {
     fn bordered(attrs: &[Attribute]) -> bool {
         let border_attribute = attribute(attrs, "border")
@@ -982,8 +835,6 @@ fn draws_grid(table: &Handle) -> bool {
     walk(table, true)
 }
 
-/// A paragraph with nothing in it but blank space: what an office client
-/// writes between paragraphs instead of a margin.
 fn is_spacer(node: &Handle) -> bool {
     let NodeData::Element { name, .. } = &node.data else {
         return false;
@@ -1010,10 +861,8 @@ fn is_spacer(node: &Handle) -> bool {
     blank(node)
 }
 
-/// The app-colours treatment of the sender's scoped stylesheet: every
-/// declaration [`app_colours`] would take from a `style` attribute is taken
-/// from the rules too, and a rule left with nothing goes. The rest -- a
-/// hidden preheader's `display: none`, a column's width -- stays.
+/// Rules left with nothing go; the rest (a hidden preheader's `display: none`, a column's width)
+/// stays.
 pub fn app_colours_css(css: &str) -> String {
     let mut out = String::new();
     for item in items(css) {
@@ -1043,11 +892,8 @@ pub fn app_colours_css(css: &str) -> String {
     out
 }
 
-/// The paper treatment of the sender's scoped stylesheet: the sheet is
-/// always light (`color-scheme: light`), so a sender's dark-mode rules would
-/// be painting a dark design onto white paper. A
-/// `prefers-color-scheme: dark` block goes, and a `prefers-color-scheme:
-/// light` one applies always, as it would on a light page.
+/// The paper sheet is always light, so a sender's `prefers-color-scheme: dark` block goes and a
+/// `light` one applies always.
 pub fn light_only(css: &str) -> String {
     let mut out = String::new();
     for item in items(css) {
@@ -1079,18 +925,12 @@ pub fn light_only(css: &str) -> String {
     out
 }
 
-/// One top-level piece of a stylesheet.
 #[derive(Debug, PartialEq, Eq)]
 enum Item<'a> {
-    /// A rule or an at-rule with a block: what precedes the `{`, and what is
-    /// inside it.
     Block { prelude: &'a str, body: &'a str },
-    /// An at-rule ending in `;`, without it.
     Statement(&'a str),
 }
 
-/// Where the quoted string or comment at `at` ends, or `at` itself if there
-/// is none there.
 fn skip_quoted(css: &str, at: usize) -> usize {
     let bytes = css.as_bytes();
     match bytes[at] {
@@ -1109,10 +949,8 @@ fn skip_quoted(css: &str, at: usize) -> usize {
     }
 }
 
-/// A stylesheet's top-level pieces. Quotes, parentheses and comments are
-/// respected, so a `;` inside `url(data:…;base64,…)` or a `}` inside a
-/// string ends nothing. What the sanitiser emits is CSS it wrote itself, but
-/// this does not lean on that.
+/// Quotes, parentheses and comments are respected, so a `;` inside `url(data:…;base64,…)` or a `}`
+/// inside a string ends nothing.
 fn items(css: &str) -> Vec<Item<'_>> {
     let bytes = css.as_bytes();
     let mut out = Vec::new();
@@ -1298,8 +1136,6 @@ mod tests {
             at("src=\"cid:hero\" style=\"width: 560px\""),
             Some(Trigger::WideImage)
         );
-        // A remote image is stripped of its source while blocked, and keeps
-        // the width it was laid out for.
         assert_eq!(
             at("src=\"https://img.example.com/hero.png\" width=\"600\""),
             Some(Trigger::WideImage)
@@ -1497,9 +1333,6 @@ mod tests {
         assert_eq!(found[2], Item::Statement("@import x"));
     }
 
-    // ---- the contrast guard (T060) ----
-
-    /// Black on white is the widest ratio there is.
     #[test]
     fn contrast_ratio_of_black_on_white_is_21() {
         let black = parse_colour("#000").unwrap();
@@ -1509,8 +1342,6 @@ mod tests {
         assert!((contrast_ratio(white, white) - 1.0).abs() < 1e-9);
     }
 
-    /// The tests' premises, checked once so a changed surface fails here and
-    /// not as a puzzling assertion below.
     #[test]
     fn the_fixture_colours_read_where_the_tests_say() {
         let on = |hex: &str, s: Surface| {
@@ -1553,8 +1384,6 @@ mod tests {
         assert!(!out.contains("prefers-color-scheme: dark"), "{out}");
     }
 
-    /// No colour reads on both of the app's grounds (they sit either side of
-    /// mid grey), so the plain rule is what a single surface gets.
     #[test]
     fn a_colour_that_reads_on_every_surface_given_gets_a_plain_rule() {
         let out = guard_kept_colours(&kept("#cc0000"), &[LIGHT_SURFACE]);

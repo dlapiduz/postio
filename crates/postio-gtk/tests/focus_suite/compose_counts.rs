@@ -1,17 +1,8 @@
-//! What the composer costs the thread that draws, counted rather than timed
-//! (#1608): autosave writes on the runtime and keeps one row, opening a new
-//! draft or a reply reads nothing on the GTK thread, and typing a recipient
-//! opens no store connection while still offering the contact.
-//!
-//! The counting seam is thread-local, so what it sees here is exactly what
-//! ran on this thread.
-
 use postio_storage::Store;
 use postio_storage::test_support::counting::{checkouts, counted};
 
 use crate::support::{self, Fixture};
 
-/// A fixture the composer can write from: an identity, and a Drafts folder.
 async fn writable() -> Fixture {
     let fixture = Fixture::empty().await;
     let connection = fixture.database.connect().await.expect("a connection");
@@ -38,17 +29,13 @@ async fn drafts(database: &Store) -> i64 {
     .expect("a count")
 }
 
-/// Focus's window over `fixture` with one conversation to reply to, and the
-/// composer open on a new draft.
 async fn composing(
     fixture: &Fixture,
 ) -> (
     postio_gtk::window::FocusWindow,
     postio_widgets::composer::Composer,
 ) {
-    fixture
-        .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-        .await;
+    fixture.file_from_ada("Budget", "Numbers.", 5).await;
     let (window, _client) = fixture.open().await;
     assert!(
         crate::settle_until(async || window.composer().is_some()).await,
@@ -65,9 +52,6 @@ async fn composing(
 
 pub fn autosave_writes_off_the_main_thread_and_keeps_one_row() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = writable().await;
         let before = drafts(&fixture.database).await;
         let (_window, composer) = composing(&fixture).await;
@@ -104,18 +88,11 @@ pub fn autosave_writes_off_the_main_thread_and_keeps_one_row() {
 }
 
 pub fn opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread() {
-    // The composer asks "what does a new draft sign with" and "what is `r`
-    // replying to" through seams that once answered with store reads on the
-    // GTK thread: two cold connections, five statements and a body decode in
-    // front of a reply.
+    // The composer asks through seams that once answered with store reads on the GTK thread: two
+    // cold connections, five statements and a body decode in front of a reply.
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = writable().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "Numbers.", 5)
-            .await;
+        fixture.file_from_ada("Budget", "Numbers.", 5).await;
         let (window, _client) = fixture.open().await;
         assert!(
             crate::settle_until(async || window.composer().is_some()).await,
@@ -151,13 +128,8 @@ pub fn opening_a_draft_or_a_reply_reads_nothing_on_the_main_thread() {
 
 pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = writable().await;
         {
-            // A contact the test names: the account's own, so completion
-            // offers it.
             let connection = fixture.database.connect().await.expect("a connection");
             postio_storage::repository::ContactRepository::new(&connection)
                 .create(
@@ -172,10 +144,8 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
         }
         let (_window, composer) = composing(&fixture).await;
 
-        // The directory is read when the composer opens; wait for it the way
-        // a person would -- by typing and seeing the contact offered.
-        // Alternating, because an unchanged text asks nothing, and the first
-        // ask may land before the read does.
+        // Alternating, because an unchanged text asks nothing, and the first ask may land before
+        // the directory read does.
         let flip = std::cell::Cell::new(false);
         let offered = crate::settle_until(async || {
             composer.test_set_to(if flip.replace(!flip.get()) {
@@ -188,11 +158,8 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
         .await;
         assert!(offered, "the composer never offered the contact");
 
-        // The counter is process-wide, and the app's own startup work -- the
-        // first pass, the folder counts, the indexer -- opens connections on
-        // worker threads; on a loaded runner some of it landed inside the
-        // typing below (two, on CI). Let it finish, and outlast a pending
-        // autosave, before taking the reading.
+        // The counter is process-wide and the app's startup work opens connections on worker
+        // threads: let it finish, and outlast a pending autosave, before taking the reading.
         let seen = std::cell::Cell::new((checkouts(), std::time::Instant::now()));
         let quiet = crate::settle_until_within(std::time::Duration::from_secs(30), async || {
             let (count, since) = seen.get();
@@ -208,7 +175,6 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
             "the store never went quiet after the composer opened"
         );
 
-        // Now the budget: a name typed letter by letter.
         let before = checkouts();
         for typed in ["w", "wi", "wil", "wilh", "wilhe", "quar", "quartz"] {
             composer.test_set_to(typed);
@@ -226,19 +192,10 @@ pub fn typing_a_recipient_opens_no_connections_and_still_completes() {
     });
 }
 
-/// Typing across the four-character threshold and back, quickly, keeps the
-/// app connected.
-///
-/// Below four characters the suggestions hide; at four they show again. A
-/// hide and a show a frame apart gave the popup's surface a new role while
-/// the renderer still had a frame in flight on it, and the compositor
-/// dropped the client ("wl_surface already has a buffer committed", Gdk's
-/// "Error 71"): the whole app gone, from typing and backspacing one letter.
+/// A hide and a show a frame apart gave the popup's surface a new role while the renderer had a
+/// frame in flight, and the compositor dropped the client ("Error 71").
 pub fn typing_back_and_forth_across_the_threshold_stays_connected() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = writable().await;
         {
             let connection = fixture.database.connect().await.expect("a connection");

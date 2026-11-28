@@ -1,12 +1,3 @@
-//! Starting the engine, and what the frontend hears while it runs.
-//!
-//! The macOS application opened a store and it stayed empty forever, because
-//! nothing on this boundary ever started a sync. The store being empty was
-//! never a rendering problem; nothing had fetched anything.
-//!
-//! Nothing here dials: the engine is driven against `MockBackend`, which is
-//! the seam CLAUDE.md names for exactly this.
-
 use postio_ffi::{Session, SessionOptions, UiEvent};
 use postio_storage::test_support;
 
@@ -16,9 +7,7 @@ fn session() -> std::sync::Arc<Session> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_store_with_no_accounts_starts_nothing_and_says_so() {
-    // Not an error. A fresh store with no account configured is the ordinary
-    // first-run state, and treating it as a failure would put an error on
-    // screen for someone who has simply not finished setting up.
+    // A fresh store with no account is the ordinary first-run state, not an error.
     let session = session();
     let started = session
         .start_syncing()
@@ -33,10 +22,8 @@ async fn a_store_with_no_accounts_starts_nothing_and_says_so() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn starting_twice_is_harmless() {
-    // The classic app's own comment recorded that a second `start_syncing` used
-    // to run a duplicate pass. An application lifecycle will call this twice
-    // — a window reopening, a wake from sleep — and doubling the engines
-    // would double every connection to the server.
+    // An app lifecycle calls this twice (a window reopening, a wake); doubling the engines would
+    // double every server connection.
     let session = session();
     let first = session.start_syncing().await.expect("first start");
     let second = session.start_syncing().await.expect("second start");
@@ -46,10 +33,8 @@ async fn starting_twice_is_harmless() {
 
 #[test]
 fn an_adopted_engine_reaches_the_slot_that_refresh_reads() {
-    // The half of adoption that is this boundary's own. `Refresh` is the one
-    // command that needs the engine and it is pressed long after the bus was
-    // built, so an engine that ran but never reached the slot would sync
-    // happily and leave the refresh command inert.
+    // `Refresh` needs the engine and is pressed long after the bus was built; an engine that never
+    // reached the slot would sync and leave refresh inert.
     let session = session();
     assert!(
         !session.has_engine(),
@@ -67,10 +52,8 @@ fn an_adopted_engine_reaches_the_slot_that_refresh_reads() {
 
 #[test]
 fn connection_state_reaches_the_frontend() {
-    // A first run is the longest the application ever spends looking broken,
-    // and "connecting" against "offline" against "failing" is the whole
-    // difference between waiting and giving up. If these do not cross, the
-    // frontend has no way to say which one is happening.
+    // Connecting, offline and failing must cross, or the frontend cannot say whether to wait or
+    // give up.
     let session = session();
     session.emit_for_test(postio_core::Event::ConnectionChanged {
         account: 1.into(),
@@ -89,11 +72,8 @@ fn connection_state_reaches_the_frontend() {
 
 #[test]
 fn a_failing_connection_is_distinct_from_being_offline() {
-    // `Failing` means "stopped on something retrying will not fix, waiting
-    // for a person" — a bad password, usually. Rendering it as "offline"
-    // tells the user to check their network when the answer is to check
-    // their credentials, and they will wait indefinitely for a reconnect
-    // that is never coming.
+    // `Failing` is stopped on something retrying will not fix (a bad password); showing "offline"
+    // sends the user to check their network.
     let session = session();
     session.emit_for_test(postio_core::Event::ConnectionChanged {
         account: 1.into(),
@@ -118,8 +98,6 @@ fn a_failing_connection_is_distinct_from_being_offline() {
 
 #[test]
 fn sync_progress_reaches_the_frontend() {
-    // The only thing a first run has to show that something is happening. A
-    // backfill of a large mailbox is minutes of nothing otherwise.
     let session = session();
     session.emit_for_test(postio_core::Event::SyncProgress {
         account: 1.into(),
@@ -142,9 +120,8 @@ fn sync_progress_reaches_the_frontend() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_seeded_account_is_seen_by_the_starter() {
-    // Guards the account read itself: a `start_syncing` that could not see a
-    // configured account would answer zero for ever and look exactly like the
-    // no-accounts case above.
+    // Guards the account read: a `start_syncing` that could not see an account would answer zero
+    // like the no-accounts case.
     let database = test_support::memory().await;
     {
         let connection = database.connect().await.expect("a connection");
@@ -161,25 +138,13 @@ async fn a_seeded_account_is_seen_by_the_starter() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_account_added_while_running_is_not_left_without_an_engine() {
-    // **The bug this pins.** `start_syncing` used to return early whenever
-    // *any* engine existed. That is right for the case it was written for — a
-    // window reopening, a wake from sleep — and wrong for the one nobody had
-    // yet: an account added while the application is running got no engine,
-    // synced nothing, and read to the user as an account that had not saved.
-    // It had saved. It was never started, and a relaunch fixed it, which is
-    // the tell.
-    //
-    // Found live: an account added through the sheet wrote its row and its
-    // Keychain entry, showed no error, and did nothing until the app was
-    // restarted — at which point it connected and synced 15 folders.
+    // `start_syncing` returned early whenever any engine existed, so an account added while the app
+    // ran got no engine and looked unsaved until relaunch.
     let session = session();
-    // One engine already running, as a session with an account has.
     session.adopt_mock_engine_for_test();
     assert!(session.has_engine());
 
-    // A second account arrives. Nothing dials here: with no credential and no
-    // reachable server this cannot connect, and what is under test is whether
-    // it is *considered* at all rather than skipped because an engine exists.
+    // Nothing dials: what is under test is whether the new account is considered at all.
     let started = session
         .start_syncing()
         .await
@@ -194,8 +159,7 @@ async fn an_account_added_while_running_is_not_left_without_an_engine() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_start_still_does_not_double_the_engines() {
-    // The property the early return was protecting, kept: the same account
-    // must never get two engines, or every connection to the server doubles.
+    // The same account must never get two engines, or every server connection doubles.
     let session = session();
     session.adopt_mock_engine_for_test();
 

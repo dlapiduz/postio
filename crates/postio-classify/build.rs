@@ -1,11 +1,5 @@
-//! Build step for `postio-classify`: validate `data/senders.toml`.
-//!
-//! The automated-senders table is data, not Rust literals (FR-114), and this
-//! is what keeps a broken shipped table from ever compiling. It compiles
-//! `src/senders/table.rs` a second time via `#[path]`, the idiom
-//! `postio-account/build.rs` uses for its provider presets, so the parser
-//! that runs here is the one the classifier loads the table with. There is
-//! nothing to generate: the crate reads the file with `include_str!`.
+//! Validates `data/senders.toml` by compiling `src/senders/table.rs` a second time via `#[path]`,
+//! so a broken shipped table never compiles.
 
 #[path = "src/senders/table.rs"]
 #[allow(dead_code)]

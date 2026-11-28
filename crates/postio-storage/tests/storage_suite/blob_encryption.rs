@@ -1,24 +1,9 @@
-//! The blob store encrypts itself (ADR 0014 Q2, #301).
-//!
-//! Two changes, and this file is what holds both of them down:
-//!
-//! * **Content is XChaCha20-Poly1305.** A stolen disk holds ciphertext, and a
-//!   blob somebody edited on the way past is refused rather than handed back.
-//! * **Ids are keyed.** Dedup inside one store is untouched — same content,
-//!   same key, same id — while two stores with different keys give the same
-//!   attachment two different names, so a directory listing no longer confirms
-//!   whether this mailbox holds a known file.
-//!
-//! A test that only round-tripped bytes would pass against the plaintext store
-//! this replaces, so every case here asserts something plaintext could not do.
-
 use std::io::Read;
 
 use postio_model::test_corpus;
 use postio_storage::blob::BlobStore;
 use postio_storage::key::{BlobKeys, StoreKey};
 
-/// Keys from a fixed master, so a test can close a store and reopen it.
 fn keys(seed: u8) -> BlobKeys {
     BlobKeys::derive(&StoreKey::from_bytes([seed; 32]))
 }
@@ -30,7 +15,6 @@ fn store(seed: u8) -> (tempfile::TempDir, BlobStore) {
     (directory, store)
 }
 
-/// Every stored blob's file, ignoring the temp directory.
 fn blob_files(store: &BlobStore) -> Vec<std::path::PathBuf> {
     fn walk(directory: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(directory) else {
@@ -64,15 +48,8 @@ fn blob_files(store: &BlobStore) -> Vec<std::path::PathBuf> {
     out
 }
 
-/// `len` bytes zstd cannot shrink, so the codec is `None` and the file holds
-/// the payload at its own size.
-///
-/// Several cases here are about *where in the file* a byte is — a chunk
-/// boundary, a tag, the halfway point — and compression would collapse a
-/// 400 KiB payload to a few hundred bytes and leave those offsets pointing at
-/// nothing. A counter run through a hash is as close to random as a test gets
-/// without depending on an RNG, which is what `blob.rs` already does for the
-/// same reason.
+/// `len` bytes zstd cannot shrink: cases about byte offsets (chunk boundary, tag) need the payload
+/// at its own size.
 fn incompressible(len: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(len + 32);
     let mut counter = 0u32;
@@ -90,10 +67,6 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
             .windows(needle.len())
             .any(|window| window == needle)
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: round-trip
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_blob_round_trips_through_encryption() {
@@ -117,9 +90,8 @@ fn a_blob_round_trips_through_encryption() {
 
 #[test]
 fn a_payload_larger_than_one_chunk_round_trips() {
-    // The streaming AEAD splits at 64 KiB, so a blob spanning several chunks
-    // is the case where a chunk counter or a last-block flag can be wrong and
-    // a single-chunk test would never notice.
+    // The streaming AEAD splits at 64 KiB; a chunk counter or last-block flag can only be wrong
+    // across several chunks.
     let (_directory, store) = store(2);
     let content = incompressible(700_000);
 
@@ -145,9 +117,8 @@ fn an_empty_blob_round_trips() {
 #[test]
 fn the_file_on_disk_holds_no_plaintext() {
     let (_directory, store) = store(4);
-    // Incompressible, so the codec is `None` and the bytes reach the file as
-    // close to verbatim as this store ever gets them. Compression alone would
-    // hide a short marker and let a plaintext store pass this.
+    // Incompressible, so the marker reaches the file near verbatim; compression would hide it and
+    // let a plaintext store pass.
     let marker = b"Zarquon-Vindaloo-Quintessence";
     let mut content = incompressible(200_000);
     content[50_000..50_000 + marker.len()].copy_from_slice(marker);
@@ -164,10 +135,6 @@ fn the_file_on_disk_holds_no_plaintext() {
         "the opening bytes are sitting on disk in the clear"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: tamper detection
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_flipped_byte_in_the_payload_is_refused_rather_than_returned() {
@@ -192,8 +159,7 @@ fn a_flipped_byte_in_the_payload_is_refused_rather_than_returned() {
 
 #[test]
 fn a_flipped_byte_in_a_middle_chunk_is_refused() {
-    // The tag on the *last* chunk cannot cover an earlier one, so a store that
-    // authenticated only the end would pass the case above and fail here.
+    // The last chunk's tag cannot cover an earlier one.
     let (_directory, store) = store(6);
     let content = incompressible(400_000);
     let id = store.put(&content).expect("store it");
@@ -216,9 +182,8 @@ fn a_flipped_byte_in_a_middle_chunk_is_refused() {
 
 #[test]
 fn a_truncated_blob_is_refused_rather_than_returned_short() {
-    // Truncation is the attack the last-block flag exists for: without it a
-    // prefix of the chunks verifies perfectly and the reader hands back a
-    // message with the end cut off.
+    // Truncation is what the last-block flag exists for: without it a prefix of the chunks
+    // verifies.
     let (_directory, store) = store(7);
     let content = incompressible(400_000);
     let id = store.put(&content).expect("store it");
@@ -242,18 +207,12 @@ fn a_blob_written_under_another_key_does_not_decrypt() {
     let mine = BlobStore::open(&root, &keys(8)).expect("open");
     let id = mine.put(content).expect("store it");
 
-    // The same directory, a different master key. This is the stolen-backup
-    // case: the files are there and they do not open.
     let theirs = BlobStore::open(&root, &keys(9)).expect("open");
     assert!(
         theirs.get(&id).is_err(),
         "another installation's key read the mail"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: keyed ids
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_same_content_has_the_same_id_within_one_store() {
@@ -269,8 +228,7 @@ fn the_same_content_has_the_same_id_within_one_store() {
 
 #[test]
 fn the_same_content_has_different_ids_under_different_keys() {
-    // The whole point of the keyed id: a directory listing must not confirm
-    // that this mailbox holds a file the reader already has.
+    // A directory listing must not confirm that this mailbox holds a file the reader already has.
     let content = b"a known file somebody is looking for";
 
     let (_one, mine) = store(11);
@@ -297,10 +255,6 @@ fn a_blob_id_is_not_the_plain_digest_of_its_content() {
         "the id is the unkeyed digest, so anybody can recompute it"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: the corpus, end to end
-// ---------------------------------------------------------------------------
 
 #[test]
 fn every_corpus_message_round_trips_through_the_encrypted_store() {

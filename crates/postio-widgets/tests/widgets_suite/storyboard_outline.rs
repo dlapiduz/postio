@@ -1,14 +1,8 @@
-//! The outlined frame (spec 008, research R4): the plain frame, with a
-//! border round the widget the keyboard is on and a caption naming its
-//! region. Written beside the plain frame, never instead of it, because the
-//! base-versus-branch comparison hashes the plain one and an outline that
-//! moves with focus would otherwise count as a visual change.
-
 use gtk::prelude::*;
 use postio_widgets::capture;
 use postio_widgets::storyboard::outline::outlined;
 
-use super::storyboard_support::{display, show, until};
+use super::storyboard_support::{show, until};
 
 struct Pixels {
     bytes: Vec<u8>,
@@ -31,7 +25,6 @@ impl Pixels {
         self.bytes[at..at + 4].try_into().expect("a pixel")
     }
 
-    /// How many pixels in the rows `top..bottom` differ from `other`'s.
     fn differing(&self, other: &Self, top: usize, bottom: usize) -> usize {
         let row = self.width * 4;
         let (mine, _) = self.bytes[top * row..bottom * row].as_chunks::<4>();
@@ -40,7 +33,6 @@ impl Pixels {
     }
 }
 
-/// A window with a button low in the content, which holds the keyboard.
 fn window() -> (gtk::Window, gtk::Button) {
     let window = gtk::Window::new();
     window.set_decorated(false);
@@ -62,7 +54,6 @@ fn window() -> (gtk::Window, gtk::Button) {
     (window, button)
 }
 
-/// Settle on a stable frame to compare against.
 fn plain(window: &gtk::Window) -> gtk::gdk::Texture {
     let mut last = None;
     for _ in 0..4 {
@@ -73,9 +64,6 @@ fn plain(window: &gtk::Window) -> gtk::gdk::Texture {
 }
 
 pub fn the_focused_widgets_bounds_are_drawn_over() {
-    if !display() {
-        return;
-    }
     let (window, button) = window();
     let before = Pixels::of(&plain(&window));
 
@@ -99,13 +87,9 @@ pub fn the_focused_widgets_bounds_are_drawn_over() {
 }
 
 pub fn the_caption_carries_the_region_name() {
-    if !display() {
-        return;
-    }
     let (window, button) = window();
     let before = Pixels::of(&plain(&window));
     let bounds = button.compute_bounds(&window).expect("bounds");
-    // Rows well clear of the border, so only a caption can differ there.
     let rows_above = (bounds.y() as usize).saturating_sub(34)..(bounds.y() as usize - 2);
 
     let short = Pixels::of(&outlined(&window, "list"));
@@ -122,9 +106,6 @@ pub fn the_caption_carries_the_region_name() {
 }
 
 pub fn the_plain_frame_is_untouched() {
-    if !display() {
-        return;
-    }
     let (window, _button) = window();
     let hash = |texture: &gtk::gdk::Texture| blake3::hash(&Pixels::of(texture).bytes);
     let before = hash(&plain(&window));
@@ -133,4 +114,82 @@ pub fn the_plain_frame_is_untouched() {
     let after = hash(&capture::texture_now(&window).expect("a picture"));
 
     assert_eq!(before, after, "drawing the outline changed the plain frame");
+}
+
+const PROBE: [u8; 4] = [0, 255, 0, 255];
+const MAGENTA: [u8; 4] = [255, 43, 214, 255];
+
+fn a_green_field_in_a_popover() -> gtk::Window {
+    let css = gtk::CssProvider::new();
+    css.load_from_string(
+        ".outline-probe { background: #00ff00; border: none; box-shadow: none; outline: none; }",
+    );
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().expect("a display"),
+        &css,
+        gtk::STYLE_PROVIDER_PRIORITY_USER,
+    );
+    let window = gtk::Window::new();
+    window.set_decorated(false);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let anchor = gtk::MenuButton::new();
+    anchor.set_label("places");
+    anchor.set_margin_top(40);
+    anchor.set_halign(gtk::Align::Center);
+    let probe = gtk::Button::new();
+    probe.add_css_class("outline-probe");
+    probe.set_size_request(160, 40);
+    let inside = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    inside.append(&gtk::Label::new(Some("above the field")));
+    inside.append(&probe);
+    let popover = gtk::Popover::new();
+    popover.set_child(Some(&inside));
+    anchor.set_popover(Some(&popover));
+    content.append(&anchor);
+    window.set_child(Some(&content));
+    window.set_default_size(480, 360);
+    show(&window);
+    popover.popup();
+    assert!(until(|| popover.is_mapped() && probe.width() > 0));
+    probe.grab_focus();
+    assert!(until(
+        || GtkWindowExt::focus(&window).as_ref() == Some(probe.upcast_ref())
+    ));
+    window
+}
+
+pub fn the_outline_sits_on_a_focused_widget_inside_a_popover() {
+    let window = a_green_field_in_a_popover();
+    let before = Pixels::of(&plain(&window));
+    let height = before.bytes.len() / 4 / before.width;
+    let green: Vec<(usize, usize)> = (0..height)
+        .flat_map(|y| (0..before.width).map(move |x| (x, y)))
+        .filter(|&(x, y)| before.at(x, y) == PROBE)
+        .collect();
+    assert!(!green.is_empty(), "the popover's probe is not in the frame");
+    let left = green.iter().map(|p| p.0).min().expect("a pixel");
+    let right = green.iter().map(|p| p.0).max().expect("a pixel");
+    let top = green.iter().map(|p| p.1).min().expect("a pixel");
+    let bottom = green.iter().map(|p| p.1).max().expect("a pixel");
+
+    let after = Pixels::of(&outlined(&window, "places"));
+
+    let (middle_x, middle_y) = ((left + right) / 2, (top + bottom) / 2);
+    for (edge, x, y) in [
+        ("left", left, middle_y),
+        ("right", right, middle_y),
+        ("bottom", middle_x, bottom),
+    ] {
+        assert_eq!(
+            after.at(x, y),
+            MAGENTA,
+            "the outline misses the focused widget's {edge} edge at ({x}, {y}); \
+             the widget is drawn at x {left}..={right}, y {top}..={bottom}"
+        );
+    }
+    assert_eq!(
+        after.at(middle_x, bottom + 6),
+        before.at(middle_x, bottom + 6),
+        "the outline runs on below the focused widget"
+    );
 }

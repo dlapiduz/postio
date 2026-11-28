@@ -1,7 +1,5 @@
-//! What Postio's patches to Blitz (`patches/blitz/`) change, drawn and
-//! counted: each case is a document upstream paints wrongly, reduced to the
-//! smallest one that shows it, so a new upstream version that drops or
-//! breaks a patch fails here rather than in somebody's inbox.
+//! Each case is a document upstream Blitz paints wrongly, reduced to the smallest that shows it, so
+//! a new upstream that drops or breaks a patch fails here.
 
 use crate::support;
 
@@ -16,8 +14,6 @@ fn paint(html: &str) -> (Vec<[u8; 4]>, u32, u32) {
     (pixels, WIDTH, height)
 }
 
-/// `html` laid out and drawn in a viewport `width` CSS pixels wide: its
-/// pixels, its height, and the document, to read its layout.
 fn paint_at(html: &str, width: u32) -> (Vec<[u8; 4]>, u32, BaseDocument) {
     let config = DocumentConfig {
         viewport: Some(Viewport::new(width, 200, 1.0, ColorScheme::Light)),
@@ -53,9 +49,8 @@ fn page(table_css: &str, cell_css: &str) -> String {
     )
 }
 
-/// Upstream #504: a borderless cell's computed width is the initial
-/// `medium`, and the collapsed model painted it as a 3px grid in the text
-/// colour -- every layout table in every newsletter wore one.
+/// Upstream #504: a borderless cell's computed width is the initial `medium`, and the collapsed
+/// model painted a 3px grid in the text colour.
 #[test]
 fn a_collapsed_table_with_no_borders_paints_no_grid() {
     let (pixels, ..) = paint(&page("", ""));
@@ -66,8 +61,6 @@ fn a_collapsed_table_with_no_borders_paints_no_grid() {
     );
 }
 
-/// The same defect in layout: the phantom width was also a gutter, so the
-/// cells stood 3px apart and the table grew.
 #[test]
 fn a_collapsed_table_with_no_borders_is_exactly_its_cells() {
     let html = page("background:#000", "background:#fff");
@@ -76,9 +69,7 @@ fn a_collapsed_table_with_no_borders_is_exactly_its_cells() {
     assert_eq!(black, 0, "{black} pixels of table showed between the cells");
 }
 
-/// The painter drew every edge in `border-top-color`. With the vertical
-/// edges blue and the horizontal ones red, the gutter between the columns
-/// has to be blue.
+/// The painter drew every edge in `border-top-color`.
 #[test]
 fn a_collapsed_grid_paints_each_edge_in_its_own_colour() {
     let (pixels, ..) = paint(&page("", "border:4px solid;border-color:#f00 #00f"));
@@ -88,17 +79,13 @@ fn a_collapsed_grid_paints_each_edge_in_its_own_colour() {
     assert!(blue > 0, "the vertical edges are blue, but none were drawn");
 }
 
-/// What the patch must not lose: a table that asks for a grid gets one.
 #[test]
 fn a_collapsed_table_with_borders_still_paints_its_grid() {
     let (pixels, ..) = paint(&page("", "border:1px solid #000"));
     let black = count(&pixels, |p| p[0] < 5 && p[1] < 5 && p[2] < 5);
-    // Three horizontal and three vertical one-pixel lines about 81px long.
     assert!(black > 400, "only {black} pixels of grid were drawn");
 }
 
-/// And a cell that says `none` on one side only has no line there: here the
-/// cells keep their top and bottom but not their sides.
 #[test]
 fn a_collapsed_edge_styled_none_is_not_drawn() {
     let (pixels, ..) = paint(&page(
@@ -106,8 +93,6 @@ fn a_collapsed_edge_styled_none_is_not_drawn() {
         "border-top:2px solid #000;border-bottom:2px solid #000;border-left:none;border-right:none",
     ));
     let (width, height) = (WIDTH as usize, pixels.len() / WIDTH as usize);
-    // Down the middle of the first column no vertical line can cross; along
-    // a row between the horizontal lines, nothing dark at all.
     let row = height / 4;
     let dark_in_row = (0..width)
         .filter(|&x| {
@@ -118,14 +103,8 @@ fn a_collapsed_edge_styled_none_is_not_drawn() {
     assert_eq!(dark_in_row, 0, "a vertical line crossed row {row}");
 }
 
-/// Responsive newsletters stack their columns on a narrow screen with
-/// `@media (max-width:600px) { .stack { display:block } }` on the cells,
-/// and the app-colours column is 480px wide. A `display:block` child of a
-/// row is not a cell, and the release dropped it -- text, images and all.
-/// CSS 2.1 §17.2.1 wraps such children in one anonymous cell, so they are
-/// drawn and stack inside it, each as wide as the table. Here every cell is
-/// 30px of its own colour holding a word, blockified by the media
-/// query in the first row and by its own style in the second.
+/// A `display:block` child of a row is not a cell, and the release dropped it with
+/// its text and images. CSS 2.1 §17.2.1 wraps such children in one anonymous cell.
 #[test]
 fn a_cell_made_display_block_is_drawn_and_stacks() {
     const NARROW: u32 = 480;
@@ -156,7 +135,6 @@ fn a_cell_made_display_block_is_drawn_and_stacks() {
             "cell {id} was not laid out: {size:?}"
         );
 
-        // The rows of the raster this cell's colour fills most of.
         let is = |p: &[u8; 4]| (0..3).all(|i| (i32::from(p[i]) - colour[i]).abs() < 8);
         let rows = (0..height as usize)
             .filter(|&y| {

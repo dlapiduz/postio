@@ -1,98 +1,38 @@
-# cargo-nextest configuration.
-#
-# nextest gives every test its own process, which is what lets the workspace
-# run 3,462 tests in ~118s where `cargo test --workspace` takes ~500s. The
-# settings here exist because that speed changes what the machine looks like
-# to a test, not because the tests changed.
+# cargo-nextest configuration. Each test gets its own process, which changes what the machine looks
+# like to a test.
 
-# The measurement tier is not on the merge path (#1450).
-#
-# `#[ignore]` was doing two unrelated jobs. Fifteen tests use it to mean *this
-# machine may not have what I need* -- a live IMAP or JMAP server, a system
-# D-Bus, a Secret Service session, the real desktop -- and `ci.yml` greps the
-# workflow directory to be sure nothing ever opts back into them. Six used it
-# to mean *too slow for the merge path*, and that guard, right for the first
-# fifteen, made the last six unrunnable: nothing anywhere passes
-# `--run-ignored`, so they had never executed in CI once.
-#
-# They are not `#[ignore]`d any more. `#[ignore]` means one thing again,
-# `ci.yml`'s guard goes on being exactly as true as it was, and *when* a test
-# runs is a scheduling question answered here, where scheduling belongs.
-#
-# Three more joined them that had the same character and never got the marker:
-# `idle_store_cpu` (44.1s), `navigation_cost` (21.3s) and `smtp_wait_cpu`
-# (10.2s). Each says in its own doc comment that what it produces is numbers a
-# person reads. Together with the six, 75.6s off every pull request.
-#
-# Four of the nine have since gone, with the thing they measured. `hmac_cost`
-# timed SQLCipher's per-page HMAC-SHA512 against SHA-256, `header_block_size`
-# weighed a zstd-compressed header block, and `measurements::` read
-# `cipher_page_size` -- none of which the engine has any more. Turso
-# authenticates a page as part of AES-256-GCM rather than beside it, so the
-# ratio `hmac_cost` existed to report is not a number this store can have.
-#
-# The filter is written once, negated, and `profile.nightly` lifts it with
-# `all()` rather than repeating it -- nextest config has no bindings, and a
-# second copy of an expression this long is a second thing to keep true.
+# The measurement tier is not on the merge path (#1450). `#[ignore]` means only "this machine may
+# lack what the test needs"; when a test runs is
+# scheduling, answered by this filter and the `POSTIO-MEASUREMENT:` markers. `profile.nightly` lifts
+# the filter with `all()`.
 # `scripts/checks/check-measurement-tier.py` is what stops it drifting from
 # the `POSTIO-MEASUREMENT:` markers in the tests themselves, and what enforces
-# the rule this tier must never break: nothing it selects may be a test that
-# reaches a live service.
+# that nothing it selects reaches a live service.
+# A `default-filter` is ANDed with the command line, so a measurement cannot run from this profile
+# even by name:
 #
-# A `default-filter` is ANDed with what the command line asks for rather than
-# replaced by it, so a measurement cannot be run from this profile even by
-# name. That is deliberate, and it is not silent -- nextest answers
-# `error: no tests to run` and names the profile that excluded it. To run one,
-# ask for the profile that owns it:
-#
-#     cargo nextest run --profile nightly -E 'binary(cache_pressure)'
-# Wrapper scripts are an experimental nextest feature (0.9.98+). Only the
-# per-test-coverage profile at the end of this file uses one, and nothing on
-# the merge path selects that profile, so an upstream change can break
-# scripts/test-coverage-sets.py and nothing else -- loudly, since that
-# script refuses a case that left no profile (specs/012-test-suite-value,
-# research R2).
-experimental = ["wrapper-scripts"]
+#     cargo nextest run --profile nightly -E 'test(/^measurement::cache_pressure::/)'
+# Wrapper and setup scripts are experimental (0.9.98+). Only the per-test-coverage profile wraps,
+# off the merge path; every profile runs the test-home setup script.
+experimental = ["setup-scripts", "wrapper-scripts"]
 
 [profile.default]
-# A test that hangs should fail, not stall the run. The GTK suites already
-# carry their own deadlines (`POSTIO_TEST_PATIENCE` scales them); this is the
-# backstop for a case that wedges below its own timeout -- a WebKit process
-# that never answers, a compositor that went away mid-test.
+# A hung test fails instead of stalling the run; the GTK suites carry their own deadlines
+# (`POSTIO_TEST_PATIENCE` scales them).
 slow-timeout = { period = "60s", terminate-after = 4 }
 
-# A second round, 2026-10-22, measured on the full suite of #1990: 8,040
-# tests, 127 CPU-minutes on a 4-core runner, and fourteen tests over a
-# minute were 39% of it. The application suite's `gmail_keys` alone, 36
-# cases pressing every Gmail key in every pane, was 10 CPU-minutes, a fifth
-# of that suite. What moved: the sweeps (`gmail_keys`, `registry_parity`,
-# `a11y_sweep`, `storyboards`), the large-fixture budgets (`visible_window`,
-# `startup_reads`, `search_statement_budget`, `ranking_weights`,
-# `reclaim_pages`, `paging_scale`) and `logging_privacy` (187 s). About 25
-# CPU-minutes off every pull request and every local landing; the nightly
-# runs every one of them.
-#
-# And the clock-bound cases, 2026-10-23: no test on the merge path waits
-# on the clock (CLAUDE.md, Tests). Eight did -- a real sleep of seconds, or
-# a product timer run in real time -- and each is named by its own case
-# here, `(package(p) & test(=module::case))`, with the marker on that case
-# alone, since the rest of its file is fast. The host's two were the
-# flakes of 2026-10-22: 5 and 15 s of waiting against fixed deadlines.
-default-filter = 'not (binary(cache_pressure) + binary(idle_store_cpu) + binary(smtp_wait_cpu) + binary(first_sync_memory) + binary(body_backfill_cost) + binary(render_rss_plateau) + binary(body_index_memory) + (package(postio-index) & test(/^total_hits_cap::/)) + (package(postio-ffi) & test(/^focus_scroll::/)) + (package(postio-gtk) & test(/^every_command::/)) + (package(postio-gtk) & test(/^storyboard_catalogue::/)) + binary(startup_budget) + binary(excerpt_locate) + binary(first_classification) + (package(postio-gtk) & test(/^gmail_keys::/)) + (package(postio-gtk) & test(/^visible_window::/)) + (package(postio-gtk) & test(/^startup_reads::/)) + (package(postio-gtk) & test(/^registry_parity::/)) + (package(postio-gtk) & test(/^a11y_sweep::/)) + (package(postio-gtk) & test(/^storyboards::/)) + (package(postio-index) & test(/^search_statement_budget::/)) + (package(postio-index) & test(/^ranking_weights::/)) + (package(postio-storage) & test(/^reclaim_pages::/)) + (package(postio-storage) & test(/^paging_scale::/)) + binary(logging_privacy) + (package(postio-host) & test(=tests::a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read)) + (package(postio-host) & test(=tests::a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns)) + (package(postio-widgets) & test(=body_view_fallback::a_finished_render_is_shown_when_the_main_loop_was_late)) + (package(postio-widgets) & test(=body_view::a_very_tall_message_scrolls_to_its_end_within_budget)) + (package(postio-widgets) & test(=composer_focus::the_keyboard_walks_the_composer_in_a_defined_order)) + (package(postio-runtime) & test(=engine::the_top_up_does_not_outrank_the_policy_it_runs_under)) + (package(postio-runtime) & test(=engine::an_idle_engine_does_not_poll_the_queue)) + (package(postio-session) & test(=attachment_index_pass::an_attachment_that_was_never_downloaded_is_never_fetched)) + (package(postio-widgets) & test(=editor_format::every_formatting_command_lands_as_canonical_structure)))'
+# No test on the merge path waits on the clock (CLAUDE.md, Tests). A case that sleeps for real is
+# named here as `(package(p) & test(=module::case))`, with the marker on that case alone.
+# The slow sweeps and large-fixture budgets are here too: 14 tests over a minute were 39% of the CPU
+# time.
+default-filter = 'not ((package(postio-storage) & test(/^measurement::/)) + (package(postio-runtime) & test(/^measurement::/)) + binary(smtp_wait_cpu) + binary(first_sync_memory) + binary(render_rss_plateau) + binary(body_index_memory) + (package(postio-index) & test(/^total_hits_cap::/)) + (package(postio-ffi) & test(/^focus_scroll::/)) + (package(postio-gtk) & test(/^every_command::/)) + (package(postio-gtk) & test(/^storyboard_catalogue::/)) + (package(postio-host) & test(/^measurement::/)) + (package(postio-render) & test(/^measurement::/)) + (package(postio-gtk) & test(/^gmail_keys::/)) + (package(postio-gtk) & test(/^visible_window::/)) + (package(postio-gtk) & test(/^startup_reads::/)) + (package(postio-gtk) & test(/^registry_parity::/)) + (package(postio-gtk) & test(/^a11y_sweep::/)) + (package(postio-gtk) & test(/^storyboards::/)) + (package(postio-index) & test(/^search_statement_budget::/)) + (package(postio-index) & test(/^ranking_weights::/)) + (package(postio-storage) & test(/^reclaim_pages::/)) + (package(postio-storage) & test(/^paging_scale::/)) + binary(logging_privacy) + (package(postio-storage) & test(=concurrent_open::many_databases_open_at_once_without_a_key_failure)) + (package(postio-storage) & test(=threads::thread_paging_stays_flat_over_a_large_folder)) + (package(postio-storage) & test(=list_statement_count::a_large_mailbox_never_materialises_more_rows_than_the_page_shows)) + (package(postio-index) & test(=header_index_size::the_header_index_stays_inside_its_per_message_ceiling)) + (package(postio-sync) & test(=resync_interactive_write::a_resync_batch_does_not_lock_out_an_interactive_write)) + (package(postio-host) & test(=tests::a_body_lost_to_a_dropped_link_is_asked_for_again_when_the_message_is_read)) + (package(postio-host) & test(=tests::a_pane_read_while_the_link_is_down_says_so_and_reads_again_when_it_returns)) + (package(postio-widgets) & test(=body_view_fallback::a_finished_render_is_shown_when_the_main_loop_was_late)) + (package(postio-widgets) & test(=body_view::a_very_tall_message_scrolls_to_its_end_within_budget)) + (package(postio-widgets) & test(=composer_focus::the_keyboard_walks_the_composer_in_a_defined_order)) + (package(postio-runtime) & test(=engine::the_top_up_does_not_outrank_the_policy_it_runs_under)) + (package(postio-runtime) & test(=engine::an_idle_engine_does_not_poll_the_queue)) + (package(postio-session) & test(=attachment_index_pass::an_attachment_that_was_never_downloaded_is_never_fetched)) + (package(postio-widgets) & test(=editor_format::every_formatting_command_lands_as_canonical_structure)))'
 
-# Retries are OFF by default, deliberately. A retry turns a real failure into
-# a slow pass, and this project's characteristic bug is something that works
-# on the second look (#70 twice). The narrow exception is below.
+# Retries are OFF: a retry turns a real failure into a slow pass, and this project's bugs work on
+# the second look (#70). The exception is below.
 retries = 0
 
-# The cases that need what the headless compositor has one of: its seat's
-# clipboard, and the keyboard focus a WebKit editing surface acts under.
-# Every test process shares that compositor, so two of these at once take
-# the clipboard or the focus from each other, and the loser waits out its
-# deadline for a paste or a formatting report that went to the other one --
-# "the clipboard to hold a texture", "bold to land as Strong", one full
-# widgets_suite run in two. One at a time, they pass every run; there are a
-# dozen and each takes a second or two.
+# Cases that use the headless compositor's seat clipboard or keyboard focus: two at once take them
+# from each other and the loser times out.
 [test-groups]
 compositor-seat = { max-threads = 1 }
 
@@ -100,281 +40,132 @@ compositor-seat = { max-threads = 1 }
 filter = 'binary(widgets_suite) & (test(/^editor_/) | test(/^editable_dialect::/) | test(/^composer_toolbar::/) | test(/^composer_inline_image::/) | test(/^body_view_select::/))'
 test-group = 'compositor-seat'
 
-# The sync-wave cases, each a whole wave over an archive-sized fixture: ~31 s
-# alone, measured, and 183-190 s -- past their deadline -- in a full-workspace
-# run, where they share the machine with every other test process. Three
-# landings on 2026-09-24 failed on one of them this way, at a load average
-# near 1, so this is the suite starving them rather than the machine being
-# busy. Four cores each is what they need to finish inside the deadline; the
-# rest of the suite keeps running around them.
+# The sync-wave cases take ~31 s alone but 183-190 s in a full run, past their deadline; four cores
+# each lets them finish.
 [[profile.default.overrides]]
 filter = 'binary(runtime_suite) & test(/^sync_wave::/)'
 threads-required = 4
 
-# `total_hits_stops_counting_at_the_cap` used to need a longer clock here,
-# and does not any more: it moved to `total_hits_cap::` and into the
-# measurement tier above, so `profile.default` never selects it and an
-# override in this profile could not fire if it wanted to. The clock it needs
-# is `profile.nightly`'s, which is already longer than the 480s this granted.
-#
-# The override is deleted rather than repointed, because a filter naming a
-# test that cannot run under the profile it is written for is worse than no
-# filter: it reads as protection and is not. The cost it was sized against is
-# still real -- 139s and 288s on two idle runs of this workstation, 10,050
-# messages inserted one at a time -- and making that fixture cheap is still
-# the follow-up noted in
-# `2026-09-13-what-the-frontend-audit-found-and-what-remains.md`.
-
-# CI wants the same thresholds but a machine-readable trail of what flaked.
 [profile.ci]
 fail-fast = false
 
-# A report of every case and its time, which `scripts/ci-test-budget.py`
-# reads after the run: no test on the merge path waits on the clock
-# (CLAUDE.md, Tests), and a product timer run in real time shows only as
-# duration. Written under target/nextest/ci/.
+# The outer watchdog must outlast the inner one: CI's `POSTIO_TEST_PATIENCE: "3"` triples the GTK
+# suites' `scaled(120s)` to 360s, so 60s x 8 = 480s. If the patience is raised in `ci.yml`, raise
+# this with it.
+slow-timeout = { period = "60s", terminate-after = 8 }
+
+# A report of every case and its time, read by `scripts/ci-test-budget.py` after the run (written
+# under target/nextest/ci/).
 [profile.ci.junit]
 path = "junit.xml"
 
-# **The outer watchdog has to outlast the inner one.**
-#
-# `profile.default`'s backstop is 60s x 4 = 240s, sized against this
-# workstation. CI sets `POSTIO_TEST_PATIENCE: "3"`, which triples every
-# deadline the tests set for *themselves* -- the GTK suites' is
-# `scaled(120s)`, so 360s there. Those two numbers were inconsistent in the
-# one direction that does damage: nextest killed at 240s a case whose own
-# harness was still waiting until 360s, on the machine where the extra
-# patience exists precisely because it is slow.
-#
-# Seen on 2026-09-19: 652 passed, one editor case killed at 241s, and the report says TIMEOUT rather than
-# whatever the test would have said for itself -- which is the worse half. A
-# case killed by the outer clock tells you nothing about why it was slow.
-#
-# 60s x 8 = 480s: comfortably past the 360s a patience of 3 gives the
-# harness, and still far short of a wedge running for ever. It stays a
-# backstop for the case `profile.default`'s comment describes -- a WebKit
-# process that never answers, a compositor that went away -- because those do
-# not finish at 480s either.
-#
-# If `POSTIO_TEST_PATIENCE` is ever raised above 3 in `ci.yml`, this has to
-# move with it. The rule is the ordering, not the numbers: the harness must
-# always be allowed to fail on its own terms first.
-slow-timeout = { period = "60s", terminate-after = 8 }
+# Everything, measurements included; `all()` is a filter an `-E` narrows.
+[profile.nightly]
+# A bench's clock, not the merge path's: `cache_pressure` seeds 400,000 messages and takes ~393s on
+# an idle workstation.
+slow-timeout = { period = "120s", terminate-after = 6 }
+default-filter = 'all()'
+fail-fast = false
 
-# Everything, measurements included. `nightly.yml`'s full-suite job runs this,
-# and it is also how you run one measurement by hand: `all()` is a filter an
-# `-E` on the command line narrows rather than fights.
-# The quarantine: cases that fail now and then under the shared compositor
-# on pull requests whose diff never touches them, each with the issue that
-# owns it and the date it went in. On a pull request one of these may fail
-# once and pass on its retry, which still proves the behaviour; every other
-# profile runs it once, so a nightly red says "still flaky" rather than
-# hiding it. A retry here is a loan, not a fix: the entry leaves when the
-# case is read and repaired, and the steward pass asks after any that has
-# stayed long. Over the 40 pull-request runs before 2026-10-23 these four
-# were 10 of the 17 failures in the 14 red application jobs, one a run.
+# A timeout sized from a local run needs a CI measurement before it is trusted, not a multiplier.
+# No shared runner runs `cache_pressure` any more (see `ci-full` below), because it asserts a larger
+# cache is measurably faster.
+[[profile.nightly.overrides]]
+filter = 'test(/^every_command::/)'
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+[[profile.nightly.overrides]]
+filter = 'package(postio-storage) & test(/^measurement::cache_pressure::/)'
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+# Focus's first classification pass seeds 100,000 messages before it measures, so it gets
+# cache_pressure's workstation clock.
+[[profile.nightly.overrides]]
+filter = 'package(postio-host) & test(/^measurement::first_classification::/)'
+slow-timeout = { period = "120s", terminate-after = 10 }
+
+# What a shared runner runs: `nightly`'s reach minus the measurement that asserts on a stopwatch.
+# A named profile is one definition for both callers (`nightly.yml` and `release.yml`'s release
+# gate); an `-E` in each drifted.
+# `profile.nightly` keeps `all()` on purpose. The two storyboard passes are held out for
+# `profile.ci-storyboards`.
+[profile.ci-full]
+slow-timeout = { period = "120s", terminate-after = 6 }
+default-filter = 'not ((package(postio-storage) & test(/^measurement::cache_pressure::/)) + (binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))))'
+# One red crate must not hide the rest of an unwatched report or a release gate.
+fail-fast = false
+
+# Read by `scripts/ci-test-budget.py`, which holds the frontends' merge-path cases to their budget
+# (`nightly.yml`).
+[profile.ci-full.junit]
+path = "junit.xml"
+
+# The quarantine: cases that flake under the shared compositor on runs that never touch them, each
+# with its issue and date.
+# A retry here is a loan, not a fix; the entry leaves when the case is repaired, and the steward
+# asks after old ones.
 #
 #   marked_rows::a_selected_marked_row_shows_its_check_not_its_dot   4x  #1800, 2026-10-23
 #   unsubscribe::the_setting_makes_the_one_action_delete              3x  #1800, 2026-10-23
 #   unsubscribe::leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail
 #                                                                      2x  #1800, 2026-10-23
 #   row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys 1x  #1800, 2026-10-23
-[[profile.ci.overrides]]
+[[profile.ci-full.overrides]]
 filter = 'binary(focus_suite) & (test(=marked_rows::a_selected_marked_row_shows_its_check_not_its_dot) | test(=unsubscribe::the_setting_makes_the_one_action_delete) | test(=unsubscribe::leaving_a_list_offers_one_action_on_a_toast_and_ignoring_it_keeps_the_mail) | test(=row_menu::a_right_click_on_a_row_offers_its_verbs_with_their_keys))'
 retries = 1
 
-[profile.nightly]
-# A bench's clock, not the merge path's.
-#
-# `profile.default`'s 240s (60s x 4) is a backstop for a case that *wedges* --
-# a WebKit process that never answers, a compositor that went away. The
-# measurement tier is the opposite: tests whose whole character is that they
-# take minutes, which is why they are held off the merge path at all. They
-# inherited the backstop when this profile was written and it killed one.
-#
-# `cache_pressure` seeds 400,000 messages and measures **393s** on this
-# workstation, idle. It was terminated at 240s on CI on 2026-09-12 and
-# terminates at 240s here too, so this is not a slow-runner story. Nothing had
-# ever measured it because before acbd0943 the test was `#[ignore]`d and had
-# never run anywhere -- the sizing came from its own doc comment, which said
-# "about three and a half minutes" and was wrong by most of two minutes. That
-# comment is corrected in the same change as this one.
-#
-# 720s is about 1.8x the measured cost, which leaves room for a CI runner
-# being slower than this box without leaving a genuine hang to run for ever.
-# The job has no `timeout-minutes`, so GitHub's 6h is the only other ceiling
-# and it is not a useful one.
-slow-timeout = { period = "120s", terminate-after = 6 }
-default-filter = 'all()'
-fail-fast = false
-
-# `cache_pressure` outgrew even that, on the runner rather than here.
-#
-# The 720s above was sized as "~1.8x the measured cost" of a 393s run on this
-# workstation, idle, and explicitly "leaves room for a CI runner being slower
-# than this box". It does not: the nightly of 2026-09-19 terminated it at
-# 720.035s, which is the third time a timeout on this project was sized
-# against this machine and found wanting on a shared one. (The other two the
-# same week: `profile.ci`'s backstop killing a GTK case whose own harness was
-# still waiting, and the 240s that killed this very test on 2026-09-12.)
-#
-# 1200s is ~3x the local measurement rather than 1.8x. The test seeds 400,000
-# messages and then reads against a cache deliberately too small for them, so
-# it is I/O-bound in exactly the way a shared runner is worst at, and the
-# ratio that holds on an idle workstation is the wrong one to extrapolate
-# from. A genuine wedge still ends: GitHub's own job timeout is the ceiling
-# behind this one.
-#
-# The rule, since this keeps happening: a timeout sized from a local run
-# needs a CI measurement before it is trusted, not a multiplier.
-#
-# 1200s was wrong too -- the nightly of 2026-09-19 terminated it at 1200.042s,
-# the fourth timeout in a row sized this way. There is no fifth number here,
-# because the fault was never the number. `cache_pressure` asserts that a
-# larger page cache is *measurably faster*, and CLAUDE.md is explicit that
-# this project does not ask a shared runner to defend a stopwatch -- it is the
-# reason `bench.yml` compiles the bench targets and times nothing. So
-# no shared runner runs this binary any more (see `ci-full` below), and the
-# timeout here is now what a *workstation* run gets, which is the only place
-# the test's numbers mean anything:
-#
-#     cargo nextest run --profile nightly -E 'binary(cache_pressure)'
-#
-# It stays generous because this box is often compiling four branches at once
-# while it runs.
-# As `profile.ci-storyboards`: the generated pass's 270 windows (#1825).
-[[profile.nightly.overrides]]
-filter = 'test(/^every_command::/)'
-slow-timeout = { period = "120s", terminate-after = 10 }
-
-[[profile.nightly.overrides]]
-filter = 'binary(cache_pressure)'
-slow-timeout = { period = "120s", terminate-after = 10 }
-
-# Focus's first classification pass (specs/007-postio-focus T147) seeds a
-# hundred thousand messages before it measures anything, and the pass itself
-# sorts sixty thousand of them in the background at one batch per breather.
-# The profile's 720s was sized for tests that are slow; this one is slow and
-# then does a long job, so it gets cache_pressure's workstation clock.
-[[profile.nightly.overrides]]
-filter = 'binary(first_classification)'
-slow-timeout = { period = "120s", terminate-after = 10 }
-
-# What a *shared runner* runs: the nightly profile's reach, minus the one
-# measurement that asserts on a stopwatch.
-#
-# This exists because the exclusion has two callers -- `nightly.yml`'s
-# full-suite job and `release.yml`'s release gate, which are the same run for
-# different reasons -- and the first attempt put it in one of them as an `-E`
-# on the command line. That is a rule living in two places, and it had already
-# drifted before it ever ran: the nightly stopped killing itself on
-# `cache_pressure` and the release gate, which nobody had looked at, would
-# still have spent twenty minutes dying on it and published nothing. A named
-# profile is one definition both can ask for by name, and a workflow that
-# forgets it now fails loudly rather than quietly doing the old thing.
-#
-# `profile.nightly` keeps `all()` deliberately: on a workstation "run
-# everything" should mean everything, and `-E` narrows it there.
-#
-# It also holds out Focus's two storyboard passes, which
-# `profile.ci-storyboards` below runs instead, in a job of their own.
-[profile.ci-full]
-# Same clock as `profile.nightly` -- these are the same tests.
-slow-timeout = { period = "120s", terminate-after = 6 }
-default-filter = 'not (binary(cache_pressure) + (binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))))'
-# One red crate hiding a thousand passing tests is the wrong shape for a
-# report nobody is watching live, and for a release gate it is worse: it would
-# name one failure when the next line might be the reason.
-fail-fast = false
-
-# The accessibility sweep stalls on a shared runner: twice in four release
-# gates (2026-09-25/26) it froze while opening the composer's editor WebView
-# (#1677's shape -- an editor load that never finishes under load) and sat out
-# the full twelve minutes, while every pull request's run of it finishes in
-# seconds. Its own watchdog could not fire, so the process was stopped as a
-# whole, not spinning. A stall is not an answer: it is killed at two minutes
-# and tried again, which a timeout otherwise never is --
-# `test-with-flake-retry.sh` can only retry a failure nextest reported per
-# test. Coverage is unchanged; #1677 is the fix.
+# The accessibility sweep stalls on shared runners while opening the composer's editor WebView
+# (#1677). A stall is killed at two minutes and retried; `test-with-flake-retry.sh` only retries
+# failures nextest reports per test.
 [[profile.ci-full.overrides]]
 filter = 'binary(focus_suite) & test(/^a11y_sweep::/)'
 slow-timeout = { period = "60s", terminate-after = 2 }
 retries = 2
 
-# The same clock for Focus's first classification pass as the nightly
-# profile gives it (see there): it asserts on no stopwatch, so a shared
-# runner may run it, but its seeding alone outlasts this profile's 720s on
-# a slow one.
 [[profile.ci-full.overrides]]
-filter = 'binary(first_classification)'
+filter = 'package(postio-host) & test(/^measurement::first_classification::/)'
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-# Focus's determinism case films one storyboard in two child processes and
-# compares their pixels byte for byte (spec 008 SC-003). Beside the rest of
-# `focus_suite` the second child's archive frame came out another way three
-# runs in three (measured, T265), though alone it is identical every time:
-# the case is about the renderer and the clock, not about load, so it gets
-# the run to itself. It is one case of ~10 s.
+# The determinism case compares two child processes' pixels byte for byte; beside other
+# `focus_suite` cases the second child's archive frame differed, so it runs alone (spec 008).
 [[profile.default.overrides]]
 filter = 'binary(focus_suite) & test(/^storyboard_determinism::/)'
 threads-required = "num-test-threads"
 
-# The same for Focus's two nightly storyboard cases, for the same reason:
-# they judge frames, and another case's window on the shared compositor
-# changes what is drawn. Run side by side, the generated pass read five
-# composer gaps as stale that the hermetic `scripts/storyboards.sh
-# coverage` and a run alone both list correctly (T265).
+# Same for the two nightly storyboard cases: another case's window on the shared compositor changes
+# what is drawn.
 [[profile.default.overrides]]
 filter = 'binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))'
 threads-required = "num-test-threads"
 
-# Those two storyboard passes, as a run of their own.
-#
-# `every_command` (~411 s on CI) and `storyboard_catalogue` (~275 s) each
-# take every test thread while they run, so inside `profile.ci-full` they
-# stopped the rest of the suite for about twelve minutes of every nightly
-# and every release gate. Nothing else had to wait for them: they need the
-# compositor to themselves, not the runner. So `profile.ci-full` holds them
-# out and this profile selects exactly them, and `nightly.yml` and
-# `release.yml` run it as a job of its own in parallel with the suite. The
-# threads-required override above still keeps the two apart from each other.
-#
-# The selection is written twice, here and negated in `profile.ci-full`, as
-# nextest config has no bindings; `scripts/checks/check-measurement-tier.py`
-# fails if the two stop naming the same tests.
+# Those two storyboard passes as a run of their own: `every_command` (~411 s) and
+# `storyboard_catalogue` (~275 s) each take every test thread.
+# The selection is written twice (here, negated in `profile.ci-full`);
+# `scripts/checks/check-measurement-tier.py` fails if they differ.
 [profile.ci-storyboards]
 slow-timeout = { period = "120s", terminate-after = 6 }
 default-filter = 'binary(focus_suite) & (test(/^every_command::/) | test(/^storyboard_catalogue::/))'
 fail-fast = false
 
-# The attachment text helper rides in the archive beside the test binary's
-# profile directory, where `Extractor::locate` looks: without it every PDF
-# is refused, and a seed file found only by what it says goes missing on
-# the shards while every local run passes (#2178). The build job builds it.
+# The attachment text helper rides in the archive beside the test binary's profile directory, where
+# `Extractor::locate` looks (#2178).
 [profile.ci-storyboards.archive]
 include = [
     { path = "debug/postio-extract-helper", relative-to = "target", depth = 0, on-missing = "error" },
 ]
 
-# The generated pass opens a fresh window for every command in every context
-# -- some 270 of them since Linux took spec 010's search keys (#1825) -- and
-# took 709 s on a workstation, against this profile's twelve minutes. Twenty.
+# The generated pass opens a fresh window for every command in every context (~270 windows, 709 s on
+# a workstation) (#1825).
 [[profile.ci-storyboards.overrides]]
 filter = 'test(/^every_command::/)'
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-# The catalogue films every storyboard of Focus: main's last two nightly runs
-# took 620-655 s of the twelve minutes above, and spec 013 adds eleven under
-# storyboards/threads/. Twenty, as the generated pass has.
 [[profile.ci-storyboards.overrides]]
 filter = 'test(/^storyboard_catalogue::/)'
 slow-timeout = { period = "120s", terminate-after = 10 }
 
-# One coverage profile per case, for scripts/test-coverage-sets.py (spec 012,
-# US2). Inherits the default profile, so its default-filter keeps the
-# measurement tier out, as the redundancy report requires. The wrapper sets
-# LLVM_PROFILE_FILE from the case's name, then runs the target runner --
-# on Linux the headless compositor every GTK case needs -- inside itself.
+# One coverage profile per case, for scripts/test-coverage-sets.py. The wrapper sets
+# LLVM_PROFILE_FILE from the case's name, then runs the target runner.
 [scripts.wrapper.per-test-profile]
 command = { command-line = "scripts/per-test-profile.sh", relative-to = "workspace-root" }
 target-runner = "within-wrapper"
@@ -385,3 +176,12 @@ fail-fast = false
 [[profile.per-test-coverage.scripts]]
 filter = "all()"
 run-wrapper = "per-test-profile"
+
+# Each run gets its own XDG home under target/, so no test reads or writes the person's config,
+# store or downloads. `paths::tests::a_test_never_sees_the_real_config` fails without it.
+[scripts.setup.test-home]
+command = { command-line = "scripts/test-home.sh", relative-to = "workspace-root" }
+
+[[profile.default.scripts]]
+filter = "all()"
+setup = "test-home"

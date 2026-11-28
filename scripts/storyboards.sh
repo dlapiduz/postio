@@ -13,7 +13,8 @@
 #
 # Usage
 # -----
-#   scripts/storyboards.sh run   [--only <glob>] [--no-frames] [--delivery chain|direct]
+#   scripts/storyboards.sh run   --changed | --only <glob> | --all | --calibration
+#                                [--no-frames] [--delivery chain|direct]
 #                                [--jobs <n>]      # runners side by side (default: half the cores, at most 4)
 #                                [--variants]      # every variant each storyboard asks for
 #                                [--calibration]   # play only the reviewer's calibration set
@@ -30,10 +31,12 @@
 # postio-gtk's `storyboard` example (specs/007-postio-focus T265), and
 # there is no other to choose.
 #
-# `--only` matches a storyboard's path under storyboards/ without `.toml`:
-# `--only 'list/*'`, `--only search/escape-leaves-search`. Calibration
-# storyboards (the reviewer's own test set) and gap lists are never played
-# by `run`.
+# `--changed` plays the storyboards this branch added or changed since its
+# merge-base, committed or not. `--only` matches a storyboard's path under
+# storyboards/ without `.toml`: `--only 'list/*'`. The whole catalogue takes
+# hours on a workstation, so a bare `run` refuses there unless `--all` (CI
+# plays it in minutes). Calibration storyboards and gap lists are never
+# played by `run`.
 #
 # Runs go to Design/review/<branch>/runs/ (gitignored), the branch's `/`
 # turned into `-`. Every window is opened on the private headless
@@ -49,19 +52,20 @@ cd "$(dirname "$0")/.."
 ROOT=$(pwd)
 CATALOGUE="$ROOT/storyboards"
 
-usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { awk 'NR > 1 && /^set /{exit} NR > 1' "$0" | sed 's/^# \{0,1\}//'; }
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { usage; exit 2; }
 shift
-# `tool` hands everything after it to postio-storyboard untouched.
 TOOL_ARGS=()
 if [ "$COMMAND" = tool ]; then
     TOOL_ARGS=("$@")
     set --
 fi
 
-ONLY=""""
+ONLY=""
+ALL=0
+CHANGED=0
 OPEN=0
 CALIBRATION=0
 ACCEPTANCE=""
@@ -70,6 +74,8 @@ RUNNER_ARGS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --only)      ONLY="${2:?--only needs a pattern}"; shift 2 ;;
+        --all)       ALL=1; shift ;;
+        --changed)   CHANGED=1; shift ;;
         --no-frames) RUNNER_ARGS+=(--no-frames); shift ;;
         --variants)  RUNNER_ARGS+=(--variants); shift ;;
         --delivery)  RUNNER_ARGS+=(--delivery "${2:?--delivery needs chain or direct}"); shift 2 ;;
@@ -85,8 +91,6 @@ done
 BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo detached)
 REVIEW="$ROOT/Design/review/${BRANCH//\//-}"
 RUNS="$REVIEW/runs"
-# The calibration set is the reviewer's test, not the branch's: its runs
-# live apart, so a page about the branch never shows them.
 BUNDLE="$REVIEW/bundle"
 if [ "$CALIBRATION" = 1 ]; then
     RUNS="$REVIEW/calibration/runs"
@@ -94,24 +98,16 @@ if [ "$CALIBRATION" = 1 ]; then
 fi
 BASE_RUNS="$REVIEW/base"
 
-# A compositor of this invocation's own. The shared one hosts every other
-# session's test windows too, and a window that is not the active one is drawn
-# in GTK's backdrop style -- faded buttons, grey rows -- so a frame came out
-# differently depending on who else was running. Large enough for the widest
-# variant, and stopped on the way out.
-HEADLESS_STARTED=0
+# A compositor of this invocation's own: on the shared one a window that is not active is drawn in
+# GTK's backdrop style, so frames differed with who else was running. It ends with its runner.
 headless() {
     export POSTIO_TEST_DISPLAY="${POSTIO_STORYBOARD_DISPLAY:-postio-storyboard-$$}"
     export POSTIO_TEST_GEOMETRY="1920x1200"
-    if [ "$HEADLESS_STARTED" = 0 ]; then
-        HEADLESS_STARTED=1
-        trap 'scripts/test-headless.sh --stop >/dev/null 2>&1 || true' EXIT
-    fi
-    scripts/test-headless.sh "$@"
+    scripts/test-headless.sh --own "$@"
 }
 
-# <path> relative to <dir>, without resolving symlinks. Python rather than
-# `realpath --relative-to`, which BSD realpath (macOS) does not have.
+# <path> relative to <dir>, without resolving symlinks; Python, since BSD realpath has no
+# `--relative-to`.
 relpath() {
     python3 -c 'import os, sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$1" "$2"
 }
@@ -125,7 +121,6 @@ target_dir() {
     fi
 }
 
-# The pure tool, built once.
 tool() {
     if ! cargo build -q -p postio-storyboard 2>&1 | tail -20 >&2; then
         echo "storyboards.sh: postio-storyboard did not build" >&2
@@ -137,19 +132,14 @@ tool() {
     echo "$bin"
 }
 
-# The crate whose `storyboard` example is the runner, and the crates a
-# review depends on besides the catalogue.
 RUNNER_CRATE=postio-gtk
 REVIEWED="crates/postio-gtk crates/postio-widgets crates/postio-ui"
 
-# Builds the runner in the tree at <dir> and echoes its path.
 build_runner() {
     local dir="$1"
     echo "building the runner..." >&2
-    # The attachment text helper too: the app looks for it beside its
-    # executable, and a runner under examples/ has none beside it, so every
-    # PDF would be skipped and a word inside one found nowhere (#1824). The
-    # runner is told where it is instead.
+    # The attachment text helper too: it is looked for beside the executable, which a runner under
+    # examples/ lacks, so every PDF would be skipped (#1824).
     if ! (cd "$dir" && cargo build -q -p "$RUNNER_CRATE" --example storyboard --features demo \
         -p postio-session --bin postio-extract-helper) 2>&1 | tail -20 >&2; then
         echo "storyboards.sh: the runner did not build" >&2
@@ -161,8 +151,6 @@ build_runner() {
     echo "$bin"
 }
 
-# Name the attachment text helper built beside the runner `$1`: run in a
-# subshell, `build_runner` cannot export it.
 use_helper() {
     local helper
     helper="$(dirname "$(dirname "$1")")/postio-extract-helper"
@@ -170,10 +158,27 @@ use_helper() {
     return 0
 }
 
-# Every storyboard a run plays: not calibration, not gap lists -- or, with
-# --calibration, only the calibration set the reviewer is measured on.
+base_sha() {
+    local based
+    based=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
+    git merge-base HEAD "origin/$based" 2>/dev/null \
+        || { echo "storyboards.sh: no merge-base with origin/$based -- fetch first" >&2; return 2; }
+}
+
+# Paths under storyboards/ the branch touched against its merge-base, the working tree included.
+changed_storyboards() {
+    local sha
+    sha=$(base_sha) || return 2
+    { git diff --name-only "$sha" -- storyboards; git ls-files --others --exclude-standard -- storyboards; } \
+        | sed "s|^|$ROOT/|"
+}
+
 selected() {
-    local file relative
+    local file relative changed=""
+    if [ "$CHANGED" = 1 ]; then
+        changed=$(changed_storyboards) || return 2
+        [ -n "$changed" ] || return 0
+    fi
     {
         if [ "$CALIBRATION" = 1 ]; then
             find "$CATALOGUE/calibration" -name '*.toml'
@@ -185,13 +190,12 @@ selected() {
         relative="${file#"$CATALOGUE"/}"
         relative="${relative%.toml}"
         # shellcheck disable=SC2053 -- a glob, deliberately
-        if [ -z "$ONLY" ] || [[ "$relative" == $ONLY ]]; then
-            echo "$file"
-        fi
+        if [ -n "$ONLY" ] && [[ "$relative" != $ONLY ]]; then continue; fi
+        if [ "$CHANGED" = 1 ] && ! grep -Fxq "$file" <<<"$changed"; then continue; fi
+        echo "$file"
     done
 }
 
-# How many runners side by side: --jobs, else half the cores, at most four.
 jobs() {
     local n="${JOBS:-}"
     if [ -z "$n" ]; then
@@ -202,9 +206,8 @@ jobs() {
     echo "$n"
 }
 
-# Plays <files> on the runner <bin> in $(jobs) shards, prints each shard's
-# output in order once all are done, and echoes the worst exit code last on
-# stdout (the output goes to stderr, so the caller can take the code).
+# Plays <files> on the runner in $(jobs) shards, prints each shard's output in order, and echoes the
+# worst exit code last on stdout.
 run_shards() {
     local bin="$1"; shift
     local n i code worst=0 commit logs=() pids=() shard
@@ -240,24 +243,29 @@ run_shards() {
 run_command() {
     local bin code files file
     files=()
+    if [ -z "$ONLY" ] && [ "$ALL" = 0 ] && [ "$CHANGED" = 0 ] && [ "$CALIBRATION" = 0 ] \
+        && [ "${CI:-}" != true ]; then
+        echo "storyboards.sh: the whole catalogue takes hours here. Film what you changed with" \
+            "--changed, or --only '<glob>'; --all if you mean every storyboard." >&2
+        exit 2
+    fi
+    [ "$CHANGED" = 0 ] || base_sha >/dev/null || exit 2
     # A read loop, not `mapfile`: macOS ships bash 3.2, which has none.
     while IFS= read -r file; do files+=("$file"); done < <(selected)
-    if [ "${#files[@]}" -eq 0 ]; then
+    if [ "${#files[@]}" -eq 0 ] && [ "$CHANGED" = 1 ]; then
+        echo "storyboards.sh: this branch changes no storyboard; --only '<glob>' films one anyway" >&2
+        exit 2
+    elif [ "${#files[@]}" -eq 0 ]; then
         echo "storyboards.sh: no storyboard matches '${ONLY:-*}'" >&2
         exit 2
     fi
     mkdir -p "$RUNS"
-    # The key the runs belong to, so the page's summary can name it and a
-    # landing can tell it is current (research R13).
     KEY=$(review_key 2>/dev/null | tail -1)
     bin=$(build_runner "$ROOT") || exit 2
 
     use_helper "$bin"
-    # The catalogue is split across runners side by side, each on a
-    # headless compositor of its own (never the maintainer's display):
-    # every storyboard settles by waiting, so one runner leaves most of the
-    # machine idle, and SC-002's five minutes cannot be met one at a time.
-    # Round-robin, so the slow surfaces spread.
+    # The catalogue is split across runners side by side, each on its own headless compositor: every
+    # storyboard settles by waiting, so one runner leaves the machine idle.
     code=$(run_shards "$bin" "${files[@]}")
     echo "runs: $RUNS"
     exit "$code"
@@ -270,10 +278,9 @@ lint_command() {
     exit $?
 }
 
-# The bundle a reviewer reads (contracts/review.md): the runs, the base if
-# there is one, the acceptance, and the design screens the storyboards name
-# -- from the committed references only. The untracked Focus design folder
-# carries a real name and is never offered; the tool refuses it besides.
+# The bundle a reviewer reads (contracts/review.md): runs, base, acceptance and the design screens
+# the storyboards name, from committed references only;
+# the untracked Focus design folder carries a real name and is never offered.
 bundle_command() {
     local bin base=()
     [ -n "$ACCEPTANCE" ] || { echo "storyboards.sh: bundle needs --acceptance <file>" >&2; exit 2; }
@@ -309,10 +316,8 @@ page_command() {
     fi
 }
 
-# The review key (research R13): the git tree ids of what a review depends
-# on -- the app's crates and the catalogue -- at HEAD. A rebase that does not
-# touch them keeps the key; a commit sha would not survive one. A crate not
-# on this branch is keyed as absent, so adding it changes the key.
+# The review key (research R13): the git tree ids of the app's crates and the catalogue at HEAD, so
+# a rebase that does not touch them keeps it; a missing crate is keyed as absent.
 review_key() {
     local bin path id trees=()
     for path in $REVIEWED storyboards; do
@@ -327,23 +332,15 @@ key_command() {
     review_key
 }
 
-# The branch's storyboards, played against the base's code (research R8):
-# that is what makes "changed" mean behaviour changed, and a storyboard
-# written for a defect this branch fixes is red here -- its proof. The base
-# tree is a detached worktree beside this one, named after it, so it belongs
-# to whoever owns this tree; its build output is a reflink copy of this
-# tree's, never a path into it (#1101). It is not nested under this tree:
-# Cargo merges the `.cargo/config.toml` of every ancestor directory, and a
-# nested base repeated every rustflag and went cold (#1818). Runs are cached by base commit, and a
-# storyboard is played again only when its file changed.
+# The branch's storyboards played against the base's code (research R8): a storyboard for a defect
+# this branch fixes is red here, its proof.
+# The base tree is a detached worktree beside this one, not nested (Cargo merges every ancestor
+# `.cargo/config.toml`, #1818), with a reflink copy of this tree's build output (#1101).
+# Runs are cached by base commit; a storyboard replays only when its file changed.
 base_command() {
-    local based sha tree cache bin file name hash marker files=()
-    based=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
-    sha=$(git merge-base HEAD "origin/$based" 2>/dev/null) \
-        || { echo "storyboards.sh: no merge-base with origin/$based -- fetch first" >&2; exit 2; }
+    local sha tree cache bin file name hash marker files=()
+    sha=$(base_sha) || exit 2
     tree="${STORYBOARD_BASE_DIR:-$(dirname "$ROOT")/.storyboard-base}/$(basename "$ROOT")"
-    # The old home, under this tree's target/: retire it, or Cargo would
-    # still find two configs there.
     if [ -d "$ROOT/target/storyboard-base/tree" ]; then
         git worktree remove --force "$ROOT/target/storyboard-base/tree" 2>/dev/null \
             || rm -rf "$ROOT/target/storyboard-base/tree"
@@ -384,17 +381,14 @@ base_command() {
     use_helper "$bin"
     headless "$bin" run "${files[@]}" --out "$cache" --commit "$sha" \
         ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"}
-    # A base run that fails is what a base run of a fixed defect does: it is
-    # recorded, not a failure of this command.
     for file in "${files[@]}"; do
         sha256sum "$file" | cut -d' ' -f1 > "$cache/.sources/$(basename "$file" .toml)"
     done
     echo "base: $cache"
 }
 
-# The generated pass (spec US6): every command bound in every context,
-# pressed from a fresh window, judged on whether a person could see anything
-# change. The gap list says which are known to show nothing yet.
+# The generated pass (spec US6): every command bound in every context, pressed from a fresh window,
+# judged on whether a person could see anything change; the gap list names the known ones.
 coverage_command() {
     local bin
     bin=$(build_runner "$ROOT") || exit 2
@@ -403,11 +397,8 @@ coverage_command() {
     headless "$bin" every-command --out "$REVIEW/coverage" --gaps "$CATALOGUE/gaps/focus.toml"
 }
 
-# The screen sweep (FR-030), which scripts/screens.sh used to be: every
-# storyboard under storyboards/screens/ in the variants it asks for, filmed
-# on the app, then the contact sheet --
-# the canvas design on the left where a screen names one, the app on the
-# right. Non-zero, naming them, if any screen failed to render.
+# The screen sweep (FR-030): every storyboard under storyboards/screens/ filmed on the app, then the
+# contact sheet with the canvas design beside it. Non-zero, naming them, if any failed to render.
 screens_command() {
     local bin files=() file out code
     while read -r file; do
@@ -433,16 +424,33 @@ screens_command() {
     exit "$code"
 }
 
-case "$COMMAND" in
-    run)  run_command ;;
-    screens) screens_command ;;
-    coverage) coverage_command ;;
-    base) base_command ;;
-    bundle) bundle_command ;;
-    tool) bin=$(tool); "$bin" ${TOOL_ARGS[@]+"${TOOL_ARGS[@]}"}; exit $? ;;
-    key)  key_command ;;
-    lint) lint_command ;;
-    page) page_command ;;
-    -h|--help) usage ;;
-    *) echo "storyboards.sh: unknown command '$COMMAND' -- try --help" >&2; exit 2 ;;
-esac
+descendants() {
+    local child
+    for child in $(pgrep -P "$1"); do
+        descendants "$child"
+        echo "$child"
+    done
+}
+
+main() {
+    case "$COMMAND" in
+        run)  run_command ;;
+        screens) screens_command ;;
+        coverage) coverage_command ;;
+        base) base_command ;;
+        bundle) bundle_command ;;
+        tool) bin=$(tool); "$bin" ${TOOL_ARGS[@]+"${TOOL_ARGS[@]}"}; exit $? ;;
+        key)  key_command ;;
+        lint) lint_command ;;
+        page) page_command ;;
+        -h|--help) usage ;;
+        *) echo "storyboards.sh: unknown command '$COMMAND' -- try --help" >&2; exit 2 ;;
+    esac
+}
+
+# Bash defers a trap until the foreground command returns, so the work runs in the background and
+# this shell waits: stopped by Ctrl-C or a caller's time cap, it takes its runners with it.
+trap 'kill -TERM $(descendants $$) 2>/dev/null; exit 130' INT
+trap 'kill -TERM $(descendants $$) 2>/dev/null; exit 143' TERM HUP
+main <&0 &
+wait $!

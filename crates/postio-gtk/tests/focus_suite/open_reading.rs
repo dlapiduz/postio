@@ -1,8 +1,3 @@
-//! The open message read as one column (screen 04; T183 to T187): what the
-//! dialog draws from its header down to the fold line, measured on the
-//! screen -- where things are and how tall -- and not on what a layer was
-//! handed.
-
 use adw::prelude::*;
 
 use crate::support::{self, Fixture};
@@ -11,8 +6,6 @@ fn enter(window: &postio_gtk::window::FocusWindow) {
     support::press(window, "Return", gtk::gdk::ModifierType::empty());
 }
 
-/// A window over the fixture's mail, the cursor on the first row, its
-/// message open and its body drawn.
 pub(crate) async fn opened(fixture: &Fixture, rows: usize) -> postio_gtk::window::FocusWindow {
     let (window, _client) = fixture.open().await;
     assert!(
@@ -34,7 +27,6 @@ pub(crate) async fn opened(fixture: &Fixture, rows: usize) -> postio_gtk::window
     window
 }
 
-/// The scroller nearest above `widget`.
 pub(crate) fn scroller_of(widget: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
     widget
         .ancestor(gtk::ScrolledWindow::static_type())
@@ -42,28 +34,18 @@ pub(crate) fn scroller_of(widget: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow
         .expect("inside a scroller")
 }
 
-/// The widget the column scrolls: its coordinates are the column's.
 fn column_child(view: &impl IsA<gtk::Widget>) -> gtk::Widget {
     scroller_of(view).child().expect("the column has a child")
 }
 
-/// A message with a long plain body.
 async fn long_message(fixture: &Fixture) {
-    let (message, _) = fixture
-        .file(("Ada Moreno", "ada@example.com"), "Long", "A line.", 10)
-        .await;
+    let (message, _) = fixture.file_from_ada("Long", "A line.", 10).await;
     let body = "A line long enough to scroll. ".repeat(600);
     fixture.write_body(message, &body).await;
 }
 
-/// T183: the header, the body and the fold line scroll together in one
-/// column; the body is not a scroller inside it, and is as tall as its
-/// words.
 pub fn the_open_message_is_one_scrolling_column() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         long_message(&fixture).await;
         let window = opened(&fixture, 1).await;
@@ -80,8 +62,8 @@ pub fn the_open_message_is_one_scrolling_column() {
         );
         let fold_line = support::only(&dialog, "focus-open-fold-line");
         assert_eq!(scroller_of(&fold_line), column, "the fold line is outside");
-        // The first document drawn can be the body before its last layout
-        // pass, and the column's height follows it a frame later.
+        // The first document drawn can be the body before its last layout pass; the column's height
+        // follows a frame later.
         let _ = crate::settle_until(async || {
             view.document()
                 .is_some_and(|document| document.size.height > 4.0 * 512.0)
@@ -105,20 +87,14 @@ pub fn the_open_message_is_one_scrolling_column() {
     });
 }
 
-/// T183: the column is still windowed -- only what the scroller shows is
-/// rasterised, however tall the message.
 pub fn the_column_draws_only_the_window_of_a_long_body() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         long_message(&fixture).await;
         let window = opened(&fixture, 1).await;
         let view = window.reading().expect("open").reader().view().clone();
-        // The first document drawn can be the body before its last layout
-        // pass; the case is about the long one, so it waits for that, and
-        // for the tiles it rasterises a frame later.
+        // The case is about the long body: wait past the first document, and for the tiles
+        // rasterised a frame later.
         let _ = crate::settle_until(async || {
             view.document()
                 .is_some_and(|document| document.size.height > 4.0 * 512.0)
@@ -140,23 +116,14 @@ pub fn the_column_draws_only_the_window_of_a_long_body() {
     });
 }
 
-/// T183: correspondence is drawn flat on the column, at the column's
-/// measure (T197); a message that paints a page of its own keeps a frame.
 pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (plain, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Plain", "x", 10)
-            .await;
+        let (plain, _) = fixture.file_from_ada("Plain", "x", 10).await;
         fixture
             .write_body(plain, &"Some words in a plain message. ".repeat(80))
             .await;
-        let (page, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Paged", "x", 20)
-            .await;
+        let (page, _) = fixture.file_from_ada("Paged", "x", 20).await;
         fixture
             .write_html_body(
                 page,
@@ -184,8 +151,6 @@ pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
         assert_eq!(reading.title(), "Plain");
         let (left, right) = extent();
         assert!(left < 1.0, "the plain body is inset {left}px: a frame");
-        // T197, then the maintainer's full-width column (2026-11-16): the
-        // lines start at the column's edge and run across it.
         let measure = f64::from(reading.reader().view().width());
         assert!(
             right > 0.9 * measure && right <= measure + 0.5,
@@ -197,9 +162,8 @@ pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
             crate::settle_until(async || reading.body_text().contains("A sale on now")).await,
             "the second message never arrived"
         );
-        // T212: a page of its own is drawn as sent on a sheet, so its text
-        // sits where a browser would put it -- 8px in, the default page
-        // margin its sender did not override -- not against the edge.
+        // A page of its own is drawn as sent on a sheet: its text sits 8px in, the default page
+        // margin its sender did not override.
         let (left, _) = extent();
         assert!(
             left >= 8.0,
@@ -208,14 +172,8 @@ pub fn a_plain_body_has_no_frame_and_a_page_of_its_own_keeps_one() {
     });
 }
 
-/// T184: the header card names who a message is from, who it went to and
-/// who was copied, with the sender's name apart from their address, and
-/// dates today's mail relatively.
 pub fn the_header_card_names_from_to_and_cc_and_dates_today_relatively() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let today = chrono::Utc::now() - chrono::Duration::minutes(1);
         fixture
@@ -249,7 +207,6 @@ pub fn the_header_card_names_from_to_and_cc_and_dates_today_relatively() {
             .to_string();
         assert_eq!(date, format!("Today, {time}"));
 
-        // The sender's name is bold and their address is dim and mono.
         let name = support::only(&card, "focus-open-sender-name");
         assert!(
             name.pango_context()
@@ -259,7 +216,6 @@ pub fn the_header_card_names_from_to_and_cc_and_dates_today_relatively() {
         );
         let address = support::with_class(&card, "focus-open-address");
         assert!(!address.is_empty(), "the addresses are not marked");
-        // Bare beside the name, as the handoff draws it (T209).
         assert!(
             address.iter().any(|label| label
                 .downcast_ref::<gtk::Label>()
@@ -282,13 +238,8 @@ pub fn the_header_card_names_from_to_and_cc_and_dates_today_relatively() {
     });
 }
 
-/// T184: a message nobody was copied on shows no Cc line, and one from the
-/// past is dated in full.
 pub fn the_header_card_has_no_cc_line_without_cc_and_dates_the_past_in_full() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         fixture
             .file_addressed(
@@ -320,14 +271,8 @@ pub fn the_header_card_has_no_cc_line_without_cc_and_dates_the_past_in_full() {
     });
 }
 
-/// T185, as the message dialog handoff redraws it (T209): an attachment is
-/// a 40px chip -- an icon, the name in the body's face and the size in mono
-/// beside it -- in a row under the body, not a pill over it.
 pub fn an_attachment_is_a_card_under_the_body() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let message = fixture
             .file_with_attachment("Attached", "Harbor-API-v3.pdf")
@@ -384,7 +329,6 @@ pub fn an_attachment_is_a_card_under_the_body() {
             "the size is not beside the name"
         );
         assert_eq!(card.height(), 40, "the chip is not 40px tall");
-        // Under the body, not over it.
         let view = reading.reader().view().clone();
         assert!(
             y(&card) >= y(view.upcast_ref()) + view.height() as f32 - 1.0,
@@ -393,16 +337,10 @@ pub fn an_attachment_is_a_card_under_the_body() {
     });
 }
 
-/// T186: a label's pill carries its colour dot, in the label's own colour.
 pub fn a_label_pill_carries_its_colour_dot() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Labelled", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Labelled", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         fixture.label_in(message, "Harbor", "#3a7d44").await;
         let window = opened(&fixture, 1).await;
@@ -422,18 +360,10 @@ pub fn a_label_pill_carries_its_colour_dot() {
     });
 }
 
-/// T187, as the message dialog handoff redraws it (T206): Close is the
-/// header bar's 32px square icon button, and the action row's verbs are
-/// 30px buttons inside their 44px row.
 pub fn close_is_the_header_s_square_and_the_verbs_are_30px() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         let window = opened(&fixture, 1).await;
         let reading = window.reading().expect("open");
@@ -449,17 +379,10 @@ pub fn close_is_the_header_s_square_and_the_verbs_are_30px() {
     });
 }
 
-/// T189: Close is an X icon button at the right of the header, the k/j
-/// steps (with their keys) are at the left.
 pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         let window = opened(&fixture, 1).await;
         let reading = window.reading().expect("open");
@@ -492,20 +415,10 @@ pub fn close_is_an_x_icon_at_the_right_and_the_steps_at_the_left() {
     });
 }
 
-/// T219: the steps are one compact pair, each a single control that
-/// carries its key inside it -- the chevron, then its cap -- the way every
-/// other control in Focus teaches its key ("Reply e", "Inbox g o"). Four
-/// separate things, two icon buttons and two caps standing beside them,
-/// took the header's whole left third.
 pub fn the_steps_carry_their_keys_inside_and_stay_compact() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Budget", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Budget", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         let window = opened(&fixture, 1).await;
         let reading = window.reading().expect("open");
@@ -544,28 +457,17 @@ pub fn the_steps_carry_their_keys_inside_and_stay_compact() {
     });
 }
 
-/// The quoted history of a reply, one word per line that only the quote says.
 const QUOTE_WORDS: [&str; 12] = [
     "zephyr", "quartz", "lantern", "marble", "orchid", "saffron", "tundra", "walnut", "yarrow",
     "ember", "falcon", "garnet",
 ];
 
-/// Opening the fold under a reply shows the quoted history: the body grows
-/// to hold it, the column scrolls further, and the words are drawn. Done
-/// with the keyboard alone -- Tab-able fold line, Return -- as a person
-/// without a pointer would (the Mac's WKWebView body once opened its fold
-/// and kept its old height, #1897).
+/// Done with the keyboard alone (Tab to the fold line, Return), as a person without a pointer
+/// would: the Mac's WKWebView body once opened its fold and kept its old height (#1897).
 pub fn opening_the_quoted_fold_grows_the_body_and_shows_the_quote() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Re: Plan", "Agreed.", 10)
-            .await;
-        // Long enough that the opened quote is taller than the dialog, so
-        // the column's extent, not just its page, has to grow.
+        let (message, _) = fixture.file_from_ada("Re: Plan", "Agreed.", 10).await;
         let quoted: String = QUOTE_WORDS
             .iter()
             .cycle()
@@ -598,14 +500,13 @@ pub fn opening_the_quoted_fold_grows_the_body_and_shows_the_quote() {
             column.vadjustment().upper(),
         );
 
-        // Tab to the fold line, as the keyboard gets there, and press Return.
         fold_line.grab_focus();
         assert!(
             fold_line.is_focus(),
             "the fold line cannot take the keyboard"
         );
-        // Return on a focused button is its `activate` action; the harness's
-        // key delivery runs key controllers only, so say it directly.
+        // Return on a focused button is its `activate` action; the harness's key delivery runs key
+        // controllers only.
         assert!(fold_line.activate(), "the fold line is not activatable");
         assert!(
             crate::settle_until(async || drawn("zephyr") && drawn("garnet")).await,
@@ -643,25 +544,12 @@ pub fn opening_the_quoted_fold_grows_the_body_and_shows_the_quote() {
     });
 }
 
-/// Copying from the open message as a person does: drag across words of
-/// the body, then Ctrl+C, wherever the keyboard was left. What is on the
-/// clipboard is the words they dragged across.
 pub fn ctrl_c_copies_what_was_dragged_across_the_body() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(
-                ("Ada Moreno", "ada@example.com"),
-                "Directions",
-                "Gate code",
-                10,
-            )
-            .await;
-        // Far enough down a long body that the column has to be scrolled
-        // to reach it: taking the selection must not move the page.
+        let (message, _) = fixture.file_from_ada("Directions", "Gate code", 10).await;
+        // Far enough down a long body that the column must scroll to reach it: taking the selection
+        // must not move the page.
         let body = format!(
             "{}The gate code is 4417 and the door sticks. {}",
             "A line long enough to scroll. ".repeat(300),
@@ -671,8 +559,6 @@ pub fn ctrl_c_copies_what_was_dragged_across_the_body() {
         let window = opened(&fixture, 1).await;
         let reading = window.reading().expect("open");
         let view = reading.reader().view();
-        // A long body is laid out in passes: wait for the one that reaches
-        // the words.
         assert!(
             crate::settle_until(async || view
                 .document()
@@ -688,8 +574,6 @@ pub fn ctrl_c_copies_what_was_dragged_across_the_body() {
             .compute_point(&column_child(view), &gtk::graphene::Point::zero())
             .map_or(0.0, |at| f64::from(at.y()));
         column.set_value(from_top + rect.y0 - column.page_size() / 2.0);
-        // The page is where it rests, before anything is selected: two
-        // frames apart, the same.
         let last = std::cell::Cell::new(column.value());
         assert!(
             crate::settle_until(async || {
@@ -701,8 +585,6 @@ pub fn ctrl_c_copies_what_was_dragged_across_the_body() {
             "the page never came to rest"
         );
         let settled = column.value();
-        // The words in the view's own coordinates: the document's, less
-        // whatever the view itself is scrolled by.
         let scrolled = |adjustment: Option<gtk::Adjustment>| adjustment.map_or(0.0, |a| a.value());
         let y = (rect.center().y - scrolled(view.vadjustment())) as f32;
         let x = |at: f64| (at - scrolled(view.hadjustment())) as f32;

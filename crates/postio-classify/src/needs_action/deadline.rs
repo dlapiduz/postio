@@ -1,31 +1,28 @@
-//! A to-do's deadline: "by Friday", "before 15 October", "no later than
-//! Thursday", read through `parse_when`, the reading the snooze and remind
-//! pickers give a typed date (research R6, R10).
+//! Read through `parse_when`, the reading the snooze and remind pickers give a typed date.
 
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone};
 use postio_search::date::parse_when;
 
 use super::lexicon::{DEADLINE_KEYWORDS, EVENT_OPENERS, IDIOMS, Idiom};
 
-/// How many words after a keyword can hold its date: "before the release
-/// on Friday", "by Monday, 28 September".
 const WINDOW: usize = 8;
 
-/// The longest date `parse_when` is offered: "Tue 29 Sep 09:00".
 const LONGEST: usize = 4;
 
-/// How far into the window an event's name can reach before its day:
-/// "before our quarterly call on Tuesday".
 const EVENT_WORDS: usize = 5;
 
-/// The deadline a clause names, as the first instant it can mean after
-/// `sent`, the moment the message was written; `None` when it names none,
-/// or one already past.
-///
-/// `lower` is the clause lowercased, with its apostrophes straightened. The
-/// first keyword that names a day wins.
+/// The first instant the clause's deadline can mean after `sent`; `None` when it names none or one
+/// already past. The first keyword that names a day wins.
 pub(super) fn deadline<Tz: TimeZone>(lower: &str, sent: &DateTime<Tz>) -> Option<DateTime<Tz>> {
-    let mut keywords: Vec<(usize, &str)> = DEADLINE_KEYWORDS
+    deadline_after(lower, sent, DEADLINE_KEYWORDS)
+}
+
+pub(super) fn deadline_after<Tz: TimeZone>(
+    lower: &str,
+    sent: &DateTime<Tz>,
+    keywords: &[&str],
+) -> Option<DateTime<Tz>> {
+    let mut keywords: Vec<(usize, &str)> = keywords
         .iter()
         .flat_map(|keyword| lower.match_indices(keyword))
         .filter(|(at, keyword)| {
@@ -44,7 +41,6 @@ pub(super) fn deadline<Tz: TimeZone>(lower: &str, sent: &DateTime<Tz>) -> Option
     })
 }
 
-/// The day the words after a keyword name, if they name one.
 fn after_keyword<Tz: TimeZone>(words: &[&str], sent: &DateTime<Tz>) -> Option<DateTime<Tz>> {
     let bare: Vec<&str> = words.iter().map(|word| bare(word)).collect();
     if let Some(idiom) = idiom(&bare) {
@@ -53,7 +49,6 @@ fn after_keyword<Tz: TimeZone>(words: &[&str], sent: &DateTime<Tz>) -> Option<Da
     if let Some(found) = phrase_at(words, 0, sent) {
         return found;
     }
-    // "before the release on Friday": an event, named, then the day it is.
     if EVENT_OPENERS.contains(bare.first()?) {
         let on = bare
             .iter()
@@ -64,10 +59,8 @@ fn after_keyword<Tz: TimeZone>(words: &[&str], sent: &DateTime<Tz>) -> Option<Da
     None
 }
 
-/// The longest run of words from `start` that `parse_when` reads, resolved
-/// from `sent`: `Some(None)` when it reads one but the time has gone by,
-/// and `None` when no run from here is a date at all. A bare number is not
-/// a date: "by 10 percent" is not ten o'clock.
+/// `Some(None)` when it reads a date but the time has gone by; `None` when no run is a date. A bare
+/// number is not a date: "by 10 percent" is not ten o'clock.
 fn phrase_at<Tz: TimeZone>(
     words: &[&str],
     start: usize,
@@ -91,20 +84,17 @@ fn phrase_at<Tz: TimeZone>(
         {
             return None;
         }
-        // Read from the start of the day, so a phrase whose time has gone
-        // by is still known for a date, and is not cut down to a shorter
-        // one that means something else.
+        // Read from the start of the day, so a phrase whose time has passed is still known for a
+        // date and not cut down to a shorter one that means something else.
         parse_when(&phrase, start_of_day.clone())?;
         Some(parse_when(&phrase, sent.clone()))
     })
 }
 
-/// A word without the punctuation around it.
 fn bare(word: &str) -> &str {
     word.trim_matches(|c: char| !c.is_alphanumeric())
 }
 
-/// The idiom the words open with, after an optional "the".
 fn idiom(bare: &[&str]) -> Option<&'static Idiom> {
     let words = match bare.first() {
         Some(&"the") => &bare[1..],
@@ -116,7 +106,6 @@ fn idiom(bare: &[&str]) -> Option<&'static Idiom> {
         .map(|(_, idiom)| idiom)
 }
 
-/// An idiom as words `parse_when` knows.
 fn idiom_phrase<Tz: TimeZone>(idiom: &Idiom, sent: &DateTime<Tz>) -> String {
     match idiom {
         Idiom::Tonight => "tonight".to_owned(),
@@ -142,8 +131,6 @@ mod tests {
 
     use super::*;
 
-    /// Saturday 26 September 2026 at noon, two hours east of UTC: the day
-    /// US12's scenarios are set on.
     fn sent() -> DateTime<FixedOffset> {
         FixedOffset::east_opt(2 * 3600)
             .expect("an offset")
@@ -162,7 +149,6 @@ mod tests {
 
     #[test]
     fn a_weekday_is_the_next_one_after_the_message_was_sent() {
-        // US12 scenario 2: sent on Saturday 26 September, due Wed 30 Sep.
         assert_eq!(due("please leave comments by wednesday"), day(9, 30));
         assert_eq!(
             due("please sign the nda and send it back by monday."),
@@ -229,7 +215,6 @@ mod tests {
 
     #[test]
     fn a_when_is_not_a_deadline() {
-        // "On Monday says when, not by when" (the dataset's rule 4).
         assert_eq!(due("don't forget to bring your passport on monday."), None);
         assert_eq!(due("please send it by email on friday."), None);
         assert_eq!(due("please hold it until friday."), None);
@@ -250,7 +235,6 @@ mod tests {
 
     #[test]
     fn a_deadline_already_past_is_none() {
-        // Sent at noon: 9am today has gone by, and nothing can be due then.
         assert_eq!(due("please send it by 9am today"), None);
     }
 }

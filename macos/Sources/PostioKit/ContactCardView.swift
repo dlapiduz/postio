@@ -1,12 +1,6 @@
 import PostioFFI
 import SwiftUI
 
-/// A contact's card, beside the list (handoff screens 01 and 03): the 64
-/// avatar, the name and the role line with the head's buttons; then two
-/// columns. Left, the addresses, how mail arrives and its switches, and the
-/// notes. Right, the tiles, the twelve-month strip, what is open between you
-/// (a newsletter's recent issues) and the recent files. Every word is the
-/// controller's (`ContactCardViewFfi`), a person's or a newsletter's alike.
 struct ContactCardView: View {
     let card: ContactCardViewFfi?
     let run: (CardButtonFfi) -> Void
@@ -31,8 +25,6 @@ struct ContactCardView: View {
             Color.clear
         }
     }
-
-    // MARK: head
 
     private func head(_ card: ContactCardViewFfi) -> some View {
         HStack(alignment: .top, spacing: 16) {
@@ -72,8 +64,6 @@ struct ContactCardView: View {
             .fixedSize()
         }
     }
-
-    // MARK: left column
 
     private func left(_ card: ContactCardViewFfi) -> some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -148,8 +138,6 @@ struct ContactCardView: View {
         }
     }
 
-    // MARK: right column
-
     private func right(_ card: ContactCardViewFfi) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             section(card.statsTitle) {
@@ -217,7 +205,6 @@ struct ContactCardView: View {
     }
 }
 
-/// The twelve-month strip and its axis.
 private struct MonthStrip: View {
     let months: CardMonthsFfi
 
@@ -246,9 +233,6 @@ private struct MonthStrip: View {
     }
 }
 
-/// A switch drawn, for what the card says: dark track with a light knob when
-/// on, light track with a white knob when off. A click is the card's
-/// (`toggle`), sent to the engine as a command.
 private struct SwitchTrack: View {
     let on: Bool
 

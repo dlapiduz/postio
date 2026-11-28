@@ -1,19 +1,7 @@
-//! Base versus branch: which storyboards a branch changed, and how
-//! (data-model § Comparison).
-//!
-//! The maintainer's attention is the scarce thing, so the page shows a
-//! storyboard in full only when the branch changed what it does. "Changed"
-//! is about *behaviour*: the branch's storyboards are played against the
-//! base's code (research R8), and two runs are compared step by step on the
-//! plain frame's hash and on the shared fields of the observation.
-//!
-//! Two things are deliberately not a change:
-//!
-//! * **The outline.** It is drawn by the runner over the frame a person
-//!   would see, and it moves with focus; comparing outlined frames would make
-//!   every focus change read twice. The plain frame's hash is compared.
-//! * **The widget path and `app.*`.** They name one toolkit's internals and
-//!   move with refactors that change nothing a person sees.
+//! Base versus branch: which storyboards a branch changed. "Changed" is about behaviour: runs are
+//! compared step by step on the plain frame's hash and the shared observation fields (research R8).
+//! The outline is not compared (it moves with focus and would read every focus change twice), nor
+//! the widget path and `app.*` (one toolkit's internals).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -25,32 +13,21 @@ use crate::bundle::{Class, Classification};
 use crate::page::{self, Filmstrip};
 use crate::run::{Run, Status};
 
-/// What happened to one storyboard, on one app, in one variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
-    /// Same frames, same observations.
     Unchanged,
-    /// The base played it and the branch differs.
     Changed,
-    /// Only the branch has it.
     New,
-    /// Only the base has it.
     Removed,
-    /// The base could not play it (an older runner, a step it lacks).
     BaseUnavailable,
 }
 
-/// How one step differs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StepDiff {
-    /// The step, 0 being the starting state.
     pub step: usize,
-    /// The plain frame's hash differs.
     pub frame_changed: bool,
-    /// The shared observation fields that differ, as dotted paths.
     pub observation_changed: Vec<String>,
-    /// The step's outcome or checks came out differently.
     pub status_changed: bool,
 }
 
@@ -60,21 +37,14 @@ impl StepDiff {
     }
 }
 
-/// One storyboard's comparison.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comparison {
-    /// The run directory, `<app>/<storyboard>/<variant>`, which is how base
-    /// and branch runs are matched.
     pub run: String,
-    /// What happened to it.
     pub kind: Kind,
-    /// The steps that differ (empty unless `Changed`).
     pub steps: Vec<StepDiff>,
-    /// The base and branch were built from different seeds.
     pub seed_changed: bool,
 }
 
-/// Compares one storyboard's base and branch runs.
 pub fn compare(run: &str, base: Option<&Run>, branch: Option<&Run>) -> Comparison {
     let mut comparison = Comparison {
         run: run.to_owned(),
@@ -136,8 +106,6 @@ pub fn compare(run: &str, base: Option<&Run>, branch: Option<&Run>) -> Compariso
     comparison
 }
 
-/// The shared observation fields that differ, as dotted paths. The widget
-/// path and `app.*` are left out (module docs).
 fn observation_diff(
     base: &postio_ui::observe::Observation,
     branch: &postio_ui::observe::Observation,
@@ -172,7 +140,6 @@ fn flatten(
                 } else {
                     format!("{prefix}.{key}")
                 };
-                // `app` is a map of dotted names; keep its keys whole.
                 if path == "app" {
                     for (name, v) in inner.as_object().into_iter().flatten() {
                         rows.insert(format!("app.{name}"), v.clone());
@@ -188,7 +155,6 @@ fn flatten(
     }
 }
 
-/// Compares every run under two trees, matched by directory.
 pub fn compare_trees(base: &Path, branch: &Path) -> io::Result<Vec<Comparison>> {
     let index = |root: &Path| -> io::Result<BTreeMap<String, Run>> {
         Ok(page::collect(root, "")?
@@ -204,7 +170,6 @@ pub fn compare_trees(base: &Path, branch: &Path) -> io::Result<Vec<Comparison>> 
         .collect())
 }
 
-/// A bundle classifier from comparisons: what the reviewer is asked about.
 pub fn classifier(comparisons: &[Comparison]) -> impl Fn(&Filmstrip) -> Classification + '_ {
     move |strip: &Filmstrip| {
         let relative = strip.dir.trim_start_matches("runs/");

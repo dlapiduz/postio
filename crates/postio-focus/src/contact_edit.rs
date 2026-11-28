@@ -1,13 +1,6 @@
-//! The Edit and New contact form's state (specs/011-focus-contacts S8,
-//! handoff screen 06): which form is open, what has changed, and the ladder
-//! Escape climbs: the first Esc on an edited form arms, the second discards.
-//!
-//! The form's content and its rules are `postio_model::ContactForm`'s and
-//! what it says is `postio_ui::contact_edit`'s; this is only what a person is
-//! doing with it. A frontend draws what [`FocusController::contact_edit`]
-//! hands back and reports each change as an [`EditChange`], so the same form
-//! behaves the same on every platform. Saving is one command
-//! (`ContactEditAction::Save`), never a write the form makes itself.
+//! The Edit and New contact form's state: which form is open, what has changed, and the ladder
+//! Escape climbs (the first Esc on an edited form arms, the second discards).
+//! Saving is one command (`ContactEditAction::Save`), never a write the form makes itself.
 
 use postio_core::{Command, ContactEditAction};
 use postio_model::{
@@ -18,85 +11,52 @@ use postio_ui::contact_edit::{EditContext, EditView, FormField};
 use crate::feed::Step;
 use crate::{FocusController, Intent};
 
-/// One change a person made to the form, reported as they make it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditChange {
-    /// A kind chosen.
     Kind(ContactKind),
-    /// The first name, as it now reads.
     Given(String),
-    /// The last name, as it now reads.
     Family(String),
-    /// A Show as style chosen.
     ShowAs(ShowAs),
-    /// The job title, as it now reads.
     Title(String),
-    /// The company, as it now reads.
     Company(String),
-    /// An address row's text, as it now reads.
     Address {
-        /// Which row.
         index: u32,
-        /// What is typed.
         text: String,
     },
-    /// An address row's type chosen.
     Label {
-        /// Which row.
         index: u32,
         /// The type; `None` clears it.
         label: Option<AddressLabel>,
     },
-    /// The filled circle moved to this row.
     Primary(u32),
-    /// "+ Add address".
     AddAddress,
-    /// The minus beside this row.
     RemoveAddress(u32),
-    /// A group named, "+ Add to group", by a name already complete.
     AddGroup(String),
     /// The group picker opened (`Some`, with what is typed so far) or put
     /// away (`None`).
     GroupQuery(Option<String>),
-    /// The picker's option at this index chosen.
     GroupPick(u32),
-    /// A "Seen in mail" row's action: the main one, or Ignore.
     Seen {
-        /// Which row.
         index: u32,
-        /// Whether it is the secondary action (Ignore).
         secondary: bool,
     },
-    /// The cross on this group chip.
     RemoveGroup(u32),
 }
 
-/// A form open in front of the Contacts view.
 #[derive(Debug)]
 pub(crate) struct ContactEdit {
     /// Who is being edited; `None` for a new person.
     person: Option<ContactId>,
-    /// The form as it was opened: what "changed" is measured from.
     original: ContactForm,
-    /// The form as it is now.
     form: ContactForm,
-    /// Whether the kind is the detector's word.
     kind_detected: bool,
-    /// Whether the next Esc discards.
     armed: bool,
-    /// Whether Save was asked and refused.
     show_problem: bool,
-    /// Who has the keyboard.
     focus: FormField,
-    /// The avatar's seed.
     id: i64,
-    /// Every group that exists, once read.
     pub(crate) known_groups: Vec<String>,
-    /// What the mail says that can be kept, once read.
     pub(crate) seen: Vec<postio_model::SeenItem>,
-    /// A detail changed, to be sent as a command by the controller.
     pending_detail: Option<(postio_model::DetailKind, String, Option<bool>)>,
-    /// What is typed in the group picker while it is open.
     group_query: Option<String>,
 }
 
@@ -260,7 +220,6 @@ impl ContactEdit {
 }
 
 impl FocusController {
-    /// ⌘E: the form on the person under the cursor, once their card is read.
     pub(crate) fn contact_edit_open(&mut self) -> Vec<Step> {
         let Some(contacts) = self.contacts.as_mut() else {
             return Vec::new();
@@ -281,7 +240,6 @@ impl FocusController {
         steps
     }
 
-    /// ⌘⇧N: an empty form for a new person.
     pub(crate) fn contact_new_open(&mut self) -> Vec<Step> {
         let Some(contacts) = self.contacts.as_mut() else {
             return Vec::new();
@@ -295,7 +253,6 @@ impl FocusController {
         steps
     }
 
-    /// The form's frame, whole.
     pub(crate) fn draw_contact_edit(&self) -> Vec<Step> {
         let view = self
             .contacts
@@ -305,13 +262,11 @@ impl FocusController {
         vec![Step::Show(Intent::ContactEdit(view))]
     }
 
-    /// The form, in words, while one is open.
     pub fn contact_edit(&self) -> Option<EditView> {
         let edit = self.contacts.as_ref()?.edit.as_ref()?;
         Some(edit.view(self.bar.keymap()))
     }
 
-    /// A change a person made to the open form.
     pub(crate) fn contact_edit_changed(&mut self, change: EditChange) -> Vec<Step> {
         let Some(edit) = self
             .contacts
@@ -351,7 +306,6 @@ impl FocusController {
         steps
     }
 
-    /// Escape in the form: arm when something changed, then discard.
     pub(crate) fn contact_edit_back(&mut self) -> Vec<Step> {
         let Some(contacts) = self.contacts.as_mut() else {
             return Vec::new();
@@ -367,7 +321,6 @@ impl FocusController {
         vec![Step::Show(Intent::ContactEdit(None))]
     }
 
-    /// ⌘S: one command, or the reason there is not one yet.
     pub(crate) fn contact_edit_save(&mut self) -> Vec<Step> {
         let Some(contacts) = self.contacts.as_mut() else {
             return Vec::new();
@@ -392,7 +345,6 @@ impl FocusController {
         steps
     }
 
-    /// A click on the card's switch `index`: sent as a command, drawn at once.
     pub(crate) fn contact_card_switch(&mut self, index: u32) -> Vec<Step> {
         let Some(contacts) = self.contacts.as_mut() else {
             return Vec::new();

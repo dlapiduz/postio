@@ -1,12 +1,3 @@
-//! Search answers in threads, from the controller's side (spec 013 US6,
-//! research R11, FR-020, FR-021).
-//!
-//! The engine here knows three conversations: Harbor (six messages, the
-//! third, fifth and sixth match "rate limit headers"), a one-message
-//! "Gateway defaults", and "Re: Platform SLOs" (eight messages, only the
-//! fifth matches). Ids: message `n` of Harbor is `100 + n`, of the SLOs
-//! thread `300 + n`.
-
 use crate::search_support::*;
 use chrono::TimeZone;
 use postio_core::CommandId;
@@ -38,7 +29,6 @@ fn member(thread: i64, number: i64, who: &EmailAddress) -> ThreadMember {
     }
 }
 
-/// Messages from Tomás on the odd numbers and Ben on the even.
 fn view_of(thread: i64, count: i64) -> ThreadView {
     ThreadView {
         thread: ThreadId::new(thread),
@@ -75,7 +65,6 @@ fn hit(
     let mut hit = conversation(0);
     hit.key = ConversationKey::Thread(ThreadId::new(thread));
     hit.best = MessageId::new(best);
-    // Message `n` of a thread is `n` places in.
     hit.best_number = (best % 100) as u32;
     hit.from = Some(if best % 2 == 0 { ben() } else { tomas() });
     hit.messages = messages;
@@ -129,8 +118,6 @@ fn matches_of(key: ConversationKey) -> Vec<ConversationMatch> {
     }
 }
 
-/// The engine: the conversations above in Best match order, the rest as
-/// the results suite's engine has it.
 fn engine(request: &Request) -> Option<Reply> {
     match request {
         Request::ResultsPage {
@@ -178,8 +165,6 @@ fn engine(request: &Request) -> Option<Reply> {
     }
 }
 
-/// Answer every read among `effects` until none is left; every batch of
-/// effects the answers produced, in order, after `effects`.
 fn settle_all(focus: &mut FocusController, effects: Vec<Effect>, rows: &List) -> Vec<Vec<Effect>> {
     let mut batches = vec![effects];
     let mut at = 0;
@@ -199,7 +184,6 @@ fn flat(batches: &[Vec<Effect>]) -> Vec<Effect> {
     batches.iter().flatten().cloned().collect()
 }
 
-/// Search "rate limit headers": Harbor on top, expanded.
 fn harbor_results(rows: &List) -> (FocusController, Vec<Vec<Effect>>) {
     let mut focus = mac();
     let started = show_all(&mut focus, "rate limit headers", rows);
@@ -217,7 +201,6 @@ fn last_splice(effects: &[Effect]) -> Option<Option<postio_focus::ResultSplice>>
         })
 }
 
-/// What a child says: its number and tag, or its gap line.
 fn said(child: &ResultChild) -> String {
     match child {
         ResultChild::Match { tag, .. } => tag.clone(),
@@ -247,9 +230,6 @@ fn the_top_result_with_several_matches_is_expanded_on_arrival() {
     );
 }
 
-/// Spec 013 T085 (i): a match child carries who wrote it, their initials and
-/// when, from the thread the controller already reads for the gaps, so
-/// neither frontend reads the thread again to draw an avatar.
 #[test]
 fn a_match_child_carries_its_sender_initials_and_time() {
     let rows = List::of(3);
@@ -289,8 +269,6 @@ fn a_match_child_carries_its_sender_initials_and_time() {
 fn the_default_expansion_is_read_with_the_page_and_costs_no_second_trip() {
     let rows = List::of(3);
     let (_focus, batches) = harbor_results(&rows);
-    // The batch the top hits landed in asks for their passages, the
-    // matches and the thread together.
     let landing = batches
         .iter()
         .find(|batch| {
@@ -312,8 +290,6 @@ fn the_default_expansion_is_read_with_the_page_and_costs_no_second_trip() {
         there.contains(&Request::ReadThread(ThreadId::new(HARBOR))),
         "{there:?}"
     );
-    // And nowhere else: one read of the matches and one of the thread, for
-    // the one expanded result.
     let all = asked(&flat(&batches));
     assert_eq!(
         all.iter()
@@ -364,13 +340,11 @@ fn j_walks_into_the_children_and_skips_the_gap() {
 fn right_and_left_expand_and_collapse_other_results() {
     let rows = List::of(3);
     let (mut focus, _) = harbor_results(&rows);
-    // Past Harbor's three matching children to Gateway, one message.
     for _ in 0..4 {
         let _ = run(&mut focus, CommandId::NextMessage, &rows);
     }
     let effects = run(&mut focus, CommandId::ExpandThread, &rows);
     assert!(asked(&effects).is_empty(), "{:?}", asked(&effects));
-    // The SLOs thread is the last row.
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
     let effects = run(&mut focus, CommandId::ExpandThread, &rows);
     let batches = settle_all(&mut focus, effects, &rows);
@@ -386,12 +360,10 @@ fn right_and_left_expand_and_collapse_other_results() {
             "Messages 6\u{2013}8 don't match \u{b7} Ben, Tom\u{e1}s, 16 Sep"
         ]
     );
-    // One at a time: Harbor's folded when the other opened.
     let effects = run(&mut focus, CommandId::CollapseThread, &rows);
     assert_eq!(last_splice(&effects), Some(None));
 }
 
-/// `j` to message 3 and Return: the window opens on it.
 fn opened_at_message_3(rows: &List) -> (FocusController, Vec<Effect>) {
     let (mut focus, _) = harbor_results(rows);
     let _ = run(&mut focus, CommandId::NextMessage, rows);
@@ -455,6 +427,87 @@ fn return_on_a_match_opens_the_window_at_that_message_with_every_match_marked() 
     assert_eq!(banner.back, "Back to results");
 }
 
+/// The footer behind a window opened from the results says what the keys
+/// do from there: reply and forward this message, and Escape goes back to
+/// the results, as the banner says, never back to the inbox (#2193).
+#[test]
+fn a_window_opened_from_the_results_says_escape_goes_back_to_them() {
+    let rows = List::of(3);
+    let (_focus, effects) = opened_at_message_3(&rows);
+    let footer = shown(&effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Footer(footer) => Some(footer),
+            _ => None,
+        })
+        .expect("the window's footer");
+    assert!(
+        footer.title.starts_with("Message 3 of 6"),
+        "{:?}",
+        footer.title
+    );
+    let labels: Vec<&str> = footer
+        .keys
+        .iter()
+        .map(|(_, label)| label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "reply to this",
+            "forward this",
+            "archive thread",
+            "back to results"
+        ]
+    );
+    assert_eq!(
+        footer.keys.last().map(|(cap, _)| cap.as_str()),
+        Some("Escape"),
+        "{:?}",
+        footer.keys
+    );
+}
+
+/// A result that is one message, opened over the results: its footer names
+/// the message and says Escape goes back to them too, rather than leaving
+/// no footer at all where the results' own stood (#2193).
+#[test]
+fn a_lone_message_opened_from_the_results_has_a_footer_too() {
+    let rows = List::of(3);
+    let (mut focus, _) = harbor_results(&rows);
+    let mut effects = Vec::new();
+    for _ in 0..8 {
+        let _ = run(&mut focus, CommandId::NextMessage, &rows);
+        effects = run(&mut focus, CommandId::OpenMessage, &rows);
+        effects = flat(&settle_all(&mut focus, effects, &rows));
+        if opened(&effects) == Some(MessageId::new(201)) {
+            break;
+        }
+        let _ = run(&mut focus, CommandId::Back, &rows);
+    }
+    assert_eq!(
+        opened(&effects),
+        Some(MessageId::new(201)),
+        "Gateway opened"
+    );
+    let footer = shown(&effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Footer(footer) => Some(footer),
+            _ => None,
+        })
+        .expect("the window's footer");
+    assert_eq!(footer.title, "Gateway defaults");
+    let labels: Vec<&str> = footer
+        .keys
+        .iter()
+        .map(|(_, label)| label.as_str())
+        .collect();
+    assert_eq!(labels, ["reply", "forward", "archive", "back to results"]);
+}
+
 fn banner_text(effects: &[Effect]) -> Option<String> {
     shown(effects)
         .into_iter()
@@ -479,7 +532,6 @@ fn opened(effects: &[Effect]) -> Option<MessageId> {
 fn find_next_steps_in_the_message_then_on_to_the_next_matched_message() {
     let rows = List::of(3);
     let (mut focus, _) = opened_at_message_3(&rows);
-    // The message's own find goes first.
     let effects = run(&mut focus, CommandId::FindNext, &rows);
     assert!(
         shown(&effects).contains(&Intent::Reader(ReaderVerb::NextMatch)),
@@ -487,7 +539,6 @@ fn find_next_steps_in_the_message_then_on_to_the_next_matched_message() {
         shown(&effects)
     );
     assert_eq!(opened(&effects), None, "the window has not moved");
-    // It has no more: on to message 5 (4 does not match).
     let effects = focus.handle_on(Input::MatchEdge { forward: true }, &rows);
     assert_eq!(opened(&effects), Some(MessageId::new(105)));
     assert!(
@@ -519,7 +570,6 @@ fn on_the_last_match_it_stays_and_says_so() {
         said.as_deref(),
         Some("That is the last match in this thread")
     );
-    // And back: find previous steps to message 5.
     let effects = run(&mut focus, CommandId::FindPrevious, &rows);
     assert!(shown(&effects).contains(&Intent::Reader(ReaderVerb::PrevMatch)));
     let effects = focus.handle_on(Input::MatchEdge { forward: false }, &rows);
@@ -530,7 +580,6 @@ fn on_the_last_match_it_stays_and_says_so() {
 fn escape_returns_to_the_results_with_the_ring_on_the_child_it_opened_from() {
     let rows = List::of(3);
     let (mut focus, _) = opened_at_message_3(&rows);
-    // mod+g twice reaches message 6.
     let _ = focus.handle_on(Input::MatchEdge { forward: true }, &rows);
     let _ = focus.handle_on(Input::MatchEdge { forward: true }, &rows);
     let effects = run(&mut focus, CommandId::Back, &rows);
@@ -579,7 +628,6 @@ fn a_multi_match_thread_says_how_many_of_its_messages_match_and_a_single_match_s
         None,
         "a message alone has no place to name"
     );
-    // One match in eight: "Message 5 of 8 \u{b7} Tom\u{e1}s: the words".
     let slos = focus.result_row(2).expect("slos");
     let words: String = slos.passage.iter().map(|run| run.text.as_str()).collect();
     assert!(!words.is_empty(), "the passage was read");

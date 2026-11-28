@@ -6,7 +6,7 @@
 #
 #   scripts/test-fast.sh    between edits    the crates you changed, --lib
 #   scripts/test-sanity.sh  before landing   the whole workspace, --lib
-#   scripts/issue-land.sh --full   when you want the integration suites too
+#   cargo nextest run -p <crate> --test <suite>   the integration suites you touched
 #
 # # Why this tier exists
 #
@@ -48,9 +48,7 @@ set -euo pipefail
 
 TREE=$(git rev-parse --show-toplevel)
 cd "$TREE"
-# The linker and CC in .cargo/config.toml are names on PATH, not paths (#1101).
 [ -x scripts/install-shims.sh ] && scripts/install-shims.sh
-# Draw compile jobs from the machine-wide pool rather than `jobs = 2` (#1104).
 [ -x scripts/jobserver.sh ] && eval "$(scripts/jobserver.sh env 2>/dev/null || true)"
 
 FILTER=""
@@ -62,9 +60,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# The crates this host cannot build (the GTK app and what reaches it, on a
-# Mac), left out as issue-land.sh leaves them out, so the tier proves the
-# rest instead of stopping at glib-sys's build script.
+# The crates this host cannot build (the GTK app and what reaches it, on a Mac), left out as
+# issue-land.sh leaves them out.
 EXCLUDES=()
 if [ -x scripts/unbuildable-crates.sh ]; then
     UNBUILDABLE=$(scripts/unbuildable-crates.sh | tr '\n' ' ')
@@ -84,5 +81,5 @@ fi
 
 echo
 echo "sanity tier passed in $(( $(date +%s) - STARTED ))s."
-echo "It proves the units, not the wiring: scripts/issue-land.sh --full runs"
-echo "the integration suites, and CI runs them on every pull request."
+echo "It proves the units, not the wiring: \`cargo nextest run -p <crate> --test <suite>\`"
+echo "runs the suites you touched, and the full suite runs on main after every merge."

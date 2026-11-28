@@ -1,18 +1,3 @@
-//! The two account settings that are a switch rather than a form: whether an
-//! account is synced at all, and which one new mail comes from (#1575).
-//!
-//! Both existed one layer down —
-//! [`AccountRepository::set_enabled`](postio_storage::repository::AccountRepository::set_enabled)
-//! and `set_default`, which GTK's settings panel has called since #464 and
-//! #960 — and neither had a way across the boundary, so on macOS
-//! `ToggleAccountEnabled` and `SetDefaultAccount` were commands with nowhere
-//! to go. A frontend cannot reach a repository; this is the whole of what it
-//! needs.
-//!
-//! The assertions read the *row back*, not the return value. A call that
-//! reported success while the pane went on drawing the old state is the
-//! failure worth catching, and `AccountFfi` is what the pane draws.
-
 use std::sync::Arc;
 
 use postio_account::secret::MemorySecretStore;
@@ -23,7 +8,6 @@ use postio_model::ids::AccountId;
 use postio_storage::Store;
 use postio_storage::repository::AccountRepository;
 
-/// An account row as the store holds one.
 fn account(name: &str, address: &str) -> Account {
     let mut account = Account::new(name, EmailAddress::new(Some(name), address));
     account.backend = Backend::Imap;
@@ -34,7 +18,6 @@ fn account(name: &str, address: &str) -> Account {
     account
 }
 
-/// A store holding both accounts, and the ids they were given.
 async fn store_with_two() -> (Store, AccountId, AccountId) {
     let database = postio_storage::test_support::memory().await;
     let connection = database.connect().await.expect("a checkout");
@@ -59,9 +42,6 @@ fn session(database: Store) -> Arc<Session> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn an_account_can_be_switched_off_and_the_row_says_so() {
-    // A disabled account still has a row — it is configured, it is simply
-    // not being synced — so the only way to see the switch took is to read
-    // the row's own flag back.
     let (database, ada, _) = store_with_two().await;
     let session = session(database);
 
@@ -95,10 +75,8 @@ async fn an_account_can_be_switched_off_and_the_row_says_so() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn making_one_account_the_default_takes_it_off_the_other() {
-    // The invariant the repository's transaction exists for: "clear every
-    // marker" landing without "set this one" would leave the store with no
-    // default at all. Asserted from the rows, because two defaults and no
-    // default look identical from the return value.
+    // Clearing every marker without setting one would leave no default; assert on the rows, as two
+    // defaults and none look alike from the return value.
     let (database, ada, grace) = store_with_two().await;
     let session = session(database);
 
@@ -121,9 +99,6 @@ async fn making_one_account_the_default_takes_it_off_the_other() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn naming_an_account_that_is_gone_is_a_sentence_rather_than_a_panic() {
-    // The keyboard path can aim at nothing: a row is removed in one window
-    // while the command is pressed in another. It has to come back as
-    // something to show somebody.
     let (database, _, _) = store_with_two().await;
     let session = session(database);
 

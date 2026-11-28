@@ -48,7 +48,6 @@ expect("a retired settings class fails", {"settings.rs": 'b.add_css_class("posti
 expect("widgets/ may", {"widgets/button.rs": 'b.add_css_class("suggested-action");'}, True)
 expect("a comment may", {"header.rs": '// was add_css_class("suggested-action")'}, True)
 
-# The desktop app draws buttons, from the shared crate's kinds (ADR 0043).
 expect(
     "a raw class planted in postio-widgets fails",
     {"crates/postio-widgets/src/reader/view.rs": 'b.add_css_class("postio-ghost");'},

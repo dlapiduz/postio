@@ -31,11 +31,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "site"
 
-# `href="..."` or `src="..."`, single or double quoted.
 REFERENCE = re.compile(r"""(?:href|src)\s*=\s*["']([^"']+)["']""", re.I)
 
-# Not ours to resolve: a scheme, a protocol-relative URL, an in-page anchor,
-# a query-only link, or the built book the deploy job drops in beside us.
 def external(target: str) -> bool:
     return (
         target.startswith(("#", "?", "//", "mailto:", "data:"))

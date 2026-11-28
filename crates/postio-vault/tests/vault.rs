@@ -1,6 +1,3 @@
-//! Capture into a throwaway vault (spec 007 T157, US15 scenario 1): the
-//! exact bytes appended, and nothing else in the vault changed.
-
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -8,7 +5,6 @@ use chrono::NaiveDate;
 use postio_model::MessageId;
 use postio_vault::{NoteEntry, Reason, Task, Vault, VaultError};
 
-/// Every file in the vault and its bytes.
 fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut files = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
@@ -26,8 +22,6 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     files
 }
 
-/// A vault with a tasks note, two projects -- one by frontmatter, one by
-/// folder -- and a note that is neither.
 fn vault() -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("a vault");
     let write = |name: &str, text: &str| {
@@ -56,8 +50,6 @@ fn day(month: u32, day: u32) -> NaiveDate {
 
 #[test]
 fn a_captured_task_is_exactly_one_line_appended_and_nothing_else_changes() {
-    // US15 scenario 1, spec C21: the link before the date, where the Tasks
-    // plugin still reads the date.
     let dir = vault();
     let before = snapshot(dir.path());
 
@@ -149,8 +141,6 @@ fn a_missing_tasks_note_is_created_with_the_line() {
 
 #[test]
 fn projects_come_from_frontmatter_and_the_projects_folder_and_one_is_suggested() {
-    // FR-181: `type: project` frontmatter, or a configured folder; the
-    // suggestion says why.
     let dir = vault();
     let vault = open(&dir);
 
@@ -275,8 +265,6 @@ fn a_note_outside_the_vault_is_refused() {
 
 #[test]
 fn finished_tasks_are_read_back_with_their_done_date() {
-    // FR-181: ticked in Obsidian, a task reads back finished, so Focus can
-    // offer to archive the conversation.
     let dir = vault();
     std::fs::write(
         dir.path().join("Tasks.md"),

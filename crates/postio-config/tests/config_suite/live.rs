@@ -1,7 +1,3 @@
-//! Last-good fallback: an invalid edit must never take the running app down.
-//!
-//! Written before the implementation, per the TDD rule in `CLAUDE.md`.
-
 use std::path::PathBuf;
 
 use postio_config::live::{LiveConfig, Reload};
@@ -110,8 +106,6 @@ fn fixing_the_file_applies_it_again() {
 
 #[test]
 fn reloading_an_unchanged_file_reports_no_change() {
-    // The ConfigChanged diffing bead needs to know when nothing moved, so a
-    // no-op save does not repaint the world.
     let dir = TempDir::new("unchanged");
     let path = dir.path("config.toml");
     std::fs::write(&path, GOOD).unwrap();

@@ -1,19 +1,9 @@
 import AppKit
 import PostioKit
 
-/// The trackpad's back and forward (specs/010-focus-search T073; design
-/// §3: "The browser-style back/forward gestures and ⌘[ / ⌘] also move
-/// between the inbox and the results").
-///
-/// The gesture is reported as the command a key would send -- `history_back`
-/// or `history_forward` -- and nothing is decided here: whether there is
-/// anywhere to go is the controller's (`crates/postio-focus/src/
-/// history.rs`), which does nothing with a back it cannot take.
-///
-/// Two gestures reach a window: a three-finger swipe arrives as one
-/// `.swipe` event, and the two-finger "swipe between pages" as horizontal
-/// scrolling, which `trackSwipeEvent` turns into one gesture with a
-/// direction. Either ends in one command.
+/// Reported as the command a key would send; whether there is anywhere to go is the controller's.
+/// A three-finger swipe arrives as one `.swipe` event, the two-finger one as horizontal scrolling,
+/// which `trackSwipeEvent` turns into one gesture.
 @MainActor
 public final class HistorySwipe {
     private weak var window: NSWindow?
@@ -25,17 +15,13 @@ public final class HistorySwipe {
         self.run = run
     }
 
-    /// The command a finished swipe of `amount` sends: right (positive,
-    /// as the pages follow the fingers) is back, left is forward, and a
-    /// swipe that did not go far is nothing.
     public nonisolated static func command(forAmount amount: CGFloat) -> String? {
         if amount >= 0.5 { return ResultsCommand.historyBack }
         if amount <= -0.5 { return ResultsCommand.historyForward }
         return nil
     }
 
-    /// The command a three-finger `.swipe` with `deltaX` sends: AppKit's
-    /// is +1 for a swipe to the left (forward), -1 to the right (back).
+    /// AppKit's deltaX is +1 for a swipe to the left (forward), -1 to the right (back).
     public nonisolated static func command(forSwipeDeltaX deltaX: CGFloat) -> String? {
         if deltaX > 0 { return ResultsCommand.historyForward }
         if deltaX < 0 { return ResultsCommand.historyBack }
@@ -62,8 +48,6 @@ public final class HistorySwipe {
             run(command)
             return nil
         case .scrollWheel:
-            // Only a horizontal gesture's start, and only where the system
-            // turns scrolling into page swipes.
             guard event.phase == .began, NSEvent.isSwipeTrackingFromScrollEventsEnabled,
                   abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
             else { return event }

@@ -11,7 +11,7 @@
 # answers the latest message. After `Right` and four `j`, the ring is on
 # child 4, Ben Adeyemi's reply, and the footer reads "Message 4 of 6 · Ben
 # Adeyemi" with "reply to this", "forward this" and "archive thread", and its
-# right-hand note says the archive, snooze, label and move keys (the
+# right-hand note says the archive, delete, snooze, label and move keys (the
 # registry's, not the design's) act on the thread; "reply to this" and
 # "forward this" say the rest. `r` there opens a reply that quotes message 4, not the
 # latest.
@@ -60,8 +60,8 @@ check   = { cursor.index = 3 }
 [[step]]
 id      = "child4"
 key     = "j"
-check   = { cursor.index = 4, view = "list", keyboard.region = "list", app.focus.cursor.kind = "child", app.focus.cursor.tag = "↳ to Ana", app.focus.footer.title = "Message 4 of 6 · Ben Adeyemi", app.focus.footer.note = "e, b, l, v act on the thread" }
-expect  = "The ring is on child 4. The footer now reads \"Message 4 of 6 · Ben Adeyemi\" with reply to this, forward this and archive thread beside their keys, and on the right, whole and not cut off: the archive, snooze, label and move keys as the keymap binds them, then \" act on the thread\". The keys are the registry's, not the design's a, s, l, m."
+check   = { cursor.index = 4, view = "list", keyboard.region = "list", app.focus.cursor.kind = "child", app.focus.cursor.tag = "↳ to Ana", app.focus.footer.title = "Message 4 of 6 · Ben Adeyemi", app.focus.footer.note = "e, #, b, l, v act on the thread" }
+expect  = "The ring is on child 4. The footer now reads \"Message 4 of 6 · Ben Adeyemi\" with reply to this, forward this and archive thread beside their keys, and on the right, whole and not cut off: the archive, delete, snooze, label and move keys as the keymap binds them, then \" act on the thread\". The keys are the registry's, not the design's a, s, l, m."
 
 [[step]]
 id      = "reply-this"

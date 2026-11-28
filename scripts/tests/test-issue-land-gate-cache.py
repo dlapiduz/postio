@@ -3,14 +3,13 @@
 
 Long commands on this workstation get killed sometimes (documented in
 docs/archive/engineering-notes.md), and every killed `issue-land.sh` retry used to
-re-run the whole gate chain -- clippy and the full per-crate test suite,
-minutes each -- against a tree that had not changed a byte since the gates
+re-run the whole gate chain -- minutes each -- against a tree that had not changed a byte since the gates
 last went green. Landing #109 paid the app crate's gates three times that way.
 
 So the script records `git write-tree` (the staged tree's content hash --
 staging already happens before the gates, #270) plus the crate list after
 the gates pass, in the worktree's own git dir. A later run whose staged
-tree and crate list match exactly skips clippy and the per-crate tests,
+tree and crate list match exactly skips clippy,
 loudly; `check.sh` still runs (it is seconds). Any content change -- an
 edit, what `cargo fmt` itself rewrites, a rebase, a toolchain bump
 (rust-toolchain.toml is tracked) -- changes the hash and the gates run in
@@ -38,17 +37,9 @@ sys.path.insert(0, str(HERE / "lib"))
 
 import fixture_toolchain  # noqa: E402  -- enabled by the sys.path line above
 ISSUE_LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
-# Stubbed for the same reason test-issue-land-commit-guard.py stubs them:
-# this test is about the gate cache, and the checks have self-tests of
-# their own.
 STUB_CHECKS = [
     "check-crate-boundaries.py",
     "check-no-personal-data.py",
@@ -126,8 +117,6 @@ def main() -> int:
         return 0
 
 
-    # Inside the current worktree, for the same reason the commit-guard test
-    # is: the shared-tree guard only lifts its refusals for worktree paths.
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         target = base / "target"
@@ -137,10 +126,6 @@ def main() -> int:
         origin = base / "origin.git"
         subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
         build_sandbox(root)
-        # The real repository commits its Cargo.lock; without one here the
-        # first gate run generates it, which changes the tree and makes the
-        # second run look like new content -- a sandbox artifact, not the
-        # behavior under test.
         environment = dict(os.environ)
         environment.pop("RUSTUP_TOOLCHAIN", None)
         environment["CARGO_TARGET_DIR"] = str(target)
@@ -160,13 +145,10 @@ def main() -> int:
         git("push", "-q", "origin", "main", cwd=root)
         git("checkout", "-q", "-b", "issue-1-x", cwd=root)
 
-        # A crate change, uncommitted: --gates-only stages and runs the
-        # gates against it, exactly the state a session verifies from.
         (root / "crates" / "dummy" / "src" / "lib.rs").write_text(
             "pub fn x() {}\npub fn y() {}\n", encoding="utf-8"
         )
 
-        # ── the first run runs the gates and records the green tree ───────
         first = land(root, target, "--gates-only")
         output = first.stdout + first.stderr
         case(
@@ -176,17 +158,11 @@ def main() -> int:
         )
         case(
             "and prints how long each gate phase took",
-            re.search(r"^\[timing\] clippy dummy: \d+s$", output, re.MULTILINE)
-            is not None
-            # The default tier is one run over the changed crates' units, so
-            # the timing line names the tier. `--full` is what prints
-            # `test <crate>`.
-            and re.search(r"^\[timing\] unit tests: \d+s$", output, re.MULTILINE)
+            re.search(r"^\[timing\] clippy: \d+s$", output, re.MULTILINE)
             is not None,
             f"no [timing] lines for the crate's gates\n{output}",
         )
 
-        # ── the second run on the identical tree skips clippy and tests ───
         second = land(root, target, "--gates-only")
         output = second.stdout + second.stderr
         case(
@@ -200,10 +176,6 @@ def main() -> int:
             f"the skip has to be on the record, not silent\n{output}",
         )
 
-        # ── the record survives a commit of the same content ──────────────
-        # The kill-retry case commits between runs (a retried full land
-        # commits first, then re-runs); the *content* is what the record is
-        # keyed on, so a commit alone must not invalidate it.
         git("add", "-A", cwd=root)
         git("commit", "-q", "-m", "feat(dummy): grow", cwd=root)
         committed = land(root, target, "--gates-only")
@@ -214,7 +186,6 @@ def main() -> int:
             f"exit {committed.returncode}\n{output}",
         )
 
-        # ── any content change runs the gates in full again ───────────────
         (root / "crates" / "dummy" / "src" / "lib.rs").write_text(
             "pub fn x() {}\npub fn y() {}\npub fn z() {}\n", encoding="utf-8"
         )
@@ -226,10 +197,6 @@ def main() -> int:
             f"exit {changed.returncode}\n{output}",
         )
 
-        # ── a full land on the recorded tree still pushes ─────────────────
-        # --wip stops after the push, before anything needs gh. The gates
-        # were just recorded green by the run above; the land must skip them
-        # and still do its real job.
         git("add", "-A", cwd=root)
         git("commit", "-q", "-m", "feat(dummy): grow again", cwd=root)
         wip = land(root, target, "--wip")

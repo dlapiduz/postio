@@ -1,12 +1,3 @@
-//! The windowed list model, without a database or a runtime, over a minimal
-//! row type (`list_model_generic`'s `NoteRow`).
-//!
-//! The model asks for pages through a [`PageSource`] and waits, so a fake
-//! source that records what it was asked for is enough to check the whole of
-//! it — including the two things that are otherwise expensive to be sure
-//! about: that scrolling a huge folder keeps memory flat, and that a page is
-//! never fetched twice.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -17,10 +8,8 @@ use postio_widgets::list_model::{CACHE_PAGES, ModelRow, PAGE_SIZE, PageSource, W
 
 use crate::list_model_generic::{Note, NoteList as MessageList, NoteRow as MessageRow};
 
-/// A folder big enough that loading it would be the bug.
 const HUGE: u32 = 100_000;
 
-/// Records what the model asked for, and answers only when told to.
 struct Fake {
     total: u32,
     requested: RefCell<Vec<u32>>,
@@ -34,12 +23,10 @@ impl Fake {
         })
     }
 
-    /// Every page asked for since the last drain, in order.
     fn drain(&self) -> Vec<u32> {
         self.requested.borrow_mut().drain(..).collect()
     }
 
-    /// How many requests in total, across every drain.
     fn outstanding(&self) -> usize {
         self.requested.borrow().len()
     }
@@ -55,7 +42,6 @@ impl PageSource for Fake {
     }
 }
 
-/// A row whose id is its position, so a case can say where it came from.
 fn row(position: u32) -> Note {
     Note::numbered(position as i64 + 1, &format!("message {position}"))
 }
@@ -66,7 +52,6 @@ fn page_rows(page: u32, total: u32) -> Vec<Note> {
     (start..end).map(row).collect()
 }
 
-/// Answer everything the fake has been asked for.
 fn settle(model: &MessageList, source: &Fake) {
     for page in source.drain() {
         model.deliver(page, page_rows(page, source.total()));
@@ -81,13 +66,9 @@ fn item(model: &MessageList, position: u32) -> Option<MessageRow> {
     model.item(position).and_then(|o| o.downcast().ok())
 }
 
-/// How many times `row` announced that its contents changed.
-///
-/// The other half of `watch`. Since #1216 the two say different things: the
-/// model announces *structure* — positions appearing, vanishing or coming to
-/// hold different messages — and a row announces its own *contents*. A page
-/// landing on positions that already exist is the second, and saying it as
-/// the first costs `GtkListView` a rebuilt widget per row in range.
+/// Since #1216 the model announces structure and a row announces its own contents; a page landing
+/// on existing positions is the latter, and saying it as the former costs `GtkListView` a rebuilt
+/// widget per row.
 fn announcements(row: &MessageRow) -> Rc<std::cell::Cell<u32>> {
     let count = Rc::new(std::cell::Cell::new(0));
     row.connect_changed({
@@ -97,7 +78,6 @@ fn announcements(row: &MessageRow) -> Rc<std::cell::Cell<u32>> {
     count
 }
 
-/// Every `items_changed` the model emitted, as `(position, removed, added)`.
 fn watch(model: &MessageList) -> Rc<RefCell<Vec<(u32, u32, u32)>>> {
     let log = Rc::new(RefCell::new(Vec::new()));
     model.connect_items_changed({
@@ -146,9 +126,6 @@ pub fn a_row_that_is_not_here_yet_is_a_placeholder_and_a_request() {
     let announced = announcements(&first);
     model.deliver(0, page_rows(0, HUGE));
 
-    // The placeholder handed out above *is* the row: a position answers with
-    // one object for as long as it means the same thing, and a delivery fills
-    // that object in rather than replacing it.
     assert!(
         first.is_loaded(),
         "the object the view is holding is not the one the page filled in"
@@ -180,14 +157,12 @@ pub fn a_page_is_never_asked_for_twice() {
     item(&model, 0);
     assert_eq!(source.drain(), [0, 1]);
 
-    // Still outstanding: asking again would be a second query for the same
-    // rows, which is how a list ends up hammering SQLite while it scrolls.
+    // Still outstanding: asking again would be a second query for the same rows.
     for position in 0..PAGE_SIZE {
         item(&model, position);
     }
     assert!(source.drain().is_empty(), "no page was asked for twice");
 
-    // And once delivered, still not.
     model.deliver(0, page_rows(0, HUGE));
     model.deliver(1, page_rows(1, HUGE));
     item(&model, 10);
@@ -202,7 +177,6 @@ pub fn scrolling_a_hundred_thousand_messages_keeps_memory_flat() {
     let ceiling = CACHE_PAGES * PAGE_SIZE as usize;
     let mut high_water = 0;
 
-    // A tenth of the way down the folder, a screenful at a time.
     let mut position = 0;
     while position < HUGE {
         for offset in 0..15 {
@@ -235,7 +209,6 @@ pub fn the_pages_that_go_are_the_ones_nobody_is_looking_at() {
     let model = new_list();
     model.set_source(source.clone());
 
-    // Walk far enough to overflow the cache several times over.
     for page in 0..(CACHE_PAGES as u32 * 3) {
         item(&model, page * PAGE_SIZE);
         settle(&model, &source);
@@ -349,25 +322,18 @@ pub fn new_mail_arrives_as_an_insertion_at_the_top() {
     );
 }
 
-/// A list with nothing held is refreshed by reading its top, and a second
-/// refresh asked for while that read is out is for a change the read may
-/// predate: the top is read again once it lands, or the list keeps what was
-/// there before the change (#2152: a first sync's mail never listed).
+/// A second refresh asked while the top read is out may predate that read, so the top is read again
+/// once it lands (#2152).
 pub fn a_refresh_asked_while_the_top_is_on_its_way_reads_it_again() {
     let source = Fake::new(0);
     let model = new_list();
     model.set_source(source.clone());
     assert!(source.drain().is_empty(), "an empty list reads nothing");
 
-    // Something changed: nothing is held, so the top is read. Focus's
-    // source says the page is on its way, as its controller does
-    // (`Intent::PagePending`).
     model.refresh();
     assert_eq!(source.drain(), [0]);
     model.note_pending(0);
-    // Something else changed while that read was out.
     model.refresh();
-    // The read lands with what was there before the second change.
     model.deliver(0, Vec::new());
     assert_eq!(
         source.drain(),
@@ -470,7 +436,6 @@ pub fn there_is_nothing_past_the_end() {
     assert!(model.item(120).is_none());
     assert!(model.item(u32::MAX).is_none());
 
-    // And the model does not ask for a page that lies wholly past the end.
     item(&model, 119);
     assert_eq!(
         source.drain(),
@@ -480,8 +445,6 @@ pub fn there_is_nothing_past_the_end() {
 }
 
 pub fn the_model_can_say_which_page_holds_a_message() {
-    // What makes an in-place update cheap: a changed message costs a refetch
-    // of the one page it is on, not of the folder.
     let source = Fake::new(HUGE);
     let list = new_list();
     list.set_source(source.clone());
@@ -505,8 +468,6 @@ pub fn the_model_can_say_which_page_holds_a_message() {
 }
 
 pub fn the_model_can_say_where_a_resident_message_sits() {
-    // What a notification's click needs: not just which page a message is
-    // on, but the exact position to put the cursor on.
     let source = Fake::new(HUGE);
     let list = new_list();
     list.set_source(source.clone());
@@ -534,9 +495,8 @@ pub fn the_model_can_say_where_a_resident_message_sits() {
     );
 }
 
-/// A source that answers inside `request`, which the contract forbids and
-/// which a real one cannot do — but a test double, a bench or a second view
-/// written in a hurry can, and used to take the process down with it.
+/// A source that answers inside `request`, which the contract forbids; it used to take the process
+/// down.
 struct Impatient {
     total: u32,
     list: RefCell<Option<MessageList>>,
@@ -558,11 +518,8 @@ impl PageSource for Impatient {
 }
 
 pub fn a_source_that_answers_too_soon_is_held_until_it_is_safe() {
-    // `request` is called from inside the model answering `item()`, so a
-    // delivery made there would emit `items_changed` while a view is
-    // mid-read. GtkListView does not survive that — it segfaults, with no
-    // message and a long way from the mistake. So the model holds the
-    // delivery until the read is over rather than trusting the contract.
+    // A delivery inside the model's `item()` would emit `items_changed` mid-read, and GtkListView
+    // segfaults on that; the model holds it until the read is over.
     let source = Rc::new(Impatient {
         total: 120,
         list: RefCell::new(None),
@@ -596,8 +553,6 @@ pub fn a_source_that_answers_too_soon_is_held_until_it_is_safe() {
         "a position answered with data the view had not been told about yet"
     );
 
-    // The held delivery lands on the next turn of the main loop, and the
-    // rows are the rows that were asked for.
     for _ in 0..8 {
         while glib::MainContext::default().iteration(false) {}
     }
@@ -616,27 +571,13 @@ pub fn a_source_that_answers_too_soon_is_held_until_it_is_safe() {
     );
 }
 
-/// GDK paints at `GDK_PRIORITY_REDRAW`, which is `G_PRIORITY_HIGH_IDLE + 20`.
-///
-/// Named here rather than assumed: the whole point of the case below is the
-/// arithmetic between this and the band the hold runs in.
+/// GDK paints at `GDK_PRIORITY_REDRAW`, `G_PRIORITY_HIGH_IDLE + 20`.
 const GDK_PRIORITY_REDRAW: i32 = 120;
 
 pub fn a_held_delivery_is_not_postponed_by_a_window_that_is_repainting() {
-    // The hold is a main-loop idle, and an idle has a priority. A held change
-    // used to run at `G_PRIORITY_DEFAULT_IDLE`, which is 200, and a window
-    // with something to paint every time the loop looks is ready at 120 --
-    // so for as long as the painting lasts, the loop never gets down to the
-    // change. "The next turn of the main loop" is not a promise a number that
-    // large can keep.
-    //
-    // Not a frame or two, either. #1015 caught a 300-message list sitting at
-    // nought resident rows for a full five seconds with its window mapped and
-    // painting perfectly well, which is what this looks like from outside.
-    //
-    // Standing in for that window: a source at exactly the redraw priority
-    // that is always ready, which is what a window drawing flat out looks
-    // like to the main loop.
+    // A held change at `G_PRIORITY_DEFAULT_IDLE` (200) never runs while a window with something to
+    // paint is ready at 120 (#1015).
+    // A source always ready at the redraw priority stands in for a window drawing flat out.
     let source = Rc::new(Impatient {
         total: 120,
         list: RefCell::new(None),
@@ -645,8 +586,6 @@ pub fn a_held_delivery_is_not_postponed_by_a_window_that_is_repainting() {
     *source.list.borrow_mut() = Some(list.clone());
     list.set_source(source.clone());
 
-    // Asking for a row is what makes the source answer, inside the read, and
-    // therefore what gets held.
     assert!(
         !list
             .item(0)
@@ -659,9 +598,8 @@ pub fn a_held_delivery_is_not_postponed_by_a_window_that_is_repainting() {
     let painting = glib::idle_add_local_full(glib::Priority::from(GDK_PRIORITY_REDRAW), || {
         glib::ControlFlow::Continue
     });
-    // Generous, because the number is not the point: at 200 the change never
-    // runs however long this goes on, and above the redraw it runs on the
-    // first turn.
+    // Generous: at 200 the change never runs however long this goes on, and above the redraw it
+    // runs on the first turn.
     const TURNS: usize = 2_000;
     for _ in 0..TURNS {
         glib::MainContext::default().iteration(false);
@@ -677,14 +615,8 @@ pub fn a_held_delivery_is_not_postponed_by_a_window_that_is_repainting() {
     );
 }
 
-/// A source with nothing to read ends the wait when its first page is given
-/// up on, the way a first page that brought no rows does.
-///
-/// A search with no hits has no page 0, so the feed gives it up rather than
-/// asking. A list that was already showing rows changed over at that point;
-/// one that was empty -- a search typed before the folder's first page had
-/// landed -- stayed "loading" for good, and the list-state pane, which
-/// withholds "nothing matched" while a list loads, showed nothing at all.
+/// A search with no hits has no page 0; a list that was empty stayed "loading" for good and the
+/// list-state pane showed nothing.
 pub fn giving_up_a_first_page_there_is_none_of_ends_the_wait() {
     let model = new_list();
     let filled = Rc::new(std::cell::Cell::new(0));

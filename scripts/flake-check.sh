@@ -94,8 +94,6 @@ if ! "$CARGO" nextest run "${SCOPE[@]}" --no-run; then
     die "the build failed; nothing was run"
 fi
 
-# phase <name>: RUNS runs of the one test; records seconds in $WORK/<name>.times
-# and the pass count in $WORK/<name>.passed.
 phase() {
     local name="$1" i start end passed=0
     : > "$WORK/$name.times"
@@ -114,7 +112,6 @@ phase() {
     echo "$passed" > "$WORK/$name.passed"
 }
 
-# stats <name>: "min X s, median Y s, max Z s"
 stats() {
     python3 - "$WORK/$1.times" <<'PY'
 import sys, statistics

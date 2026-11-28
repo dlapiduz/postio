@@ -1,0 +1,227 @@
+# Implementation Plan: Compose formatting
+
+**Branch**: `feature/compose-formatting` | **Date**: 2026-11-22 | **Spec**: [spec.md](spec.md)
+
+**Input**: Feature specification from `specs/014-compose-formatting/spec.md`
+
+## Summary
+
+The composer authors every CommonMark and GFM construct, with Markdown as a
+way in and a view, never the stored format (D1). The maintainer answered
+Q1–Q4 on 2026-11-22. The work is now two phases (D8, research R15).
+
+### Build now
+
+1. **The document** widens (`data-model.md`). `parse`, `to_html`, the two
+   text renderings and `harden` follow, pinned by one golden document
+   (`contracts/wire.md`).
+2. **Markdown in and out.** `to_document` and `from_document` gain the GFM
+   options, the new shapes, autolinks, the remote image and source maps.
+   The lossless round trip is a property test (FR-024).
+3. **The registry**: the now-phase rows only. That means the seven heading
+   commands (reshaping #1485), the formatting commands the terminal and
+   the source view answer, `toggle_markdown_source` and
+   `attach_remote_image`. The Format menu and `docs/keybindings.md`
+   follow.
+4. **The terminal composer** authors every construct through
+   `postio_ui::editor::markdown_edit`, the marker functions moved out of
+   `postio-tui`.
+5. **The Markdown source view** in GTK and on the Mac
+   (`contracts/source-view.md`), the interim editing surface. In the rich
+   view, the new commands give their reason (FR-029).
+6. **Remote images**: the chip's row, the one-request fetch through
+   `io-http`, the failure states and the link fallback
+   (`contracts/remote-image.md`).
+7. **`PRODUCT.md` §10**, already done.
+
+### Held for ADR 0039's native composer
+
+- typed sequences in the rich surface;
+- the constructs' rich rendering;
+- the new toolbar buttons and their reflection;
+- the formatting, table and code language pickers;
+- the structural edit ops (as arms of ADR 0039's `apply`);
+- Paste as Markdown;
+- the inline chip;
+- `line_break`.
+
+The sequence table and its contract are written now, so the native
+surface has a test to meet.
+
+## Technical Context
+
+**Language/Version**: Rust 1.99.0 (`rust-toolchain.toml`); Swift tools 6.0
+for the Mac. The now phase changes `editor.js` only to report and set the
+caret as a document position (research R14).
+
+**Primary Dependencies**:
+- `postio-body` (document, parse, render, markdown, autolinks, edit ops);
+- `postio-ui` (sequence table, picker words, `compose` scripts);
+- `postio-core` (registry, menu);
+- `postio-widgets` (composer, toolbar, picker frame);
+- `postio-session` (the remote image fetch, through `io-http`, already in
+  the tree);
+- `postio-gtk` (focus suite only);
+- `postio-tui` (composer);
+- `postio-ffi` and `macos/` (the Mac's composer).
+
+`pulldown-cmark` 0.13 already exists; the plan only enables options.
+**No new third-party dependency.**
+
+**Storage**: none. Drafts store generated HTML (FR-003).
+
+**Testing**:
+- `scripts/test-fast.sh` between edits. Most of this feature is red and
+  green at `--lib` in `postio-body`, `postio-ui` and `postio-core`.
+- `cargo nextest run -p postio-body --test body_suite formatting_wire` (new) and
+  `outgoing`.
+- `cargo nextest run -p postio-widgets --test widgets_suite
+  composer_formatting` (new) and `-p postio-gtk --test focus_suite
+  formatting_picker` (new).
+- `cargo nextest run -p postio-tui --lib`.
+- `scripts/macos-test.sh` on the Mac.
+- Storyboards in `storyboards/compose/`, then `/ux-review`.
+
+**Target Platform**: Linux (GTK Focus, the terminal) and macOS, on the same
+engine.
+
+**Project Type**: desktop app (Rust engine, GTK, terminal and Swift
+frontends).
+
+**Performance Goals**:
+- A typed conversion stays within the 16 ms interaction budget, bounded
+  structurally (research R12).
+- An edit op is linear in its block.
+- No store read is added.
+
+**Constraints**:
+- `postio-body` stays a pure leaf (Constitution VII).
+- One composer gesture reaches the network: the chip's press, one request
+  (FR-031, FR-032).
+- ADR 0004's closed set holds: no user-controlled style or class (D5).
+- Never touch the `issue-1722` or `issue-1485` worktrees. Rebase over what
+  they land.
+- This machine cannot build Swift, and the Mac cannot build GTK.
+
+**Scale/Scope**:
+- 8 constructs gain document shapes;
+- 39 registry ids. 19 are now, all in `Composer`. 20 are held:
+  - 4 in `Composer`;
+  - 10 in the table picker;
+  - 6 picker choose keys.
+- about 20 sequence rows;
+- 3 composers;
+- 1 new picker use, plus 2 smaller ones.
+
+## Constitution Check
+
+*Checked before Phase 0 and again after Phase 1.*
+
+| Principle | How this plan meets it | Status |
+|---|---|---|
+| I. Local-first | Every formatting edit is local to the draft. Nothing is enqueued or awaited | ✅ |
+| II. The keyboard is a system | Every construct is a registry command with a key, a terminal alternate or `GRAPHICAL_MAIL`, a command bar entry, a key map row and an accessible control. The picker and toolbar teach the keys inside them. `docs/keybindings.md` is regenerated by its test | ✅ |
+| III. One query language | Untouched | ✅ |
+| IV. Test-first | Every task in `tasks.md` starts with its failing case. The golden wire document is written before the serialiser changes. Storyboards are red on `main` first | ✅ |
+| V. Performance | No read path changes. The per-keystroke work is bounded by structure and pinned by unit cases (R12) | ✅ |
+| VI. Privacy | **The remote image rule.** There is no prefetch, and no request until the chip is pressed. A press makes one GET with no cookies, credentials or `Referer`. Nothing is retried or queued without a press. An unattached chip is sent as a link, never an `<img>` (D7, FR-030 to FR-035). The proofs are a counting fake fetcher asserting zero calls across every other gesture and one per press, and a check that `fetch_remote_image` has the press handler as its only caller (research R13). Logs carry the draft id, the outcome and the byte count, never the address. Fixtures use `example.com` | ✅ |
+| VII. Boundaries | `postio-body` gains no dependency and stays a leaf. `postio-widgets` takes no store crate and no network. The fetch is in `postio-session` over Pimalaya's `io-http`. Pimalaya was surveyed for Markdown: no crate applies (R11) | ✅ |
+| Spec-driven work | One branch, a commit per task, `Refs: specs/014-compose-formatting T0nn` | ✅ |
+| One fact, one home | The decisions live in this spec, with no parallel ADR. ADR 0003, 0004 and 0039 are cited, not restated | ✅ |
+
+**After Phase 1**: unchanged. D5 (generated presentation attributes) is the
+one place this spec reads ADR 0004 narrowly. It is argued in the spec and
+in research R3: the attributes are constant, emitted by the serialiser,
+ignored by `parse`, and admitted by `harden` explicitly.
+
+## The maintainer's answers (2026-11-22)
+
+Q1 = B (the source toggle), Q2 = A (the picker at the caret), Q3 = B (the
+Download and attach chip), Q4 = C (now and held). They are recorded in
+the spec's Clarifications. The source view and the chip's row are in the
+now phase, and the reason is spec D8.
+
+### Raised by the answers
+
+**Q5 — Who starts ADR 0039?** The held phase is blocked on ADR 0039's
+steps 1 to 3, and ADR 0039 has no tracking issue. Until one exists,
+nothing schedules the held phase. The options:
+
+| Option | Implications |
+|---|---|
+| A | File ADR 0039 as an issue now, and start its step 1 (`EditIntent`/`apply`) in parallel with this spec's now phase. Its first arms are R6's edit ops |
+| B | Land the now phase, live with the source view, and decide ADR 0039 afterwards |
+
+## Project Structure
+
+### Documentation (this feature)
+
+```text
+specs/014-compose-formatting/
+├── spec.md
+├── plan.md              # this file
+├── research.md          # R1–R12
+├── data-model.md        # the document, the subset, the sequence table, the registry rows
+├── quickstart.md
+├── contracts/
+│   ├── wire.md               # the golden document, its HTML and its plain text
+│   ├── source-view.md        # now: the toggle, the round trip, the caret
+│   ├── remote-image.md       # now: the chip row, the fetch, the failures
+│   ├── sequences.md          # held: every typed row and its rules
+│   └── formatting-picker.md  # held: the picker's model, keys, anchoring, toolbar
+├── checklists/
+│   └── requirements.md
+└── tasks.md
+```
+
+### Source Code (repository root)
+
+```text
+crates/postio-body/
+├── src/document.rs        # Block/Inline/HeadingLevel/ListKind/ListItem/Language/Table; to_html, to_text, to_flowed_text
+├── src/parse.rs           # read the new subset; narrow the rest
+├── src/outgoing.rs        # harden: EMITTED_TAGS and attributes
+├── src/markdown.rs        # GFM options; new events; from_document for every shape
+├── src/autolink.rs        # new: GFM extended autolinks (R2)
+├── src/edit_ops.rs        # held: arms of ADR 0039's apply (R6)
+├── src/narrow.rs          # Lost gains truncated table cells
+└── tests/body_suite/formatting_wire.rs  # new: contracts/wire.md
+crates/postio-core/src/{command.rs,registry.rs,menu.rs,context.rs}
+crates/postio-ui/src/editor/markdown.rs     # SEQUENCES, Marker, Trigger (the contract, now)
+crates/postio-ui/src/editor/markdown_edit.rs  # new, now: marker edits shared by the terminal and the source view
+crates/postio-session/src/attaching.rs      # now: fetch_remote_image, the Fetcher trait
+crates/postio-widgets/src/composer/source_view.rs   # new, now: the Markdown source view
+crates/postio-widgets/tests/widgets_suite/composer_markdown_source.rs   # new, now
+crates/postio-widgets/tests/widgets_suite/composer_remote_image.rs      # new, now
+crates/postio-ui/src/compose.rs             # mark_script for the new execCommand marks; edit-op bridge
+crates/postio-ui/src/format_picker.rs       # new: the picker's words and model
+crates/postio-ui/data/editor.js             # the bridge both WebKit surfaces run
+crates/postio-ui/data/editor.css            # rendering of the new constructs
+crates/postio-widgets/src/composer/{mod.rs,editor.rs}   # toolbar, reflection, edit-op round trip
+crates/postio-widgets/src/widgets/pickers/  # frame: choose 0–9
+crates/postio-widgets/tests/widgets_suite/composer_formatting.rs   # new
+crates/postio-gtk/tests/focus_suite/formatting_picker.rs            # new
+crates/postio-tui/src/composer.rs           # the new Format arms
+crates/postio-ffi/src/session.rs            # edit ops and picker model to Swift
+macos/Sources/PostioKit/{ComposeCommands.swift,ComposeModel.swift}  # marks, picker
+storyboards/compose/formatting-*.toml       # new
+docs/PRODUCT.md                             # §10
+```
+
+`editor.js` is two identical files on `main`:
+- `postio-ui/data/editor.js`, which the Mac loads through
+  `postio_ui::compose::editor_script`;
+- `postio-widgets/src/composer/editor.js`, which GTK `include_str!`s.
+
+This feature edits the bridge heavily, so T001 makes GTK load the
+`postio-ui` copy and deletes the other, before any edit. Otherwise the two
+surfaces drift apart in the first task.
+
+## Complexity Tracking
+
+| Concern | Why it is needed | Simpler alternative rejected because |
+|---|---|---|
+| Generated presentation attributes (D5) | Without borders and `align`, tables reach Gmail and Outlook as loose words. Without `list-style-type:none`, a task list shows two markers | No attributes: unreadable tables. User-controlled style: reopens ADR 0004's whole argument |
+| A plain-text source view before the native composer | The maintainer's Q1 answer. With Q4 = C, it is also the only way GTK and Mac users author the new constructs before ADR 0039 | WebKit implementations of each construct, which ADR 0039 deletes |
+| A network request from compose | The maintainer's Q3 answer: a remote image is attached on purpose | Never fetching, which leaves a typed remote image a dead end |
+| Seven heading commands, not one | Six levels on one chord each; no cycling to count | One cycling command: six presses to reach H6, and nothing for the picker to show as a key |

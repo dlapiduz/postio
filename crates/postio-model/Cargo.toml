@@ -9,9 +9,8 @@ publish.workspace = true
 repository.workspace = true
 
 [features]
-# Test-only: embeds the `.eml` corpus in `tests/corpus/` and exposes the
-# `test_corpus` loader. Off by default; downstream crates enable it from their
-# dev-dependencies so nothing ships in a normal build.
+# Test-only: embeds the `.eml` corpus; downstream crates enable it from dev-dependencies so nothing
+# ships.
 test-corpus = []
 
 [dependencies]
@@ -19,15 +18,11 @@ chrono = { workspace = true, features = ["serde", "std"] }
 mail-builder = { version = "2.0", default-features = false }
 mail-parser = { version = "1.0", features = ["full_encoding"] }
 serde = { workspace = true }
-# The diacritic fold the search engine's tokenizer does not do. No SQL, no
-# engine -- a property of the text, which is what this crate is for.
 unicode-normalization = "0.1"
 postio-workspace-hack.workspace = true
 
 [dev-dependencies]
 serde_json = { workspace = true }
-# Self dev-dependency so `cargo test -p postio-model` exercises the corpus
-# loader without making `test-corpus` a default feature.
 postio-model = { path = ".", features = ["test-corpus"] }
 
 [lints]

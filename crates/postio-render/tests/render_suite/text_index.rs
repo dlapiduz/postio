@@ -1,6 +1,3 @@
-//! The text index (research R7): the one reading-order serialisation that
-//! copy, find and the screen reader share, with the geometry to act on it.
-
 use std::sync::Arc;
 
 use postio_body::RemoteImages;
@@ -57,7 +54,6 @@ fn receipt() -> RenderedDocument {
     ))
 }
 
-/// The char range of the first `needle` in the index's text.
 fn range_of(index: &TextIndex, needle: &str) -> std::ops::Range<usize> {
     let byte = index
         .text
@@ -80,7 +76,6 @@ fn a_table_reads_as_tab_separated_cells_in_newline_separated_rows() {
         text.contains("Field Guide to Lichens\t2\t38.00\n"),
         "{text:?}"
     );
-    // An empty cell still holds its column.
     assert!(text.contains("Total\t\t54.50"), "{text:?}");
 }
 
@@ -94,7 +89,6 @@ fn a_hidden_preheader_is_not_read() {
 #[test]
 fn an_image_is_read_as_its_alt_text() {
     let doc = receipt();
-    // Once as the logo's alt, once as the heading beside it.
     assert_eq!(
         doc.text.text.matches("Fernhill Books").count(),
         2,
@@ -165,9 +159,8 @@ fn find_folds_case_and_diacritics() {
     assert_eq!(found, ["Total", "tötal", "total"]);
 }
 
-/// The index's geometry is in the view's pixels whatever the device scale:
-/// Blitz shapes text at the device scale, and a cluster's rect must not
-/// carry it (a 2x display drew highlights twice the size and position).
+/// Blitz shapes text at the device scale, and a cluster's rect must not carry it (a 2x display drew
+/// highlights twice the size).
 #[test]
 fn cluster_rects_do_not_carry_the_device_scale() {
     let at = |scale: f64| {
@@ -201,8 +194,6 @@ fn cluster_rects_do_not_carry_the_device_scale() {
     );
 }
 
-/// A translucent ground is part of what is behind the text: a search
-/// match's tint over a white page is a tint, not white.
 #[test]
 fn a_translucent_ground_is_composited_over_the_page() {
     let doc = render_html(
@@ -227,24 +218,14 @@ fn a_translucent_ground_is_composited_over_the_page() {
     assert!((plain.r - 1.0).abs() < 0.01, "{plain:?}");
 }
 
-/// One row of the locator's table (spec 007 T066, research R2): a message,
-/// the sentence a detector stored from it, and what the reader must
-/// highlight.
 struct Row {
-    /// What the row is about.
     case: &'static str,
-    /// The message's HTML part, if it has one.
     html: Option<&'static str>,
-    /// Its plain part, if it has one.
     text: Option<&'static str>,
-    /// The text the detector read, when it is not what the reader draws.
     read: Option<&'static str>,
-    /// The sentence, as the detector stored it.
     excerpt: &'static str,
-    /// Which occurrence of it, in what was read, the detector stored.
     nth: usize,
-    /// What the highlight reads, and which occurrence of that in the drawn
-    /// text it must be. `None` when the reader does not draw the sentence.
+    /// `None` when the reader does not draw the sentence.
     drawn: Option<(&'static str, usize)>,
 }
 
@@ -364,7 +345,6 @@ fn rows() -> Vec<Row> {
     ]
 }
 
-/// A body that asks the same question twice, with prose between and after.
 fn said_twice() -> &'static str {
     static HTML: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     HTML.get_or_init(|| {
@@ -375,7 +355,6 @@ fn said_twice() -> &'static str {
     })
 }
 
-/// A body drawn the way the single-message reader draws it.
 fn drawn(html: Option<&str>, text: Option<&str>) -> RenderedDocument {
     let body = postio_model::MessageBody {
         html: html.map(str::to_owned),
@@ -390,8 +369,6 @@ fn drawn(html: Option<&str>, text: Option<&str>) -> RenderedDocument {
     ))
 }
 
-/// What a detector reads (spike S5's "what is drawn"): the HTML flattened
-/// when there is HTML, else the plain part.
 fn read_from(html: Option<&str>, text: Option<&str>) -> String {
     html.map(|html| postio_body::parse(html).to_search_text())
         .or(text.map(str::to_owned))
@@ -399,7 +376,6 @@ fn read_from(html: Option<&str>, text: Option<&str>) -> String {
         .replace("\r\n", "\n")
 }
 
-/// The char offset of the `nth` occurrence of `needle` in `haystack`.
 fn nth_offset(haystack: &str, needle: &str, nth: usize) -> usize {
     let byte = haystack
         .match_indices(needle)
@@ -443,8 +419,6 @@ fn an_excerpt_is_located_where_the_reader_draws_it() {
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }
 
-/// Where Blitz paints every glyph of the document, in CSS pixels, in
-/// paint order: the display list's own positions.
 fn painted_glyphs(doc: &RenderedDocument) -> Vec<kurbo::Point> {
     doc.display_list
         .commands
@@ -463,14 +437,9 @@ fn painted_glyphs(doc: &RenderedDocument) -> Vec<kurbo::Point> {
         .collect()
 }
 
-/// A marker's highlight starts on its sentence's first glyph (#1783): in
-/// a padded, inset paragraph whose line draws ligatures before the
-/// sentence ("ffi", "fl"), each of which Parley shapes as one glyph over
-/// several clusters, the box the index gives the sentence starts where
-/// Blitz paints its first letter, and ends where it paints the "?".
-///
-/// The paragraph pins Barlow, which is bundled, so the ligatures do not
-/// depend on whichever fallback font the machine happens to have.
+/// In a padded paragraph whose line draws ligatures before the sentence, Parley shapes
+/// each as one glyph over several clusters; the box must still start where Blitz paints
+/// the first letter (#1783). Pins bundled Barlow so ligatures do not depend on fallback fonts.
 #[test]
 fn a_highlight_starts_on_its_sentences_first_glyph() {
     for scale in [1.0, 2.0] {
@@ -505,8 +474,6 @@ fn a_highlight_starts_on_its_sentences_first_glyph() {
             glyphs.len(),
             doc.text.text
         );
-        // The sentence has no ligature: its glyphs are the line's last
-        // ones, one per letter, the spaces among them.
         let first = glyphs[glyphs.len() - sentence.chars().count()];
         let last = glyphs[glyphs.len() - 1];
         let rects = doc.text.rects(range_of(&doc.text, sentence));

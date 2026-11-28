@@ -1,13 +1,3 @@
-//! What Focus says about its own state, at the boundary
-//! (specs/009-focus-macos T096, for the Mac's T099).
-//!
-//! The controller decides (`postio-focus`'s `tests/states.rs`); these assert
-//! the Mac hears it through the session's events: the engine's sync events
-//! become `FocusBanner` and `FocusSyncLabel`, a refused password names the
-//! account whose credential the sheet asks for, an empty inbox becomes
-//! `FocusEmpty` with only the shortcuts that lead somewhere, and a backfill
-//! crosses typed rather than as `Other`.
-
 use postio_core::{CommandId, ConnectionState, Event, FailureReason};
 use postio_ffi::{Session, SessionOptions, SyncMarkFfi, UiEvent};
 use postio_storage::test_support;
@@ -134,7 +124,6 @@ async fn an_empty_inbox_says_why_with_only_the_shortcuts_that_exist() {
         "the empty inbox is drawn in the list's place"
     );
     let page = page.expect("seen");
-    // No pass has finished, so it is not yet "empty": mail has not arrived.
     assert_eq!(page.heading, "Syncing your inbox\u{2026}");
     assert_eq!(
         page.shortcuts

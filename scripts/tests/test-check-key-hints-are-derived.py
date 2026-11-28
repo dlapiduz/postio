@@ -124,8 +124,6 @@ expect(
     "header.rs: 1 hints::fixed call(s), 0 allowed",
 )
 
-# The desktop app draws hints, and the shared crate draws most of them
-# (ADR 0043), so the rule follows the code there (specs/007-postio-focus R1).
 expect_root(
     "a literal key hint planted in postio-widgets fails",
     {"crates/postio-widgets/src/widgets/picker.rs": 'keyhint::labelled("Snooze", Some("s"));'},

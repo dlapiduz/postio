@@ -1,11 +1,3 @@
-//! Listing costs the same whatever the mailbox holds — counted, not timed.
-//!
-//! The reasoning behind counting rather than timing is in
-//! [`postio_storage::test_support::counting`];
-//! this is where the message-list path is held to it. Two budgets, both from
-//! `docs/PRODUCT.md` §18: an interaction stays under 16ms, and "a mailbox is
-//! never loaded into memory".
-
 use postio_model::MailboxRole;
 use postio_storage::repository::{ListQuery, ListScope, MessageRepository};
 use postio_storage::seed::{seed_large, seed_small};
@@ -30,8 +22,8 @@ async fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns()
     };
     let messages = MessageRepository::new(&connection);
 
-    // Warm first. The first `prepare` of a statement can pull schema pages in,
-    // and this is about the query's shape, not about a cold cache.
+    // Warm first: the first `prepare` can pull schema pages in, and this is about the query's
+    // shape.
     let _ = messages.page(&page(1)).await.expect("a first read");
 
     let mut one_row = 0;
@@ -62,22 +54,16 @@ async fn listing_a_page_costs_the_same_statements_however_many_rows_it_returns()
     );
 }
 
-/// How many messages stand in for "a large mailbox" here.
-///
-/// `threads.rs` uses a full hundred thousand for the same shape of claim. This
-/// one is deliberately smaller: what it proves is that the cost does not grow
-/// with the folder, and a count says that at ten thousand exactly as loudly as
-/// at a hundred thousand — while seeding ten times fewer rows keeps the suite
-/// fast enough that people actually run it.
+/// Smaller than `threads.rs`'s hundred thousand: a count shows non-growth at ten thousand as
+/// loudly, and seeds faster.
 const LARGE: usize = 10_000;
 
+/// POSTIO-MEASUREMENT: seeds 10,000 messages to count the rows a page reads, 13 s.
 #[tokio::test]
 async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
-    // §18's most-cited constraint: "Never load a whole mailbox into memory —
-    // the list is windowed over paged SQLite." A page of fifty returns fifty
-    // rows whether the window is real or whether the folder was read whole
-    // and sliced in Rust, so `page.len()` cannot tell those apart. The number
-    // of rows SQLite *produced* can, and it is the same number everywhere.
+    // A page of fifty returns fifty rows whether windowed or read whole and sliced in Rust; the
+    // rows
+    // SQLite produced tell them apart (docs/PRODUCT.md §18).
     let database = test_support::temp().await;
     let report = seed_large(&database, 7, LARGE).await;
     let inbox = report.mailbox(MailboxRole::Inbox).expect("an inbox").id;
@@ -101,19 +87,12 @@ async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
         "a page is a window, not a folder"
     );
 
-    // A generous ceiling, because a row of the page may legitimately cost a
-    // few rows underneath it — a join, a count, a correlated lookup. What it
-    // rules out is the only failure that matters: a cost that scales with the
-    // folder. Reading LARGE messages to show fifty would be orders of
-    // magnitude above this, not a few multiples.
+    // A generous ceiling, since a page row may cost a few rows underneath; it rules out cost that
+    // scales with the folder.
     let ceiling = limit as usize * 8;
 
-    // The control, and the reason this assertion is known to have teeth: the
-    // same repository, asked for the folder instead of a window. #100 asks
-    // that each counted budget "fails when the invariant it guards is
-    // deliberately broken" — this demonstrates that without ever breaking the
-    // code under test, and it keeps demonstrating it. Raise `ceiling` above
-    // what a full read costs and this is what stops passing.
+    // The control that gives the ceiling teeth: the same repository asked for the folder, not a
+    // window.
     let whole = counted_async(|| async {
         let _ = messages
             .page(&ListQuery {
@@ -142,8 +121,6 @@ async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
         first.rows
     );
 
-    // Ten pages in. If the window were an OFFSET scan, the rows produced would
-    // climb with the depth; over an index and a cursor they do not.
     let mut cursor = rows.last().expect("a last row").cursor();
     let mut deep = first;
     for _ in 0..10 {
@@ -172,21 +149,9 @@ async fn a_large_mailbox_never_materialises_more_rows_than_the_page_shows() {
     );
 }
 
-// ── The Drafts exclusion must not cost the other folders (spec 003, T047) ────
-
-/// The exact shape of an ordinary mailbox listing, recorded before spec 003
-/// adds the Drafts/Outbox split to `where_clause`.
-///
-/// That split lands on `ListScope::Mailbox` — the query every folder in the
-/// application reads through — so it is the one change in this feature that
-/// could make every list in Postio more expensive, on every open, for a
-/// distinction that matters to one folder.
-///
-/// Principle V gates causes rather than milliseconds: a shared runner cannot
-/// defend 16 ms, but statements and rows are the same number on every machine.
-/// These are those numbers. If a later change moves them, that is the
-/// conversation this test exists to force — not a silent regression on the
-/// hottest read path there is.
+/// The shape of an ordinary mailbox listing, recorded before spec 003's Drafts/Outbox split lands
+/// in
+/// `where_clause`: statements and rows pinned on the hottest read path.
 #[tokio::test]
 async fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns() {
     let database = test_support::memory().await;
@@ -222,11 +187,8 @@ async fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns()
          after the fact would read more than a page to fill one, which is how \
          a windowed list quietly stops being windowed"
     );
-    // What `counts.nested == 0` used to say -- no trigger or virtual-table
-    // work on a read -- asked of the planner instead, because there is no
-    // trace hook to count trigger firings any more. A scan on a windowed list
-    // is the same failure said structurally: it is how a page of 20 comes to
-    // read a mailbox.
+    // The planner stands in for the old `counts.nested == 0`: a scan on a windowed list is how a
+    // page of 20 reads a mailbox.
     assert!(
         postio_storage::test_support::counting::scans(&connection, &messages.explain(&query),)
             .await
@@ -235,9 +197,6 @@ async fn an_ordinary_listing_is_one_statement_and_no_more_rows_than_it_returns()
     );
 }
 
-/// Focus's `g z` and `g *` read every enabled account's snoozed or flagged
-/// mail in one statement, planned as seeks: the account is a membership test
-/// against the enabled accounts, never a scan of the messages.
 #[tokio::test]
 async fn focus_s_snoozed_and_flagged_views_are_one_statement_and_seek() {
     let database = test_support::memory().await;
@@ -264,8 +223,6 @@ async fn focus_s_snoozed_and_flagged_views_are_one_statement_and_seek() {
         let scans =
             postio_storage::test_support::counting::scans(&connection, &messages.explain(&query))
                 .await;
-        // The accounts table is the user's handful of accounts, read once to
-        // say which are enabled; it is the tables that grow that must seek.
         let grown: Vec<_> = scans
             .iter()
             .filter(|step| {
@@ -280,10 +237,8 @@ async fn focus_s_snoozed_and_flagged_views_are_one_statement_and_seek() {
 
 #[tokio::test]
 async fn naming_a_person_costs_a_page_nothing() {
-    // FR-032 resolves each row's sender name through the address's owner. That
-    // is a key seek inside the row's own sender lookup, and it must stay
-    // there: a page with a named sender on it costs the statements and rows
-    // it cost before anyone was named (research R7).
+    // Sender-name resolution is a key seek in the row's own sender lookup; a named sender must not
+    // change a page's cost.
     let database = test_support::memory().await;
     let report = seed_small(&database, 11).await;
     let inbox = report
@@ -304,7 +259,6 @@ async fn naming_a_person_costs_a_page_nothing() {
         messages.page(&query).await.expect("a page");
     })
     .await;
-    // The seed recorded its senders as sync would; the user names this one.
     let owner = postio_storage::repository::ContactRepository::new(&connection)
         .by_address(&sender.address)
         .await

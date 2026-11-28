@@ -1,8 +1,5 @@
-//! The observed half of "cannot reach the network" (spec FR-001, contract
-//! renderer-graph-checks § 3). The graph checks prove no network crate is
-//! linked; this watches a loopback listener while every hostile fixture is
-//! rendered with its remote URLs pointed at it, consented or not -- the
-//! renderer must not fetch even then: remote bytes come only from the app.
+//! Watches a loopback listener while every hostile fixture renders with its remote URLs pointed at
+//! it, consented or not: remote bytes come only from the app.
 
 use std::sync::Arc;
 use std::time::Duration;

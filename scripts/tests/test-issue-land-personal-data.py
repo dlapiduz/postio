@@ -40,17 +40,9 @@ sys.path.insert(0, str(HERE / "lib"))
 import fixture_toolchain  # noqa: E402  -- enabled by the sys.path line above
 ISSUE_LAND = HERE / "issue-land.sh"
 PERSONAL_DATA_CHECK = HERE / "checks" / "check-no-personal-data.py"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
-# The five invariant checks this test is not about. `check-no-personal-data.py`
-# is deliberately left off this list -- it is the one under test, so it has to
-# be the real script or the whole point is stubbed away.
 STUB_CHECKS = [
     "check-crate-boundaries.py",
     "check-no-silent-tracking.py",
@@ -106,11 +98,6 @@ def land(root: Path, target: Path, *args: str) -> subprocess.CompletedProcess[st
     environment["CARGO_TARGET_DIR"] = str(target)
     environment["GIT_CONFIG_GLOBAL"] = "/dev/null"
     environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
-    # The real check falls back to `git config user.email`/`user.name` for its
-    # denylist when POSTIO_DENY_NAMES is unset -- and the sandbox sets both to
-    # innocuous test values, so leaving it unset here would make the check
-    # hunt for "Test"/"test@example.com" instead of the address this test
-    # actually plants. Pin it to something that cannot collide with either.
     environment["POSTIO_DENY_NAMES"] = "Nobody In Particular"
     return subprocess.run(
         ["bash", "scripts/issue-land.sh", "--wip", *args],
@@ -145,11 +132,6 @@ def main() -> int:
         git("push", "-q", "origin", "main", cwd=root)
         git("checkout", "-q", "-b", "issue-1-x", cwd=root)
 
-        # A brand-new, entirely untracked file -- never `git add`ed by hand,
-        # the way a session's own edit lands in a private worktree. Its
-        # address is on an ordinary-shaped, non-reserved domain: no label of
-        # it is "example", and it does not end in .test/.invalid/.localhost,
-        # so RESERVED must not match it and the check must fail on it.
         (root / "dummy" / "src" / "leak.rs").write_text(
             "// contact: quinn.harlow@northwind-traders.co.uk\n",
             encoding="utf-8",

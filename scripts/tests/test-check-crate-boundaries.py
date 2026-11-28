@@ -76,7 +76,6 @@ def build_fixture(
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / "Cargo.toml").write_text(WORKSPACE_MANIFEST)
-    # The crates that carry invariants.
     write_crate(root, "crates", "postio-core", core_deps)
     write_crate(root, "crates", "postio-session", session_deps, session_dev_deps)
     write_crate(root, "crates", "postio-search", search_deps)
@@ -85,36 +84,24 @@ def build_fixture(
     write_crate(root, "crates", "postio-config", config_deps)
     write_crate(root, "crates", "postio-vcard", vcard_deps)
     write_crate(root, "crates", "helper", helper_deps)
-    # The terminal frontend and what it stands on (docs/archive/specs/005-tui-frontend).
     write_crate(root, "crates", "postio-tui", tui_deps)
     write_crate(root, "crates", "postio-client", client_deps)
     write_crate(root, "crates", "postio-ui", ui_deps)
-    # The desktop app and what it stands on (specs/007-postio-focus).
     write_crate(root, "crates", "postio-widgets", widgets_deps)
     if include_focus:
         write_crate(root, "crates", "postio-gtk", focus_deps, focus_dev_deps)
     write_crate(root, "crates", "postio-classify", classify_deps)
     write_crate(root, "crates", "postio-calendar", calendar_deps)
-    # Milestone 2: the client for the person's own model.
     write_crate(root, "crates", "postio-ai", ai_deps)
-    # Milestone 3: Obsidian capture.
     write_crate(root, "crates", "postio-vault", vault_deps)
-    # The storyboard tool's pure half (specs/008-storyboards).
     write_crate(root, "crates", "postio-storyboard", storyboard_deps)
-    # Focus's sans-IO controller (specs/009-focus-macos, ADR 0045).
     write_crate(root, "crates", "postio-focus", controller_deps)
-    # Attachment text, a pure leaf (specs/010-focus-search FR-052).
     write_crate(root, "crates", "postio-extract", extract_deps)
-    # The Contacts sync plan, a pure leaf (specs/011-focus-contacts S12).
     write_crate(root, "crates", "postio-contact-sync", contact_sync_deps)
-    # Bystanders: every crate `RULES` names has to exist as a workspace
-    # member, or `find_violations` raises before any rule gets checked
-    # (#560) -- so a rule added for a real crate the fixture never grew a
-    # stand-in for takes the whole self-test down on its very first case,
-    # regardless of what that case is actually about. None of the cases here
-    # target these, so a dependency-free crate that trivially passes every
-    # rule is all they need to be.
+    # Bystanders: every crate `RULES` names must exist as a member or `find_violations` raises
+    # before any rule is checked (#560).
     for bystander in (
+        "postio-dav",
         "postio-demo",
         "postio-ffi",
         "postio-gmail",
@@ -122,15 +109,13 @@ def build_fixture(
         "postio-mcp",
         "postio-render",
         "postio-smtp",
+        "postio-sync",
     ):
         write_crate(root, "crates", bystander)
-    # The workspace-hack (ADR 0047): a crate with no code that names
-    # third-party crates for their features. Written only when a case asks.
     if hack_deps is not None:
         write_crate(root, "crates", "postio-workspace-hack", hack_deps)
-    # Stand-ins for the real third-party crates, so nothing is fetched.
-    # Both engine names: `turso` is the live rule, `rusqlite` stays banned so
-    # the rule survives the rename that already happened once.
+    # Stand-in third-party crates, so nothing is fetched; both engine names, so the rule survives
+    # the rename.
     for banned in (
         "gtk4",
         "libadwaita",
@@ -150,8 +135,6 @@ def build_fixture(
 def run_check(manifest: Path, offline: bool = True) -> subprocess.CompletedProcess:
     cmd = [sys.executable, str(CHECK), "--manifest-path", str(manifest)]
     if offline:
-        # Fixtures are path-only, so cargo never needs the registry. The real
-        # workspace does, so that case runs online.
         cmd.append("--offline")
     return subprocess.run(cmd, capture_output=True, text=True)
 
@@ -199,7 +182,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="postio-boundary-") as tmp:
         tmp_path = Path(tmp)
 
-        # 1. A clean workspace passes.
         check_case(
             "clean fixture passes",
             build_fixture(
@@ -209,8 +191,6 @@ def main() -> int:
             expected_status=0,
         )
 
-        # 2. gtk4 added straight to postio-core's manifest -- the exact case in
-        #    the acceptance criteria.
         check_case(
             "postio-core gains a direct gtk4 dependency",
             build_fixture(
@@ -222,7 +202,6 @@ def main() -> int:
             must_mention=("postio-core", "gtk4", "direct"),
         )
 
-        # 3. libadwaita smuggled in behind an intermediate crate.
         check_case(
             "postio-core gains a transitive libadwaita dependency",
             build_fixture(
@@ -235,7 +214,6 @@ def main() -> int:
             must_mention=("postio-core", "libadwaita", "helper", "transitive"),
         )
 
-        # 4. SQL in the view layer.
         check_case(
             "postio-gtk gains a direct turso dependency",
             build_fixture(
@@ -249,7 +227,6 @@ def main() -> int:
             must_mention=("postio-gtk", "turso", "direct"),
         )
 
-        # 5. Protocol types in the view layer, via a test-only dependency.
         check_case(
             "postio-gtk gains an io-imap dev-dependency",
             build_fixture(
@@ -261,7 +238,6 @@ def main() -> int:
             must_mention=("postio-gtk", "io-imap", "dev-dependency"),
         )
 
-        # 6. A guarded crate that vanished must be an error, not a silent pass.
         check_case(
             "a missing guarded crate errors out",
             build_fixture(tmp_path / "no-focus-crate", include_focus=False),
@@ -269,11 +245,6 @@ def main() -> int:
             must_mention=("postio-gtk",),
         )
 
-        # 7. postio-session is the composition root without a toolkit, and
-        #    that is the whole reason it was split out of the desktop app's crate (#82).
-        #    A verb added in a hurry that reaches for a widget is exactly how
-        #    it would be lost, and it would be lost silently: everything
-        #    would still compile and every test would still pass.
         check_case(
             "postio-session gains a direct gtk4 dependency",
             build_fixture(
@@ -284,8 +255,6 @@ def main() -> int:
             must_mention=("postio-session", "gtk4"),
         )
 
-        # 8. …and transitively, which is the way it would actually happen:
-        #    nobody writes `gtk4` into that manifest on purpose.
         check_case(
             "postio-session reaches libadwaita through another crate",
             build_fixture(
@@ -297,9 +266,6 @@ def main() -> int:
             must_mention=("postio-session", "libadwaita"),
         )
 
-        # 9. A test is not an exemption. The desktop app's integration tests
-        #    drive the session crate, and a dev-dependency on the toolkit
-        #    would let a "headless" verb be exercised only through GTK.
         check_case(
             "postio-session gains a gtk4 dev-dependency",
             build_fixture(
@@ -310,9 +276,6 @@ def main() -> int:
             must_mention=("postio-session", "gtk4"),
         )
 
-        # 10. postio-search is the query *language*, and stays pure so the
-        #     same query string means the same thing in the search bar, the
-        #     sidebar and `[saved_searches]` -- postio-index is the FTS5 executor.
         check_case(
             "postio-search gains a direct turso dependency",
             build_fixture(
@@ -323,9 +286,6 @@ def main() -> int:
             must_mention=("postio-search", "turso"),
         )
 
-        # 11. postio-body is the other pure leaf ADR 0004 carved out --
-        #     kept apart from postio-model only because ammonia pulls an
-        #     HTML parser, not because it needed a toolkit.
         check_case(
             "postio-body gains a direct gtk4 dependency",
             build_fixture(
@@ -336,10 +296,6 @@ def main() -> int:
             must_mention=("postio-body", "gtk4"),
         )
 
-        # 11b. postio-vcard parses files a stranger handed the user and is
-        #      linked only by the app's import command -- a leaf, kept off
-        #      postio-model's compile path, with no engine and no runtime of
-        #      its own (specs/005-contacts R9).
         check_case(
             "postio-vcard gains a direct tokio dependency",
             build_fixture(
@@ -359,8 +315,6 @@ def main() -> int:
             must_mention=("postio-vcard", "turso"),
         )
 
-        # 11c. postio-contact-sync plans a sync and writes nothing: no
-        #      store, no runtime, no toolkit (specs/011-focus-contacts S12).
         for banned in ("tokio", "turso"):
             check_case(
                 f"postio-contact-sync gains a direct {banned} dependency",
@@ -372,9 +326,6 @@ def main() -> int:
                 must_mention=("postio-contact-sync", banned),
             )
 
-        # 12. postio-model is what the whole workspace waits on to compile;
-        #     ADR 0004 Q1 rejected the composer's document here for exactly
-        #     the dependency weight `ammonia` would add.
         check_case(
             "postio-model gains a direct ammonia dependency",
             build_fixture(
@@ -385,7 +336,6 @@ def main() -> int:
             must_mention=("postio-model", "ammonia"),
         )
 
-        # 13. …and the same for a runtime it has no business scheduling on.
         check_case(
             "postio-model gains a direct tokio dependency",
             build_fixture(
@@ -396,9 +346,8 @@ def main() -> int:
             must_mention=("postio-model", "tokio"),
         )
 
-        # 14. postio-config parses and validates TOML; it does no SQL.
-        # Deliberately the *old* engine's name: this is the case that proves
-        # a rename does not quietly lift the ban.
+        # 14. postio-config does no SQL; the old engine's name proves a rename does not lift the
+        # ban.
         check_case(
             "postio-config gains a direct rusqlite dependency",
             build_fixture(
@@ -409,10 +358,6 @@ def main() -> int:
             must_mention=("postio-config", "rusqlite"),
         )
 
-        # 15-17. The terminal frontend links no toolkit: its size is a
-        # requirement (docs/archive/specs/005-tui-frontend FR-051). It does open the store
-        # itself -- one app at a time has it (ADR 0041) -- so the engine is
-        # allowed in its graph.
         check_case(
             "postio-tui gains a direct gtk4 dependency",
             build_fixture(
@@ -461,7 +406,6 @@ def main() -> int:
             must_mention=("postio-ui", "libadwaita"),
         )
 
-        # The desktop app (specs/007-postio-focus) and what it draws with.
         check_case(
             "postio-gtk may link the store engine, through the host",
             build_fixture(
@@ -528,8 +472,6 @@ def main() -> int:
             must_mention=("postio-gtk", "candle-core", "helper"),
         )
 
-        # Milestone 2: postio-ai may speak HTTP to this computer, and nothing
-        # more (specs/007-postio-focus T151, FR-132, FR-165, FR-168).
         check_case(
             "postio-ai may frame HTTP with io-http",
             build_fixture(
@@ -586,8 +528,6 @@ def main() -> int:
             must_mention=("postio-ai", "candle-core", "helper"),
         )
 
-        # Milestone 3: postio-vault writes files on this computer, and
-        # nothing more (specs/007-postio-focus T157, FR-180).
         check_case(
             "postio-vault gains an HTTP client",
             build_fixture(
@@ -675,9 +615,8 @@ def main() -> int:
             expected_status=0,
         )
 
-        # 17. The workspace-hack names tokio for its features, and every
-        #     member depends on it (ADR 0047). That edge reaches nothing a
-        #     crate could call, so it is not a path into a banned crate...
+        # 17. The workspace-hack names tokio for its features (ADR 0047); that edge reaches nothing
+        # a crate could call...
         check_case(
             "postio-model reaches tokio only through the workspace-hack",
             build_fixture(
@@ -687,7 +626,6 @@ def main() -> int:
             ),
             expected_status=0,
         )
-        #     ...but skipping it must not hide a real path to the same crate.
         check_case(
             "postio-model reaches tokio through a real crate beside the hack",
             build_fixture(
@@ -703,9 +641,6 @@ def main() -> int:
             must_mention=("postio-model", "tokio", "helper"),
         )
 
-        # Attachment text is a pure leaf: bytes in, located text out
-        # (specs/010-focus-search FR-052). No store engine, no runtime, no
-        # network, no toolkit, no inference engine -- directly or not.
         for banned, why in (
             ("turso", "the store engine"),
             ("tokio", "an async runtime"),
@@ -741,7 +676,6 @@ def main() -> int:
             expected_status=0,
         )
 
-        # 18. And the real workspace is clean today.
         check_case(
             "the real workspace passes",
             REPO_ROOT / "Cargo.toml",

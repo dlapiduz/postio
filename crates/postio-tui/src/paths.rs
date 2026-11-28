@@ -2,7 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-/// `typed` with a leading `~/` meaning the home directory, as in a shell.
 pub fn expand(typed: &str) -> PathBuf {
     match (typed.strip_prefix("~/"), std::env::var_os("HOME")) {
         (Some(rest), Some(home)) => Path::new(&home).join(rest),
@@ -10,10 +9,8 @@ pub fn expand(typed: &str) -> PathBuf {
     }
 }
 
-/// `typed`, completed as far as the entries on disk agree: the longest
-/// prefix every matching name shares, and a `/` after a directory that is
-/// the only match. Unchanged when nothing matches. Hidden entries are only
-/// offered once a `.` has been typed.
+/// Completes as far as the entries on disk agree, adding `/` after a sole directory match.
+/// Hidden entries are offered only once a `.` is typed.
 pub fn complete(typed: &str) -> String {
     let (folder, partial) = match typed.rfind('/') {
         Some(slash) => (&typed[..=slash], &typed[slash + 1..]),
@@ -58,7 +55,6 @@ pub fn complete(typed: &str) -> String {
     format!("{folder}{shared}{slash}")
 }
 
-/// What to call `path` when telling someone about it: its file name.
 pub fn name_of(path: &Path) -> String {
     path.file_name().map_or_else(
         || path.display().to_string(),

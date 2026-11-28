@@ -28,8 +28,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -137,8 +135,6 @@ def main() -> int:
         repo, stub_dir = world(base)
         worktrees = base / "worktrees"
 
-        # A branch on origin with work on it and, per the stub, an open PR
-        # whose checks failed.
         git("checkout", "-q", "-b", "issue-4242-red-pr", cwd=repo)
         (repo / "work.txt").write_text("landed on the branch\n", encoding="utf-8")
         git("add", "-A", cwd=repo)
@@ -157,20 +153,11 @@ def main() -> int:
             ],
         }]), encoding="utf-8")
 
-        # ── a plain claim names the red PR before taking new work ────────
         result = claim(repo, base, stub_dir, "--dry-run")
         out = result.stdout + result.stderr
         if "#77" not in out or "--resume 4242" not in out:
             fail("notice", "a dry run did not name the red PR and the resume command", result)
 
-        # ── --resume records the base the PR actually targets (#1401) ────
-        # `--base` is a claim-time argument and nobody passes it to
-        # `--resume`; the branch already exists and its PR already targets
-        # something. Recording the default `main` on a branch claimed with
-        # `--base feature/x` made `issue-land.sh` refuse to merge -- rightly,
-        # because a worktree and a PR that disagree is not a thing to guess
-        # about, but the disagreement was this script's own doing and the
-        # landing that hit it had already run every gate and pushed.
         result = claim(
             repo, base, stub_dir, "--resume", "4242",
             env_extra={"PR_BASE_REF": "feature/conversation-reading-pane"},
@@ -178,7 +165,6 @@ def main() -> int:
         recorded = (worktrees / "issue-4242" / ".git")
         base_file = None
         if recorded.is_file():
-            # a worktree's `.git` is a pointer file
             pointer = recorded.read_text(encoding="utf-8").split(":", 1)[1].strip()
             base_file = Path(pointer) / "postio-base"
         if result.returncode != 0:
@@ -198,7 +184,6 @@ def main() -> int:
         git("branch", "-q", "-D", "issue-4242-red-pr", cwd=repo)
         shutil.rmtree(base / "claims", ignore_errors=True)
 
-        # ── --resume cuts the worktree from the remote branch ────────────
         result = claim(repo, base, stub_dir, "--resume", "4242")
         tree = worktrees / "issue-4242"
         if result.returncode != 0:
@@ -220,15 +205,7 @@ def main() -> int:
             if "77" not in result.stdout:
                 fail("resume", "did not name the PR being resumed", result)
 
-        # ── the tree is still there and nobody holds it: reuse it (#1422) ──
-        # The ordinary case. A session that ended any way but `issue-release`
-        # leaves its tree behind, and the claim it held is released or stale
-        # by the time anyone comes back to a red PR. The tree's existence used
-        # to be refused before the lock could say it was free.
         shutil.rmtree(base / "claims", ignore_errors=True)
-        # Origin moved while the tree sat idle: another session's fix landed
-        # on the PR. Made in the tree and pushed, then the tree is wound back
-        # a commit, which is the state a stale tree is in.
         (tree / "more.txt").write_text("landed since\n", encoding="utf-8")
         git("add", "-A", cwd=tree)
         git("commit", "-q", "-m", "feat: more of the work", cwd=tree)
@@ -243,7 +220,6 @@ def main() -> int:
         elif not (tree / "more.txt").is_file():
             fail("resume-reuse", "the newer commit's file is not in the tree", result)
 
-        # ── ...unless it holds some other branch ─────────────────────────
         shutil.rmtree(base / "claims", ignore_errors=True)
         git("checkout", "-q", "-b", "something-else", cwd=tree)
         result = claim(repo, base, stub_dir, "--resume", "4242")
@@ -255,7 +231,6 @@ def main() -> int:
         git("branch", "-q", "-D", "something-else", cwd=tree)
         shutil.rmtree(base / "claims", ignore_errors=True)
 
-        # ── no such branch: refuse rather than start from the base ───────
         result = claim(repo, base, stub_dir, "--resume", "4243")
         if result.returncode == 0:
             fail("resume-missing", "resumed an issue with no branch on origin", result)

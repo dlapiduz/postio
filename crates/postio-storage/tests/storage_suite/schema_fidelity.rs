@@ -1,15 +1,6 @@
-//! The schema must be able to persist `postio-model` faithfully.
-//!
-//! Repositories are a later bead; this test writes the SQL by hand purely to
-//! prove the *columns exist* and round-trip every field of a fully populated
-//! [`Message`] — the model is the input to the schema, so a missing column is a
-//! schema bug and belongs here rather than three issues later.
-//!
-//! The body columns are deliberately not written here. They are compressed
-//! (ADR 0020), so hand-written SQL cannot produce a value the reader would
-//! accept, and inventing one would prove the opposite of what this file is
-//! for. `tests/body.rs` covers that round trip through the repository, which
-//! is the only thing that may write those columns.
+//! Hand-written SQL proving the columns exist and round-trip every field of a populated `Message`.
+//! The body columns are compressed (ADR 0020), so `tests/body.rs` covers them through the
+//! repository.
 
 use chrono::{TimeZone, Utc};
 use postio_storage::Connection;
@@ -244,10 +235,6 @@ async fn insert_recipients(connection: &Connection, message_id: i64, message: &M
     }
 }
 
-/// The id of `address`, inserting it if it is new.
-///
-/// Migration 0011 shares one row per correspondent, so a hand-written
-/// recipient has to name one rather than carry the string itself.
 async fn address_id(connection: &Connection, address: &EmailAddress) -> i64 {
     connection
         .execute(
@@ -285,8 +272,6 @@ async fn read_addresses(connection: &Connection, message_id: i64, kind: &str) ->
     .expect("query")
 }
 
-/// The columns of a `messages` row this test reads back, so the round trip is
-/// checked field by field rather than through an unreadable tuple.
 struct StoredMessage {
     subject: Option<String>,
     date: Option<i64>,
@@ -346,11 +331,9 @@ async fn a_fully_populated_message_round_trips_through_the_schema() {
     );
     assert_eq!(stored.raw_blob_id.as_deref(), Some("blake3:deadbeef"));
 
-    // Flags survive as a canonical, `\Recent`-free set.
     let restored: FlagSet = stored.flags.split_whitespace().map(Flag::parse).collect();
     assert_eq!(restored, message.flags.persistable());
 
-    // Every address header keeps its order and its display names.
     assert_eq!(
         read_addresses(&connection, message_id, "from").await,
         message.from
@@ -376,7 +359,6 @@ async fn a_fully_populated_message_round_trips_through_the_schema() {
         message.bcc
     );
 
-    // The reference chain that JWZ threading walks survives verbatim, in order.
     let references: String = postio_storage::sql::one(
         &connection,
         "SELECT reference_ids FROM messages WHERE id = ?1",
@@ -561,7 +543,6 @@ async fn a_draft_and_its_recipients_are_storable() {
         .expect("insert draft");
     let draft_id = connection.last_insert_rowid();
 
-    // Draft recipients live in the same table as message recipients.
     for (kind, address) in [("to", &draft.to[0]), ("bcc", &draft.bcc[0])] {
         connection
             .execute(
@@ -649,7 +630,6 @@ async fn a_thread_and_its_membership_are_storable() {
         .expect("insert thread");
     let thread_id = connection.last_insert_rowid();
 
-    // Membership is `messages.thread_id`, not a duplicated id list.
     for _ in 0..2 {
         connection
             .execute(
@@ -729,10 +709,6 @@ async fn labels_apply_to_many_messages_and_cascade() {
 
 #[tokio::test]
 async fn a_person_owns_addresses_and_each_address_keeps_its_own_sightings() {
-    // specs/005-contacts R1/R2: the owner is a column on `addresses`, the
-    // mail's evidence is per (address, account), and the person carries
-    // aggregates. Hand-written SQL proves the columns exist and hold what
-    // they say; the repository is what keeps them in step.
     let (_store, connection) = migrated().await;
     let account = store_account(
         &connection,
@@ -816,7 +792,6 @@ async fn a_person_owns_addresses_and_each_address_keeps_its_own_sightings() {
     .expect("sum sightings");
     assert_eq!(seen, 5, "each address's sightings stay with the address");
 
-    // A state the schema does not know is refused rather than stored.
     let refused = connection
         .execute(
             "INSERT INTO contacts (source, state, sort_key, name_key, created_at, updated_at)
@@ -826,8 +801,6 @@ async fn a_person_owns_addresses_and_each_address_keeps_its_own_sightings() {
         .await;
     assert!(refused.is_err(), "state is one of live, deleted, merged");
 
-    // A second sighting row for the same address and account is refused:
-    // the evidence has one home per pair.
     let duplicate = connection
         .execute(
             "INSERT INTO contact_sightings (address_id, account_id, times_seen) VALUES (?1, ?2, 1)",

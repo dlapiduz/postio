@@ -1,31 +1,13 @@
-//! Threads: the conversation a message belongs to, and the row the list shows.
-//!
-//! # What is stored and what is derived
-//!
-//! The `threads` table holds only aggregates — count, unread count, whether
-//! anything in the conversation is flagged or has an attachment, when it
-//! started and when it last moved. Membership is *not* stored twice: a message
-//! belongs to a thread because `messages.thread_id` says so, and everything
-//! else ([`Thread::participants`], [`Thread::mailbox_ids`],
-//! [`Thread::labels`]) is derived from the members. One place to be wrong is
-//! better than two places to keep in step.
-//!
-//! The aggregates exist because the list reads them on every row and deriving
-//! them per row would be a query per row. They are recomputed by
-//! [`ThreadRepository::recompute`], which every mutation here calls for you.
-//!
-//! # No N+1
-//!
-//! A page of threads needs each row's participants and its newest message.
-//! [`ThreadRepository::page`] fetches all three with three statements — the
-//! page, then the participants for the whole page, then the newest message for
-//! the whole page — never one per row. `tests/threads.rs` counts the statements
-//! and fails if that changes.
+//! Threads: the conversation a message belongs to, and the row the list shows. `threads` holds only
+//! aggregates, recomputed by [`ThreadRepository::recompute`] after every mutation; membership is
+//! `messages.thread_id` alone, with everything else derived, so there is one place to be wrong.
+//! No N+1: [`ThreadRepository::page`] fetches the page, its participants and its newest messages in
+//! three statements; `tests/threads.rs` counts them.
 
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
-use postio_model::listing::{MarkerSummary, MarkerWhen};
+use postio_model::listing::{MarkerKind, MarkerSummary, MarkerWhen};
 use postio_model::mime::preview;
 use postio_model::thread_view::before_attribution;
 use postio_model::{
@@ -40,86 +22,53 @@ use super::{from_millis, require_persisted, to_millis};
 
 use crate::error::{Error, Result};
 use crate::repository::MessageRepository;
-use crate::sql::{self, RowExt as _, bind};
+use crate::sql::{self, Bind as _, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
-/// How many threads a page holds when the caller does not say.
 pub const DEFAULT_THREAD_PAGE_SIZE: u32 = 50;
 
-/// Which way a thread's messages are read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadOrder {
-    /// Oldest first: the order the conversation happened in, which is how the
-    /// drill-in reads down the page.
     Oldest,
-    /// Newest first.
     Newest,
 }
 
-/// A position in the thread list: the sort key of the last row already shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ThreadCursor {
-    /// The row's recency: the sort key of the list this cursor resumes.
     pub last_at: DateTime<Utc>,
-    /// The tiebreaker that makes the order total.
-    ///
-    /// Which id depends on what the list is ordered over — the thread's in an
-    /// account-scoped list, the representative message's in a folder-scoped
-    /// one. It is only ever compared against the same column it came from, so
-    /// it is carried as the integer it is rather than pretending to be one
-    /// kind of id in both.
+    /// Which id depends on the list: the thread's in an account-scoped list, the representative
+    /// message's in a folder-scoped one; only compared against the column it came from.
     pub id: i64,
 }
 
-/// One window of the thread list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadListQuery {
-    /// Whose conversations. Threads never span accounts.
     pub account_id: AccountId,
-    /// The folder the list is showing, if it is showing one.
-    ///
-    /// A real folder threads (ADR 0015): only conversations holding a message
-    /// here appear, the row is drawn from the newest message *here*, and the
-    /// unread count is this folder's slice. `None` is the whole account,
-    /// which is what the unified list and the drill-in read.
-    ///
-    /// The total message count is never scoped — the badge means the size of
-    /// the conversation, wherever it is filed.
+    /// A real folder threads (ADR 0015): only conversations holding a message here appear, the row
+    /// is drawn from the newest message here, and the unread count is this folder's slice. `None`
+    /// is the whole account. The total message count is never scoped.
     pub mailbox: Option<MailboxId>,
-    /// How many rows at most.
     pub limit: u32,
-    /// Where to resume; `None` starts at the most recently active thread.
     pub after: Option<ThreadCursor>,
 }
 
-/// One window of the unified list: every enabled account's inbox, newest
-/// first.
 #[derive(Debug, Clone, Copy)]
 pub struct UnifiedThreadListQuery {
-    /// How many groups at most.
     pub limit: u32,
-    /// Where to resume — the cursor of the last group drawn.
     pub after: Option<ThreadCursor>,
 }
 
-/// One unified-list row: a conversation, wherever the user received it.
-///
-/// See [`ThreadRepository::unified_page`]. `row` is what the list draws;
-/// `members` is what an action expands to — one thread per account holding
-/// a copy, so "archive" means two operations in two per-account queues,
-/// which is the only answer that matches what the user believes they did
-/// (ADR 0005 Q2).
+/// `row` is what the list draws; `members` is what an action expands to: one thread per account
+/// holding a copy, so "archive" is two operations in two per-account queues (ADR 0005 Q2). See
+/// [`ThreadRepository::unified_page`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadGroup {
-    /// The row the list draws, counts deduped across members.
     pub row: ThreadListRow,
-    /// Every copy of the conversation: `(account, thread)` pairs.
     pub members: Vec<(AccountId, ThreadId)>,
 }
 
 impl ThreadGroup {
-    /// Where the next page resumes after this group.
     pub fn cursor(&self) -> ThreadCursor {
         ThreadCursor {
             last_at: self.row.last_at,
@@ -128,18 +77,9 @@ impl ThreadGroup {
     }
 }
 
-/// `alias`'s thread belongs to an account the user has switched on.
-///
-/// The unified view is every *enabled* account's inbox, and ADR 0005 Q10 is
-/// explicit that this is the one omission that needs no disclosure: a
-/// disabled account drops out silently and correctly, because the user asked
-/// for that. It is a failing account that has to be named, and that is a
-/// different axis entirely.
-///
-/// Applied to the partner search as well as to the page, and that is the half
-/// that is easy to miss: a thread in a disabled account that absorbed its
-/// partner in an enabled one would take a row the user can still see and fold
-/// it into a row they cannot.
+/// A disabled account drops out silently (ADR 0005 Q10). Applied to the partner search as well as
+/// the page: a disabled thread that absorbed its enabled partner would fold a visible row into an
+/// invisible one.
 fn enabled_account(alias: &str) -> String {
     format!(
         "{alias}account_id IN \
@@ -147,26 +87,19 @@ fn enabled_account(alias: &str) -> String {
     )
 }
 
-/// A row's `(recency, id)`, the order every list here sorts by, newest
-/// last -- compared the way the cursor's `<=`/`<` pair compares it.
 fn sort_key(cursor: ThreadCursor) -> (DateTime<Utc>, i64) {
     (cursor.last_at, cursor.id)
 }
 
-/// How many inbox conversations [`ThreadRepository::unified_count`] asks
-/// about partners for at once: three statements per batch, with an `IN`
-/// list well under the engine's parameter limit.
+/// Three statements per batch, with an `IN` list well under the engine's parameter limit.
 const COUNT_BATCH: usize = 400;
 
-/// A thread in another account that is the same conversation as a unified
-/// row, and is itself in view: `at` is where its own inbox draws it.
 #[derive(Debug, Clone)]
 struct Partner {
     thread: Thread,
     at: ThreadCursor,
 }
 
-/// `THREAD_COLUMNS`, each qualified with `alias.` for a joined statement.
 fn prefixed_thread_columns(alias: &str) -> String {
     THREAD_COLUMNS
         .split(',')
@@ -176,7 +109,6 @@ fn prefixed_thread_columns(alias: &str) -> String {
 }
 
 impl ThreadListQuery {
-    /// Every thread in an account.
     pub fn account(account_id: AccountId) -> Self {
         Self {
             account_id,
@@ -186,7 +118,6 @@ impl ThreadListQuery {
         }
     }
 
-    /// The conversations a folder holds a message of.
     pub fn in_mailbox(account_id: AccountId, mailbox: MailboxId) -> Self {
         Self {
             account_id,
@@ -196,94 +127,55 @@ impl ThreadListQuery {
         }
     }
 
-    /// Sets the window size.
     pub fn limit(mut self, limit: u32) -> Self {
         self.limit = limit;
         self
     }
 
-    /// Resumes after `cursor`.
     pub fn after(mut self, cursor: ThreadCursor) -> Self {
         self.after = Some(cursor);
         self
     }
 }
 
-/// One window of Focus's inbox (spec 007): every inbox in `inboxes`, one
-/// row per conversation it holds, newest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FocusListQuery {
-    /// The inboxes the list is made of, as
-    /// [`ThreadRepository::unified_inboxes`] names them.
     pub inboxes: Vec<(AccountId, MailboxId)>,
-    /// How many rows at most.
     pub limit: u32,
-    /// Where to resume; `None` starts at the newest conversation.
     pub after: Option<ThreadCursor>,
 }
 
-/// One row of the threaded message list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadListRow {
-    /// The conversation this row stands for.
-    ///
-    /// `None` for a message that belongs to no thread. Threading runs on
-    /// every message sync files, but it can fail — `postio-sync`'s send path
-    /// ignores the result outright — and **a list that hides mail because a
-    /// derived column is null is worse than a list that shows it ungrouped**.
-    /// So an unthreaded message is a conversation of one rather than a row
-    /// that does not exist.
+    /// `None` for a message in no thread: threading can fail (the send path ignores the result),
+    /// and a list that hides mail because a derived column is null is worse than one that shows it
+    /// ungrouped, so it is a conversation of one.
     pub id: Option<ThreadId>,
-    /// Normalized subject of the conversation's root message.
     pub subject: Option<String>,
-    /// Everyone who has written in the thread, in first-seen order.
     pub participants: Vec<EmailAddress>,
-    /// How many messages the conversation holds, across every folder.
-    ///
-    /// Never scoped, even in a folder-scoped query: the badge means the size
-    /// of the conversation (ADR 0015 Q2).
+    /// Never scoped, even folder-scoped: the badge is the conversation's size (ADR 0015 Q2).
     pub message_count: u32,
-    /// How many are unread **within the query's scope**.
-    ///
-    /// In a folder that is this folder's slice, so a conversation whose only
-    /// unread member is filed elsewhere reads as handled here.
+    /// In a folder, this folder's slice.
     pub unread_count: u32,
-    /// Whether any member carries an attachment.
     pub has_attachments: bool,
-    /// Whether any member **within the query's scope** is flagged.
     pub is_flagged: bool,
-    /// When the conversation started.
     pub first_at: DateTime<Utc>,
-    /// When it last moved; the sort key.
     pub last_at: DateTime<Utc>,
-    /// The newest message **within the query's scope**, which is what the
-    /// row's snippet and sender come from — a reply filed in Archive is not
-    /// what the Inbox row should be showing.
-    ///
-    /// `None` only for a thread whose messages have all been hidden.
+    /// A reply filed in Archive is not what the Inbox row should show. `None` only when every
+    /// message is hidden.
     pub latest: Option<MessageListRow>,
-    /// The tiebreaker this row sorts by, for [`ThreadListRow::cursor`].
-    ///
-    /// The thread's id in an account-scoped list, the representative
-    /// message's in a folder-scoped one — the two windows are ordered over
-    /// different columns, and a cursor is only ever compared against the one
-    /// it came from.
+    /// Thread id in an account-scoped list, representative message id in a folder-scoped one; a
+    /// cursor compares only against its own column.
     pub sort_id: i64,
-    /// What Focus calls out on the row: the conversation's newest marker
-    /// the person has not dismissed (spec 007).
-    ///
-    /// Read by Focus's pages only, in one statement for the page; every
-    /// list the classic app and the terminal read leaves it `None` and
-    /// reads nothing to find that out.
+    /// Read by Focus's pages only, in one statement per page; other lists leave it `None` and read
+    /// nothing.
     pub marker: Option<MarkerSummary>,
-    /// Replies filed away since the person muted the conversation, when
-    /// they have (spec 013 FR-012). Read by Focus's pages only, in one
-    /// statement for the page ([`ThreadRepository::muted`]).
+    /// Replies filed away since the person muted the conversation (spec 013). Focus's pages only,
+    /// one statement per page ([`ThreadRepository::muted`]).
     pub muted: Option<u32>,
 }
 
 impl ThreadListRow {
-    /// The cursor that resumes paging immediately after this row.
     pub fn cursor(&self) -> ThreadCursor {
         ThreadCursor {
             last_at: self.last_at,
@@ -291,13 +183,11 @@ impl ThreadListRow {
         }
     }
 
-    /// Whether anything in the conversation is unread.
     pub fn has_unread(&self) -> bool {
         self.unread_count > 0
     }
 }
 
-/// Reads and writes [`Thread`] rows.
 #[derive(Debug)]
 pub struct ThreadRepository<'a> {
     connection: &'a Connection,
@@ -307,49 +197,28 @@ const THREAD_COLUMNS: &str = "\
 id, account_id, subject, message_count, unread_count, has_attachments, is_flagged,
 first_at, last_at";
 
-/// A member of a thread, for the purposes of every aggregate here.
-///
-/// A message hidden pending a remote delete, or snoozed and not yet due, is
-/// not one: the list does not show it, so it must not be in the count, in
-/// the drill-in or in the participants. Every call site interpolates this
-/// as `{alias}.{MEMBER}` or bare `{MEMBER}`, so the snooze half is written
-/// without an alias of its own — `snoozed_until` names no other table in
-/// any query here, so it resolves the same way regardless.
-///
-/// The same predicate the folder counts keep, so the list and its counts
-/// cannot drift apart: [`super::VISIBLE`].
+/// A message hidden pending a remote delete, or snoozed and not due, is not a member: the list does
+/// not show it, so it must not count. Written without an alias on the snooze half since
+/// `snoozed_until` names no other table here. Same predicate as the folder counts
+/// ([`super::VISIBLE`]), so list and counts cannot drift.
 const MEMBER: &str = super::VISIBLE;
 
-/// Which of a folder's messages are rows of a list over it: the membership
-/// test, asked in one place by every list query here (spec 007, research
-/// R13).
-///
-/// Every list the classic app and the terminal read asks
-/// [`Membership::Folder`], which is [`MEMBER`] and nothing else. Focus's
-/// inbox asks [`Membership::Focus`]: the same test with
-/// [`super::focus_excludes`] after it, which is empty until Focus holds mail
-/// back and is then the one predicate that takes held mail out of the
-/// window, the representative's `NOT EXISTS`, the slice, the count, the seek
-/// marks and the rows for changed messages together.
+/// Folder asks [`MEMBER`] only; Focus adds [`super::focus_excludes`], the one predicate that takes
+/// held mail out of the window, representative, slice, count, seek marks and changed-message rows
+/// together (spec 007, research R13).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Membership {
-    /// A folder's own list, and the unified inbox made of them.
     Folder,
-    /// Focus's inbox.
     Focus,
 }
 
 impl Membership {
-    /// The test for the message `alias` names: `"rep."`, `"m."`, or `""`
-    /// for a statement's only `messages`.
     fn test(self, alias: &str) -> String {
         format!("{alias}{MEMBER}{}", self.excludes(alias))
     }
 
-    /// What this membership leaves out beyond [`MEMBER`], as a conjunct
-    /// (` AND ...`) or nothing: for a statement that asks [`MEMBER`] of a
-    /// wider set and this membership of part of it, as a folded row's
-    /// unread count does.
+    /// For a statement asking [`MEMBER`] of a wider set and this membership of part of it, as a
+    /// folded row's unread count does.
     fn excludes(self, alias: &str) -> String {
         match self {
             Membership::Folder => String::new(),
@@ -358,16 +227,11 @@ impl Membership {
     }
 }
 
-/// How many rows a folder's thread list has: one per conversation the
-/// folder holds, plus one per message it holds that belongs to no
-/// conversation -- the same predicate the window uses, so the number and the
-/// rows cannot disagree about what a row is.
+/// The same predicate the window uses, so number and rows cannot disagree.
 fn folder_count_sql(membership: Membership) -> String {
-    // Distinct conversations, with a lone message standing for itself under
-    // its negated id, which no conversation id can equal. Read entirely
-    // from `idx_messages_mailbox_threads`: the old shape asked, for every
-    // message, whether a newer member of its conversation was here too --
-    // 786 ms on a real 60,907-message folder (#1534, #1607).
+    // A lone message stands for itself under its negated id. Read entirely from
+    // `idx_messages_mailbox_threads`: the old per-message newer-member check took 786 ms on a
+    // 60,907-message folder (#1534, #1607).
     format!(
         "SELECT count(DISTINCT coalesce(thread_id, -id)) FROM messages
           WHERE mailbox_id = ?1 AND {}",
@@ -375,10 +239,8 @@ fn folder_count_sql(membership: Membership) -> String {
     )
 }
 
-/// The rows of `mailbox`'s list: a message there that no newer member of
-/// its conversation there outranks -- the representative the window draws a
-/// row from. `mailbox` is the placeholder that names the folder, and `also`
-/// narrows the candidates before the `NOT EXISTS` is asked of them.
+/// A message no newer member of its conversation here outranks: the representative the window draws
+/// a row from. `also` narrows candidates before the `NOT EXISTS`.
 fn representative_filter(membership: Membership, mailbox: &str, also: &str) -> String {
     format!(
         "rep.mailbox_id = {mailbox} AND {}{also}
@@ -394,9 +256,7 @@ fn representative_filter(membership: Membership, mailbox: &str, also: &str) -> S
     )
 }
 
-/// The folder's slice of a representative's conversation, for the row's
-/// aggregates: spelled once, so they cannot drift apart on what counts as a
-/// member here.
+/// Spelled once so the row's aggregates cannot drift apart on what counts as a member.
 fn slice(membership: Membership, mailbox: &str) -> String {
     format!(
         "FROM messages m
@@ -405,42 +265,27 @@ fn slice(membership: Membership, mailbox: &str) -> String {
     )
 }
 
-/// The conversations of Focus's inbox that draw a marker (spec 007 T048):
-/// the has-action filter's rows, as conversations and as messages in none.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Marked {
-    /// Conversations with a marker the person has not dismissed: one per
-    /// row, the copy the row is drawn from.
     pub threads: Vec<ThreadId>,
-    /// Messages in no conversation that carry one.
     pub lone: Vec<MessageId>,
-    /// The other copies folded into a row of [`Self::threads`], with their
-    /// accounts: the same conversation received at another address (T168).
     pub copies: HashMap<ThreadId, Vec<(AccountId, ThreadId)>>,
 }
 
 impl Marked {
-    /// How many rows the has-action filter shows.
     pub fn len(&self) -> u32 {
         (self.threads.len() + self.lone.len()) as u32
     }
 
-    /// Whether it shows none.
     pub fn is_empty(&self) -> bool {
         self.threads.is_empty() && self.lone.is_empty()
     }
 }
 
-/// Where Focus's window starts reading the representative's list row: after
-/// the ten columns every thread window has.
 const FOCUS_REPRESENTATIVE: usize = 10;
 
-/// One inbox's part of Focus's window: the folder window over `?{mailbox}`,
-/// asking Focus's membership, with the representative's list row read in
-/// the same statement rather than by id afterwards.
-///
-/// The sort key and id are named, so a merge of several of these can order
-/// by them.
+/// The representative's list row is read in the same statement. Sort key and id are named so a
+/// merge of several can order by them.
 fn focus_arm(mailbox: usize, cursor: Option<(usize, usize)>, limit: u32) -> String {
     let membership = Membership::Focus;
     let mailbox = format!("?{mailbox}");
@@ -468,8 +313,6 @@ fn focus_arm(mailbox: usize, cursor: Option<(usize, usize)>, limit: u32) -> Stri
     )
 }
 
-/// A row of Focus's window: the account whose inbox it is in, the
-/// conversation, and its representative.
 fn read_focus_row(row: &Row) -> Result<(AccountId, ThreadListRow)> {
     let thread = row.col::<i64>(0)?;
     let account = AccountId::new(row.col(1)?);
@@ -494,20 +337,17 @@ fn read_focus_row(row: &Row) -> Result<(AccountId, ThreadListRow)> {
     ))
 }
 
+const WEEK: i64 = 7 * 24 * 60 * 60 * 1000;
+
 impl<'a> ThreadRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Inserts a thread, assigning its id.
-    ///
-    /// The aggregates are whatever the value carries; they become true once
-    /// messages are added, because every mutation here recomputes them.
+    /// The aggregates become true once messages are added, since every mutation recomputes them.
     pub async fn create(&self, thread: &mut Thread) -> Result<ThreadId> {
         let account_id = require_persisted(thread.account_id.get(), "account")?;
-        // Cached: a first sync creates a thread for most messages it files, so
-        // this runs on the same order as the message insert itself (#728).
+        // Cached: a first sync creates a thread for most messages it files (#728).
         sql::statement(
             self.connection,
             "INSERT INTO threads (account_id, subject, message_count, unread_count,
@@ -530,10 +370,7 @@ impl<'a> ThreadRepository<'a> {
         Ok(thread.id)
     }
 
-    /// Writes a thread's aggregates back.
-    ///
-    /// Membership is not part of this: a message joins a thread through
-    /// [`ThreadRepository::add_message`], never by being listed here.
+    /// Membership is not part of this: use [`ThreadRepository::add_message`].
     pub async fn update(&self, thread: &Thread) -> Result<()> {
         let id = require_persisted(thread.id.get(), "thread")?;
         let changed = sql::execute(
@@ -564,7 +401,6 @@ impl<'a> ThreadRepository<'a> {
         Ok(())
     }
 
-    /// One thread, with its membership and participants derived.
     pub async fn get(&self, id: ThreadId) -> Result<Option<Thread>> {
         let mut statement = sql::statement(
             self.connection,
@@ -588,10 +424,7 @@ impl<'a> ThreadRepository<'a> {
         Ok(Some(thread))
     }
 
-    /// Deletes a thread, returning whether there was one.
-    ///
-    /// Its messages survive with no thread: threading is a local derivation and
-    /// can simply run again.
+    /// Its messages survive with no thread: threading can simply run again.
     pub async fn delete(&self, id: ThreadId) -> Result<bool> {
         let deleted = sql::execute(
             self.connection,
@@ -602,11 +435,8 @@ impl<'a> ThreadRepository<'a> {
         Ok(deleted > 0)
     }
 
-    /// Puts a message in a thread and brings the aggregates up to date.
-    ///
-    /// If the message was in another thread, that one is recomputed too — an
-    /// abandoned thread that still claims the message would show a count the
-    /// drill-in cannot produce.
+    /// A previous thread is recomputed too: an abandoned thread still claiming the message would
+    /// show a count the drill-in cannot produce.
     pub async fn add_message(&self, thread_id: ThreadId, message_id: MessageId) -> Result<()> {
         sql::in_scope(self.connection, |transaction| async move {
             let previous = thread_of(&transaction, message_id).await?;
@@ -635,32 +465,22 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// Recomputes a thread's aggregates from its members.
     pub async fn recompute(&self, id: ThreadId) -> Result<()> {
         recompute_in(self.connection, id).await
     }
 
-    /// Whether the person took part in conversation `id`: a message of
-    /// theirs is in it, filed in a Sent folder (spec 007 FR-111, FR-122).
-    ///
-    /// One `EXISTS`: a seek on `idx_messages_thread_mailbox` for the
-    /// conversation's messages, each one's folder by its key, and it stops at
-    /// the first that is Sent.
+    /// One `EXISTS`: a seek on `idx_messages_thread_mailbox`, stopping at the first Sent message.
     pub async fn took_part(&self, id: ThreadId) -> Result<bool> {
         sql::exists(self.connection, Self::explain_took_part(), [id.get()]).await
     }
 
-    /// The SQL [`Self::took_part`] runs.
     pub fn explain_took_part() -> &'static str {
         "SELECT 1 FROM messages m JOIN mailboxes b ON b.id = m.mailbox_id
           WHERE m.thread_id = ?1 AND b.role = 'sent' LIMIT 1"
     }
 
-    /// Moves every message from `absorb` into `keep` and deletes `absorb`.
-    ///
-    /// This is what a late-arriving parent does: two conversations turn out to
-    /// have been one all along. Merging into the older thread keeps the id the
-    /// UI may already be showing.
+    /// What a late-arriving parent does. Merging into the older thread keeps the id the UI may
+    /// already show.
     pub async fn merge(&self, keep: ThreadId, absorb: ThreadId) -> Result<()> {
         if keep == absorb {
             return self.recompute(keep).await;
@@ -691,9 +511,8 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The conversation's newest message that a list would show: what a
-    /// surfaced reminder's row draws as its first line (spec 007). One
-    /// statement, a seek on `idx_messages_thread`.
+    /// What a surfaced reminder's row draws as its first line. One statement, a seek on
+    /// `idx_messages_thread`.
     pub async fn latest_member(&self, id: ThreadId) -> Result<Option<MessageId>> {
         sql::first(
             self.connection,
@@ -704,7 +523,6 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::latest_member`] runs.
     pub fn explain_latest_member() -> String {
         format!(
             "SELECT messages.id FROM messages
@@ -713,16 +531,12 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// Where a row surfaced at `at` goes in Focus's inbox over `inboxes`:
-    /// how many of its conversations are newer than `at` (spec 007,
-    /// data-model.md "Surfaced rows"). A conversation is newer when any
-    /// member there is, since its newest member is the one its row sorts
-    /// by. One statement, whatever the inbox holds: a seek on
-    /// `idx_messages_list` to the rows newer than `at`.
+    /// Where a row surfaced at `at` goes in Focus's inbox: how many conversations are newer (a
+    /// conversation is newer when any member is). One statement: a seek on `idx_messages_list` to
+    /// rows newer than `at`.
     ///
-    /// With more than one account, a conversation that reached two inboxes
-    /// counts in each, where the list folds it into one row, so the row can
-    /// sit one place lower than the fold would put it.
+    /// With several accounts a conversation reaching two inboxes counts in each, so the row can sit
+    /// one place lower than the fold would put it.
     pub async fn focus_position(
         &self,
         inboxes: &[(AccountId, MailboxId)],
@@ -743,7 +557,6 @@ impl<'a> ThreadRepository<'a> {
         Ok(u32::try_from(count).unwrap_or(u32::MAX))
     }
 
-    /// The SQL [`Self::focus_position`] runs over `inboxes` inboxes.
     pub fn explain_focus_position(&self, inboxes: usize) -> String {
         format!(
             "SELECT count(DISTINCT coalesce(messages.thread_id, -messages.id)) FROM messages
@@ -754,10 +567,8 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// A thread's messages as list rows, in either direction. A draft of
-    /// the thread is not one of them: this is what a verb on the thread
-    /// acts on, and archiving a conversation leaves its unsent reply in
-    /// Drafts (spec 013, edge cases).
+    /// A draft is not included: this is what a verb on the thread acts on, and archiving a
+    /// conversation leaves its unsent reply in Drafts (spec 013).
     pub async fn messages(&self, id: ThreadId, order: ThreadOrder) -> Result<Vec<MessageListRow>> {
         sql::all(
             self.connection,
@@ -768,8 +579,7 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The messages of a thread that are asleep, which [`Self::messages`]
-    /// leaves out: what waking a snoozed conversation has to reach.
+    /// What waking a snoozed conversation has to reach.
     pub async fn snoozed_messages(&self, id: ThreadId) -> Result<Vec<MessageListRow>> {
         sql::all(
             self.connection,
@@ -784,7 +594,6 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The SQL [`ThreadRepository::messages`] runs, for `EXPLAIN QUERY PLAN`.
     pub fn explain_messages(&self, order: ThreadOrder) -> String {
         let direction = match order {
             ThreadOrder::Oldest => "ASC",
@@ -797,68 +606,30 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// One window of the unified list: every enabled account's inbox, newest
-    /// first, conversations grouped across accounts at read time (#184,
-    /// ADR 0005 Q2).
+    /// Only inboxes (#1692): a conversation filed away is not a row, so a verb that files the
+    /// cursor's row takes it out of the view and `a a a` walks down the list. Each inbox
+    /// contributes its own folder-list rows; the order is global since message ids are unique
+    /// across accounts, so windows merge by it and one cursor resumes all, reading `limit` rows per
+    /// inbox.
     ///
-    /// # What is in it
+    /// Grouping: a thread never spans accounts, but the list folds threads into one [`ThreadGroup`]
+    /// when the conversation is one to the user: by root identity (another account holds a copy of
+    /// the JWZ root, via `idx_messages_rfc_message_id`), or by matching normalised subject within
+    /// [`postio_model::subject::COALESCING_WINDOW_DAYS`] (a bare subject match would fold every
+    /// "Weekly digest" into one eternal row).
     ///
-    /// The **inboxes** (#1692, the maintainer's call of 2026-09-26: "it
-    /// should only be inboxes"). A conversation filed away -- archived,
-    /// moved, snoozed, deleted -- is not a row here, so a verb that files the
-    /// cursor's row takes it out of this view exactly as it does out of a
-    /// folder, and `a a a` walks down the list. It used to be every message
-    /// of every account, which made triage in Unified change nothing visible.
-    ///
-    /// Each inbox contributes the rows its own folder list has
-    /// ([`ThreadRepository::page`] on [`ThreadListQuery::in_mailbox`]): one
-    /// per conversation holding a message there, drawn from its newest
-    /// message there, ordered by that message's `(sort_at, id)`. That
-    /// order is global -- message ids are unique across accounts -- so the
-    /// inboxes' windows merge by it, and one cursor resumes all of them. Each
-    /// window is the folder list's own seek over `idx_messages_list`, so a
-    /// page reads `limit` rows per inbox whatever the rest of the mail holds.
-    ///
-    /// # Grouping
-    ///
-    /// A thread never spans accounts — that is sync state, and it stays
-    /// per-account. What the unified list shows is a [`ThreadGroup`]:
-    /// threads from different accounts folded into one row when the
-    /// conversation is one conversation to the *user*. Two rules, in
-    /// order:
-    ///
-    /// - **Root identity.** Another account holds a copy of this thread's
-    ///   JWZ root (same `RfcMessageId`), looked up over
-    ///   `idx_messages_rfc_message_id`.
-    /// - **Subject, within the window.** Neither thread has a root id to
-    ///   compare — common — but their normalised subjects match and their
-    ///   activity is within [`postio_model::subject::COALESCING_WINDOW_DAYS`].
-    ///   A bare subject match with no window would fold every "Weekly
-    ///   digest" the user receives at two addresses into one eternal row.
-    ///
-    /// Only a partner that is itself in view -- in its account's inbox --
-    /// counts. A row is emitted at the group's **newest** member by the
-    /// list's own order; one with a newer partner in view is that partner's
-    /// row, drawn already on this page or an earlier one, so no conversation
-    /// is ever two rows. Dedupe is display-only (Q13): `message_count` counts
-    /// distinct `RfcMessageId`s across the members, both copies stay, and
-    /// [`ThreadGroup::members`] is exactly what an action must expand to.
+    /// Only a partner in view counts. A row is emitted at the group's newest member, so no
+    /// conversation is two rows. Dedupe is display-only (Q13): `message_count` counts distinct
+    /// `RfcMessageId`s, both copies stay, and [`ThreadGroup::members`] is what an action must
+    /// expand to.
     pub async fn unified_page(&self, query: &UnifiedThreadListQuery) -> Result<Vec<ThreadGroup>> {
         let inboxes = self.unified_inboxes().await?;
         self.folded_page(Membership::Folder, &inboxes, query.limit, query.after)
             .await
     }
 
-    /// At most `limit` rows of a list over several inboxes after `after`,
-    /// each conversation the person received at more than one address
-    /// folded into one [`ThreadGroup`]: the grouping
-    /// [`Self::unified_page`] describes, for the unified inbox
-    /// ([`Membership::Folder`]) and for Focus's ([`Membership::Focus`]),
-    /// whose raw window is its own merged statement and whose rows leave
-    /// out what Focus holds back.
-    ///
-    /// A Focus row's participants are left to its caller, which reads them
-    /// for the rows it keeps rather than for every raw row read here.
+    /// The grouping [`Self::unified_page`] describes, for the unified inbox and Focus's (whose raw
+    /// window is its own merged statement). A Focus row's participants are left to its caller.
     async fn folded_page(
         &self,
         membership: Membership,
@@ -870,9 +641,8 @@ impl<'a> ThreadRepository<'a> {
         let mut cursor = after;
         let batch = limit.max(2) * 2;
 
-        // The raw page over-fetches: absorption folds rows together, so a
-        // page of rows can under-fill the page of groups. Loop until the
-        // groups fill or the list ends; each pass is one seek per inbox.
+        // The raw page over-fetches: absorption folds rows together, so rows can under-fill the
+        // page of groups. Loop until groups fill or the list ends.
         'fill: loop {
             let raw = match membership {
                 Membership::Folder => self.unified_raw_page(inboxes, batch, cursor).await?,
@@ -919,16 +689,10 @@ impl<'a> ThreadRepository<'a> {
         Ok(groups)
     }
 
-    /// The inboxes the unified list is made of: each enabled account's own,
-    /// as `(account, inbox)`.
-    ///
-    /// By role, never by name, and one per account -- the first by path when
-    /// a server has somehow reported two, the rule
-    /// [`MailboxRepository::by_role`](super::MailboxRepository::by_role)
-    /// keeps, so the folder a verb routes to and the folder this lists are
-    /// the same one. A retired folder (not selectable) is no inbox, and an
-    /// account with no inbox yet -- its first sync still to come --
-    /// contributes nothing rather than failing the view.
+    /// By role, never by name, one per account (first by path, as
+    /// [`MailboxRepository::by_role`](super::MailboxRepository::by_role)), so the folder a verb
+    /// routes to is the one listed. A retired folder is no inbox, and an account with no inbox yet
+    /// contributes nothing.
     pub async fn unified_inboxes(&self) -> Result<Vec<(AccountId, MailboxId)>> {
         let rows: Vec<(i64, i64)> = sql::all(
             self.connection,
@@ -947,9 +711,7 @@ impl<'a> ThreadRepository<'a> {
         Ok(inboxes)
     }
 
-    /// The SQL [`Self::unified_inboxes`] runs, so a test can ask the planner
-    /// about it. Driven from `accounts` -- a handful of rows -- into
-    /// `idx_mailboxes_account_role`, so no statement here reads mail.
+    /// Driven from `accounts` into `idx_mailboxes_account_role`, so no statement reads mail.
     pub fn explain_unified_inboxes(&self) -> String {
         "SELECT m.account_id, m.id
            FROM accounts a JOIN mailboxes m
@@ -959,20 +721,9 @@ impl<'a> ThreadRepository<'a> {
             .to_owned()
     }
 
-    /// One window of the unified list at a row offset, for a list model that
-    /// scrolls by index.
-    ///
-    /// The same bargain [`page_at`](Self::page_at) makes, for the same
-    /// reason: `ListWindow` addresses rows by position because "never
-    /// materialise a mailbox" requires it, and the grouping walk only knows
-    /// how to resume from a cursor. The offset is counted from `after` every
-    /// time, so `postio_runtime::store`'s seek marks are what keep it a
-    /// handful of rows rather than the whole list.
-    ///
-    /// It over-fetches by `offset` and drops the head, because absorption
-    /// means a group is not a fixed number of rows — the only thing that
-    /// knows where the *n*th row starts is the walk that produced the first
-    /// *n*.
+    /// The same bargain as [`page_at`](Self::page_at): the grouping walk only resumes from a
+    /// cursor, so it over-fetches by `offset` and drops the head, since absorption means a group is
+    /// not a fixed number of rows. `postio_runtime::store`'s seek marks keep it small.
     pub async fn unified_page_at(
         &self,
         query: &UnifiedThreadListQuery,
@@ -993,19 +744,10 @@ impl<'a> ThreadRepository<'a> {
         Ok(groups.split_off(offset as usize))
     }
 
-    /// How many rows the unified list would show.
-    ///
-    /// The inboxes' own counts -- the same number each folder's list has --
-    /// less the rows absorption folds away: a conversation the user received
-    /// at two addresses is a row in each inbox and one row here. With one
-    /// inbox in view nothing can fold, and the answer is that folder's count.
-    ///
-    /// With more, the fold is decided by the same rule the page applies --
-    /// a row with a newer partner in view is not a row -- over every inbox
-    /// conversation, so the count and the walk cannot disagree about what a
-    /// row is. That is a pass over the inboxes' keys plus the partner lookup
-    /// in batches: bounded by what the inboxes hold, never by the archive,
-    /// and `postio_runtime::store` holds the answer until an inbox moves.
+    /// The inboxes' own counts less the rows absorption folds away. With one inbox nothing folds.
+    /// With more, the fold uses the page's rule over every inbox conversation, so count and walk
+    /// agree; bounded by what the inboxes hold, and `postio_runtime::store` holds the answer until
+    /// an inbox moves.
     pub async fn unified_count(&self) -> Result<u32> {
         let inboxes = self.unified_inboxes().await?;
         let mut total: i64 = 0;
@@ -1026,10 +768,8 @@ impl<'a> ThreadRepository<'a> {
         Ok((total - absorbed).max(0) as u32)
     }
 
-    /// How many of `inboxes`' rows fold into another inbox's: the rows the
-    /// walk in [`Self::folded_page`] skips because a partner in view is
-    /// newer, decided by the same rule over every inbox conversation, so a
-    /// count and the walk cannot disagree about what a row is.
+    /// The rows the walk in [`Self::folded_page`] skips because a partner in view is newer, by the
+    /// same rule, so count and walk agree.
     async fn absorbed(
         &self,
         membership: Membership,
@@ -1081,13 +821,8 @@ impl<'a> ThreadRepository<'a> {
         Ok(absorbed)
     }
 
-    /// One raw window of the inboxes, merged newest first: at most `limit`
-    /// rows after `after`, each with the account whose inbox it is in.
-    ///
-    /// Each inbox is asked for its own `limit` rows after the same cursor --
-    /// the folder list's seek -- and the union's first `limit` are exactly the
-    /// merged list's, because no inbox can contribute more than it was asked
-    /// for to the top `limit` of all of them.
+    /// Each inbox is asked for its own `limit` rows after the cursor; the union's first `limit` are
+    /// exactly the merged list's.
     async fn unified_raw_page(
         &self,
         inboxes: &[(AccountId, MailboxId)],
@@ -1112,7 +847,6 @@ impl<'a> ThreadRepository<'a> {
         Ok(merged)
     }
 
-    /// Threads by id, aggregates only.
     async fn threads_by_id(&self, ids: &[ThreadId]) -> Result<Vec<Thread>> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -1133,16 +867,9 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The rows `counted` -- conversations of a folded list over `inboxes`
-    /// -- are drawn as: each group of copies of one conversation the person
-    /// received at several addresses is one row, by the rule
-    /// [`Self::folded_page`] folds by. Each row's members come newest first,
-    /// as `(account, conversation)`: the first is the one the row is drawn
-    /// from, and an in-view copy that is not in `counted` joins the row too.
-    ///
-    /// Five statements with several inboxes -- the conversations, their
-    /// roots, partners by root and by subject, and where they are in view --
-    /// and none with one, where nothing can fold.
+    /// Each group of copies of one conversation is one row, by the rule [`Self::folded_page`] folds
+    /// by; members come newest first, the first being the one the row is drawn from. Five
+    /// statements with several inboxes, none with one.
     async fn fold_in_view(
         &self,
         membership: Membership,
@@ -1211,9 +938,7 @@ impl<'a> ThreadRepository<'a> {
         Ok(folded)
     }
 
-    /// Where each of `wanted` is drawn in view: its newest message in the
-    /// inboxes under `membership`, and nothing for one with no message
-    /// there. One statement, sought through the conversations' own index.
+    /// One statement, sought through the conversations' own index.
     async fn keys_in_view(
         &self,
         membership: Membership,
@@ -1263,12 +988,8 @@ impl<'a> ThreadRepository<'a> {
         Ok(keys)
     }
 
-    /// Each raw row's partners that are in view -- in their own account's
-    /// inbox -- with the key each is drawn at there.
-    ///
-    /// A partner filed away is not part of what the user is looking at: it
-    /// neither takes the row nor folds into it, and an action on the row does
-    /// not reach it through the group.
+    /// A partner filed away neither takes the row nor folds into it, and an action does not reach
+    /// it through the group.
     async fn partners_in_view(
         &self,
         membership: Membership,
@@ -1308,13 +1029,8 @@ impl<'a> ThreadRepository<'a> {
             .collect())
     }
 
-    /// `threads` and every copy of each folded into it from the person's
-    /// other accounts: the conversations a row of a folded list stands for,
-    /// by the rule [`Self::unified_page`] folds by.
-    ///
-    /// What a whole-view selection over Focus's inbox takes back out when a
-    /// row is deselected (spec 007, T167): the row carries one id, and every
-    /// copy has to stay with it.
+    /// What a whole-view selection over Focus's inbox takes back out when a row is deselected (spec
+    /// 007, T167): every copy has to stay with the row.
     pub async fn with_folded_copies(&self, threads: &[ThreadId]) -> Result<Vec<ThreadId>> {
         let found = self.threads_by_id(threads).await?;
         let partners = self.group_partners_for(&found).await?;
@@ -1327,11 +1043,8 @@ impl<'a> ThreadRepository<'a> {
         Ok(all)
     }
 
-    /// The threads in *other* accounts that are each page thread's
-    /// conversation — by root identity, then by subject within the window.
-    ///
-    /// Three statements for the whole page, not three per thread: the
-    /// per-thread version was the unified page's entire cost.
+    /// Three statements for the whole page, not per thread: the per-thread version was the unified
+    /// page's entire cost.
     async fn group_partners_for(&self, page: &[Thread]) -> Result<HashMap<ThreadId, Vec<Thread>>> {
         let mut partners: HashMap<ThreadId, Vec<Thread>> = HashMap::new();
         let mut seen: HashMap<ThreadId, std::collections::HashSet<ThreadId>> = HashMap::new();
@@ -1343,7 +1056,6 @@ impl<'a> ThreadRepository<'a> {
             .collect::<Vec<_>>()
             .join(", ");
 
-        // 1. Every page thread's root RfcMessageId, in one window pass.
         let mut roots: HashMap<String, Vec<&Thread>> = HashMap::new();
         {
             let mut statement = sql::statement(
@@ -1376,7 +1088,6 @@ impl<'a> ThreadRepository<'a> {
             }
         }
 
-        // 2. Partners by root identity, over idx_messages_rfc_message_id.
         if !roots.is_empty() {
             let root_keys: Vec<&String> = roots.keys().collect();
             let root_placeholders = std::iter::repeat_n("?", root_keys.len())
@@ -1419,7 +1130,6 @@ impl<'a> ThreadRepository<'a> {
             }
         }
 
-        // 3. Partners by subject, inside the coalescing window.
         let subjects: Vec<&str> = page
             .iter()
             .filter_map(|thread| thread.subject.as_deref())
@@ -1461,11 +1171,6 @@ impl<'a> ThreadRepository<'a> {
         Ok(partners)
     }
 
-    /// The group's display row: the head's inbox row, counts deduped across
-    /// every member.
-    ///
-    /// Participants and the representative come with the head's row, read
-    /// in one batch per inbox page the way [`ThreadRepository::page`] does.
     async fn group_row(
         &self,
         membership: Membership,
@@ -1478,17 +1183,14 @@ impl<'a> ThreadRepository<'a> {
             return Ok(row);
         };
         if partners.is_empty() {
-            // The overwhelmingly common group: one thread, one account. Its
-            // inbox row is already the answer, and asking SQL to dedupe a set
-            // of one was most of the unified page's cost.
+            // The common group (one thread, one account): its inbox row is the answer; deduping a
+            // set of one was most of the unified page's cost.
             return Ok(row);
         }
 
-        // Distinct messages, not distinct rows: a copy received at two
-        // addresses is one message to the user. A message with no
-        // RfcMessageId can never be anyone's copy, so it counts by row. The
-        // badge is the conversation's size wherever it is filed, and the
-        // unread count is the inboxes' slice -- a folder row's two rules.
+        // Distinct messages, not rows: a copy received at two addresses is one message, and one
+        // with no RfcMessageId counts by row. The badge is the conversation's size wherever filed;
+        // unread is the inboxes' slice.
         let mut members: Vec<ThreadId> = vec![head];
         members.extend(partners.iter().map(|partner| partner.thread.id));
         (row.message_count, row.unread_count) =
@@ -1501,12 +1203,8 @@ impl<'a> ThreadRepository<'a> {
         Ok(row)
     }
 
-    /// A folded row's two counts over its `members`: distinct messages, not
-    /// distinct rows -- a copy received at two addresses is one message to
-    /// the user, and a message with no RfcMessageId can never be anyone's
-    /// copy, so it counts by row. The badge is the conversation's size
-    /// wherever it is filed, and the unread count is the inboxes' slice --
-    /// a folder row's two rules. One statement.
+    /// Distinct messages, not rows (a copy at two addresses is one; no RfcMessageId counts by row).
+    /// Badge is the conversation's size, unread the inboxes' slice. One statement.
     async fn folded_counts(
         &self,
         membership: Membership,
@@ -1537,35 +1235,17 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// One window of Focus's inbox (spec 007): every inbox in the query,
-    /// one row per conversation it holds, newest first -- the unified
-    /// inbox's membership, asked through [`Membership::Focus`].
+    /// One account: two statements. The window is one statement: each inbox's folder window over
+    /// `idx_messages_list`, merged by `(sort_at, id)` (total, as message ids are unique across
+    /// accounts); the merge sorts at most inboxes times the page. The representative's list row
+    /// comes in the same row (`contracts/engine.md`). Participants are the second, markers the
+    /// third, and a page with an invitation a fourth for its clashes.
     ///
-    /// # One account: two statements
+    /// Several: a conversation received at two addresses is one row by the partner search of
+    /// [`Self::folded_page`], and [`ThreadGroup::members`] names both copies. With one inbox the
+    /// search is not asked; with more a page adds five statements and one per folded row's counts.
     ///
-    /// The window is one statement: each inbox's own folder window, sought
-    /// through `idx_messages_list` and bounded by the page, merged in the
-    /// same statement by `(sort_at, id)` -- the order every inbox's list
-    /// already keeps, and a total one, since message ids are unique across
-    /// accounts. The merge sorts at most the inboxes times the page, never an
-    /// inbox. The representative's list row comes in the same row rather than
-    /// by id afterwards, which leaves room for the markers read in the budget
-    /// of three (`contracts/engine.md`). Participants are the second.
-    ///
-    /// # Several: a conversation received at two addresses is one row
-    ///
-    /// As it is in the unified inbox, and by the same partner search
-    /// ([`Self::folded_page`]): a row with a newer partner in another
-    /// account's inbox is that partner's row, and [`ThreadGroup::members`]
-    /// names both copies, which is what an action on the row must reach.
-    /// With one inbox nothing can fold, so the search is not asked and a
-    /// one-account page keeps its budget; with more, a page adds what
-    /// Unified's does -- five statements for the search, and one to dedupe
-    /// each folded row's counts.
-    ///
-    /// `offset` counts rows from the cursor, for a list model that scrolls
-    /// by index, with the caveat [`Self::page_at`] carries: the store's seek
-    /// marks are what keep it small.
+    /// `offset` counts rows from the cursor, with the caveat [`Self::page_at`] carries.
     pub async fn focus_page_at(
         &self,
         query: &FocusListQuery,
@@ -1584,9 +1264,8 @@ impl<'a> ThreadRepository<'a> {
                 })
                 .collect()
         } else {
-            // A group is not a fixed number of raw rows, so the only thing
-            // that knows where the offset-th row starts is the walk that
-            // produced the ones before it, as in `unified_page_at`.
+            // As in `unified_page_at`: only the walk that produced the earlier rows knows where the
+            // offset-th row starts, since a group is not a fixed number of raw rows.
             let mut groups = self
                 .folded_page(
                     Membership::Focus,
@@ -1607,7 +1286,6 @@ impl<'a> ThreadRepository<'a> {
             if let Some(id) = row.id {
                 row.participants = participants.remove(&id).unwrap_or_default();
             }
-            // As the folder's rows do: whoever wrote a conversation of one.
             if row.participants.is_empty()
                 && let Some(from) = row.latest.as_ref().and_then(|latest| latest.from.clone())
             {
@@ -1619,9 +1297,8 @@ impl<'a> ThreadRepository<'a> {
         Ok(groups)
     }
 
-    /// Gives each row of a Focus page its mute, in one statement for the
-    /// page ([`Self::muted`]) and none when the page has no conversation. A
-    /// folded row is muted when any copy of it is.
+    /// One statement for the page, none without a conversation. A folded row is muted when any copy
+    /// is.
     async fn mute_marks(&self, groups: &mut [ThreadGroup]) -> Result<()> {
         let mut threads: Vec<ThreadId> = groups
             .iter()
@@ -1643,13 +1320,9 @@ impl<'a> ThreadRepository<'a> {
         Ok(())
     }
 
-    /// Gives each row of a Focus page its marker, in one statement for the
-    /// page ([`Self::explain_focus_markers`]), on the pattern of
-    /// [`Self::participants_for`].
-    ///
-    /// A folded row draws its own conversation's marker first and a copy's
-    /// only when its own has none: the copies are one conversation, so
-    /// whichever copy the person's classifier reached first speaks for it.
+    /// One statement for the page ([`Self::explain_focus_markers`]). A folded row draws its own
+    /// conversation's marker first and a copy's only if its own has none: the copies are one
+    /// conversation.
     async fn mark(
         &self,
         inboxes: &[(AccountId, MailboxId)],
@@ -1677,14 +1350,16 @@ impl<'a> ThreadRepository<'a> {
         arguments.extend(lone);
         let mut statement = sql::statement(self.connection, &sql).await?;
         let found = sql::mapped(&mut statement, arguments, |row| {
-            Ok((
-                row.col::<Option<i64>>(0)?,
-                row.col::<i64>(1)?,
-                read_marker_summary(row, 2)?,
-            ))
+            let mut marker = read_marker_summary(row, 2)?;
+            let uid = row.col::<Option<String>>(10)?;
+            Ok((row.col::<Option<i64>>(0)?, row.col::<i64>(1)?, {
+                marker.clash = uid;
+                marker
+            }))
         })
         .await?;
         drop(statement);
+        let found = self.clashes(found).await?;
 
         let mut by_thread: HashMap<ThreadId, MarkerSummary> = HashMap::new();
         let mut by_message: HashMap<MessageId, MarkerSummary> = HashMap::new();
@@ -1708,8 +1383,60 @@ impl<'a> ThreadRepository<'a> {
         Ok(())
     }
 
-    /// Focus's window, `offset` rows in: one statement, each row with the
-    /// account whose inbox it is in, and no participants yet.
+    async fn clashes(
+        &self,
+        mut found: Vec<(Option<i64>, i64, MarkerSummary)>,
+    ) -> Result<Vec<(Option<i64>, i64, MarkerSummary)>> {
+        let mut asked = Vec::new();
+        let mut arms = Vec::new();
+        let mut arguments: Vec<turso::Value> = Vec::new();
+        for (at, (_, _, marker)) in found.iter_mut().enumerate() {
+            let uid = marker.clash.take();
+            let (MarkerKind::Invite, Some(MarkerWhen::Event { starts_at, ends_at })) =
+                (marker.kind, marker.when.as_ref())
+            else {
+                continue;
+            };
+            if marker.cancelled {
+                continue;
+            }
+            let base = arguments.len();
+            arguments.extend([
+                to_millis(*starts_at).bind(),
+                to_millis(*ends_at).bind(),
+                uid.unwrap_or_default().bind(),
+            ]);
+            arms.push(format!(
+                "SELECT {at}, (SELECT e.title FROM event_occurrences o JOIN events e ON e.id = o.event_id
+                   WHERE o.start_utc >= ?{a} - {WEEK} AND o.start_utc < ?{b} AND o.end_utc > ?{a}
+                     AND o.all_day = 0 AND e.status <> 'cancelled'
+                     AND coalesce(e.my_partstat, '') <> 'DECLINED' AND e.uid <> ?{c}
+                   ORDER BY o.start_utc LIMIT 1)",
+                a = base + 1,
+                b = base + 2,
+                c = base + 3,
+            ));
+            asked.push(at);
+        }
+        if asked.is_empty() {
+            return Ok(found);
+        }
+        let titles: Vec<(i64, Option<String>)> = sql::all(
+            self.connection,
+            &arms.join("\n UNION ALL\n"),
+            arguments,
+            |row| Ok((row.col(0)?, row.col(1)?)),
+        )
+        .await?;
+        for (at, title) in titles {
+            if let Some((_, _, marker)) = usize::try_from(at).ok().and_then(|at| found.get_mut(at))
+            {
+                marker.clash = title;
+            }
+        }
+        Ok(found)
+    }
+
     async fn focus_window(
         &self,
         query: &FocusListQuery,
@@ -1725,10 +1452,8 @@ impl<'a> ThreadRepository<'a> {
         sql::mapped(&mut statement, arguments, read_focus_row).await
     }
 
-    /// One raw window of Focus's inboxes for [`Self::folded_page`]: at most
-    /// `limit` rows after `after`, merged newest first in one statement --
-    /// the Focus twin of [`Self::unified_raw_page`], which asks each inbox
-    /// in turn.
+    /// The Focus twin of [`Self::unified_raw_page`], which asks each inbox in turn; this merges in
+    /// one statement.
     async fn focus_raw_page(
         &self,
         inboxes: &[(AccountId, MailboxId)],
@@ -1746,9 +1471,6 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::focus_page_at`] runs, for `EXPLAIN QUERY PLAN`: one
-    /// inbox's window alone, or several merged. The query names at least one
-    /// inbox.
     pub fn explain_focus(&self, query: &FocusListQuery, offset: u32) -> String {
         let inboxes = query.inboxes.len();
         let cursor = query.after.map(|_| (inboxes + 1, inboxes + 2));
@@ -1760,8 +1482,7 @@ impl<'a> ThreadRepository<'a> {
         if inboxes == 1 {
             return format!("{}{skip}", focus_arm(1, cursor, query.limit));
         }
-        // Each inbox is asked for as many rows as the page could need from
-        // it, and the merge keeps the page's.
+        // Each inbox is asked for as many rows as the page could need; the merge keeps the page's.
         let each = query.limit.saturating_add(offset);
         let arms = (1..=inboxes)
             .map(|mailbox| format!("SELECT * FROM ({})", focus_arm(mailbox, cursor, each)))
@@ -1773,22 +1494,14 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// The SQL a Focus page reads its markers with, for `inboxes` inboxes,
-    /// `threads` conversations and `lone` messages in none: for each
-    /// conversation, its newest message in the inboxes' Focus slice that
-    /// carries a marker the person has not dismissed -- one row per
-    /// conversation that draws a marker, and none for one that does not.
-    ///
-    /// Driven from the conversations' own index, each bounded by the size of
-    /// one conversation, and into `markers` by its key: never a walk of
-    /// either table. `m.mailbox_id + 0` is what keeps it there -- with the
-    /// column bare the planner seeks the inbox instead and walks all of it,
-    /// a cost of the inbox rather than of the page. The newest marked
-    /// message is `max()`'s row, whose bare columns the engine answers from,
-    /// the pattern [`Self::participants_for`] relies on with `min()`.
+    /// Per conversation, its newest message in the inboxes' Focus slice carrying an undismissed
+    /// marker. Driven from the conversations' own index and into `markers` by key. `m.mailbox_id +
+    /// 0` keeps it there: with the column bare the planner seeks the inbox and walks all of it. The
+    /// newest marked message is `max()`'s row, whose bare columns the engine answers from (as
+    /// [`Self::participants_for`] relies on with `min()`).
     pub fn explain_focus_markers(&self, inboxes: usize, threads: usize, lone: usize) -> String {
         let columns = "k.kind, k.starts_at, k.ends_at, k.due_at, k.excerpt, k.answer, \
-                       k.invite_state";
+                       k.invite_state, k.moved_from, k.invite_uid, k.source";
         let mut arms = Vec::new();
         if threads > 0 {
             arms.push(format!(
@@ -1813,9 +1526,7 @@ impl<'a> ThreadRepository<'a> {
         arms.join("\n UNION ALL\n")
     }
 
-    /// Which of `messages` are in `mailbox` and still Focus's: not held for
-    /// a digest, not filtered away, not moved since. What a notification
-    /// may be about (FR-153).
+    /// Not held for a digest, not filtered away, not moved since: what a notification may be about.
     pub async fn stayed_in_focus(
         &self,
         mailbox: MailboxId,
@@ -1835,8 +1546,6 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::stayed_in_focus`] runs over `messages` ids: each by
-    /// its key, asked Focus's membership and for a standing filter decision.
     pub fn explain_stayed_in_focus(&self, messages: usize) -> String {
         format!(
             "SELECT messages.id FROM messages
@@ -1850,16 +1559,10 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// How many rows Focus's inbox has over `inboxes`: one per conversation
-    /// each holds, plus one per message there in none, less the rows that
-    /// fold into another inbox's -- the rows [`Self::focus_page_at`] walks.
-    ///
-    /// The first part is one statement, from `idx_messages_mailbox_threads`
-    /// alone: a conversation belongs to one account and each account gives
-    /// the list one inbox, so the distinct keys across every inbox are the
-    /// sum of each inbox's own. With one inbox nothing can fold and that is
-    /// the answer. With more, the fold is counted as the unified inbox's is
-    /// ([`Self::unified_count`]), over the same membership as the rows.
+    /// The first part is one statement from `idx_messages_mailbox_threads` alone: a conversation
+    /// belongs to one account and each gives one inbox, so distinct keys across inboxes are the sum
+    /// of each's own. With one inbox nothing folds; with more the fold is counted as in
+    /// [`Self::unified_count`], over the same membership.
     pub async fn focus_count(&self, inboxes: &[(AccountId, MailboxId)]) -> Result<u32> {
         if inboxes.is_empty() {
             return Ok(0);
@@ -1881,7 +1584,6 @@ impl<'a> ThreadRepository<'a> {
         Ok((count - absorbed).max(0) as u32)
     }
 
-    /// The SQL [`Self::focus_count`] runs over `inboxes` inboxes.
     pub fn explain_focus_count(&self, inboxes: usize) -> String {
         format!(
             "SELECT count(DISTINCT coalesce(messages.thread_id, -messages.id)) FROM messages
@@ -1891,16 +1593,10 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// Which conversations of Focus's inbox over `inboxes` draw a marker:
-    /// the has-action filter's rows (spec 007 US1 scenario 5, T048).
-    ///
-    /// One statement, driven from the markers the person has not dismissed
-    /// -- a few hundred at most, where an inbox is a hundred thousand --
-    /// through `idx_markers_dismissed`, and from each to its message by key.
-    /// A marker counts where the row would draw it: on a message in the
-    /// inboxes' Focus slice, so an archived, snoozed or held message's
-    /// marker makes no row. `idx_markers_open` was planned as a partial
-    /// index over open markers, which this engine's planner does not read.
+    /// One statement driven from the undismissed markers (a few hundred, where an inbox is a
+    /// hundred thousand) through `idx_markers_dismissed`, then to each message by key. A marker
+    /// counts where the row would draw it, so an archived, snoozed or held message's marker makes
+    /// no row. `idx_markers_open` was planned as a partial index, which this planner does not read.
     pub async fn focus_marked(&self, inboxes: &[(AccountId, MailboxId)]) -> Result<Marked> {
         if inboxes.is_empty() {
             return Ok(Marked::default());
@@ -1923,9 +1619,8 @@ impl<'a> ThreadRepository<'a> {
                 None => marked.lone.push(MessageId::new(message)),
             }
         }
-        // A conversation received at two addresses is one row of Focus's
-        // inbox, so it is one row here, drawn from the copy the inbox draws
-        // it from, and naming the others (T168).
+        // A conversation received at two addresses is one row, drawn from the copy the inbox draws
+        // it from (T168).
         for mut row in self
             .fold_in_view(Membership::Focus, inboxes, &conversations)
             .await?
@@ -1939,7 +1634,6 @@ impl<'a> ThreadRepository<'a> {
         Ok(marked)
     }
 
-    /// The SQL [`Self::focus_marked`] runs over `inboxes` inboxes.
     pub fn explain_focus_marked(&self, inboxes: usize) -> String {
         format!(
             "SELECT DISTINCT m.thread_id, CASE WHEN m.thread_id IS NULL THEN m.id ELSE 0 END,
@@ -1951,17 +1645,9 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// One page of the has-action filter: the rows of `marked`, drawn as
-    /// Focus's inbox draws them -- each conversation from its newest message
-    /// in the inbox, with its participants and its marker -- newest first,
-    /// `offset` rows in.
-    ///
-    /// Three statements, the inbox page's budget: the window, sought through
-    /// the marked conversations' own index and sorting only what they hold;
-    /// the participants; and the markers. A conversation received at two
-    /// addresses is one row, as it is in the inbox: [`Self::focus_marked`]
-    /// folded its copies, and this names them as the row's members, with
-    /// one statement more for each such row's counts (T168).
+    /// Three statements, the inbox page's budget: the window (sought through the marked
+    /// conversations' own index), the participants, the markers; plus one per folded row's counts
+    /// (T168).
     pub async fn focus_marked_page(
         &self,
         inboxes: &[(AccountId, MailboxId)],
@@ -2030,8 +1716,6 @@ impl<'a> ThreadRepository<'a> {
         Ok(groups)
     }
 
-    /// The SQL [`Self::focus_marked_page`] runs for `inboxes` inboxes,
-    /// `threads` marked conversations and `lone` marked messages in none.
     pub fn explain_focus_marked_page(
         &self,
         inboxes: usize,
@@ -2089,14 +1773,9 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// How many of Focus's rows over `inboxes` are unread: conversations
-    /// with an unread message in the inboxes' Focus slice, and unread
-    /// messages in none. One statement, sought through each inbox's index.
-    ///
-    /// With several accounts, a conversation received unread at two
-    /// addresses is one row, and counts once (T168): the unread
-    /// conversations are read and folded by the page's own partner search,
-    /// five statements more.
+    /// One statement, sought through each inbox's index. With several accounts a conversation
+    /// unread at two addresses is one row (T168): the unread conversations are folded by the page's
+    /// partner search, five statements more.
     pub async fn focus_unread(&self, inboxes: &[(AccountId, MailboxId)]) -> Result<u32> {
         if inboxes.is_empty() {
             return Ok(0);
@@ -2112,9 +1791,8 @@ impl<'a> ThreadRepository<'a> {
             .await?;
             return Ok(count.max(0) as u32);
         }
-        // Several inboxes: the unread conversations themselves, folded as
-        // the page folds them, so one received unread at two addresses is
-        // the one row it is drawn as (T168).
+        // Several inboxes: fold the unread conversations as the page does, so one unread at two
+        // addresses counts once (T168).
         let unread: Vec<(i64, Option<i64>)> = sql::all(
             self.connection,
             &self.explain_focus_unread_rows(inboxes.len()),
@@ -2136,9 +1814,6 @@ impl<'a> ThreadRepository<'a> {
         Ok((lone + rows) as u32)
     }
 
-    /// The SQL [`Self::focus_unread`] runs over several inboxes: each
-    /// unread conversation once, with its account, and each unread message
-    /// in none.
     pub fn explain_focus_unread_rows(&self, inboxes: usize) -> String {
         format!(
             "SELECT DISTINCT messages.account_id,
@@ -2151,7 +1826,6 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// The SQL [`Self::focus_unread`] runs over `inboxes` inboxes.
     pub fn explain_focus_unread(&self, inboxes: usize) -> String {
         format!(
             "SELECT count(DISTINCT coalesce(messages.thread_id, -messages.id)) FROM messages
@@ -2161,12 +1835,10 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// One window of the thread list, most recently active first.
     pub async fn page(&self, query: &ThreadListQuery) -> Result<Vec<ThreadListRow>> {
         self.page_with(query, "").await
     }
 
-    /// [`ThreadRepository::page`] with `tail` appended to the statement.
     async fn page_with(&self, query: &ThreadListQuery, tail: &str) -> Result<Vec<ThreadListRow>> {
         let mut arguments = vec![query.account_id.get()];
         // `?2` when the query is folder-scoped, so the cursor follows at ?3/?4
@@ -2183,20 +1855,11 @@ impl<'a> ThreadRepository<'a> {
             .await
     }
 
-    /// The rows the list shows for the conversations these messages belong
-    /// to, in the page's own shape -- one row per touched conversation,
-    /// aggregates, representative and participants included -- and nothing
-    /// else (#1607).
-    ///
-    /// A flag change names message ids, and the list used to re-read a whole
-    /// fifty-row page, four correlated subqueries per row, to learn one
-    /// conversation's new unread count. Two statements here before the
-    /// page's own two: which conversations the ids touch (a point read per
-    /// id), then the representatives of exactly those conversations, sought
-    /// through the thread index rather than walked through the folder. A
-    /// message with no conversation is its own row, as it is on the page.
-    /// In an account-wide list only conversations are rows, so a lone
-    /// message contributes nothing there.
+    /// One row per touched conversation, in the page's own shape (#1607): a flag change names
+    /// message ids, and re-reading a whole fifty-row page for one unread count was too costly. Two
+    /// statements before the page's own two: which conversations the ids touch, then their
+    /// representatives through the thread index. A message with no conversation is its own row,
+    /// except in an account-wide list.
     pub async fn rows_for(
         &self,
         query: &ThreadListQuery,
@@ -2245,17 +1908,10 @@ impl<'a> ThreadRepository<'a> {
         self.rows_from(&sql, arguments, scoped).await
     }
 
-    /// How many rows a folder lost when these messages left it (#1607).
-    ///
-    /// An archive moves `mailboxes.total_count`, which is the folder count's
-    /// witness, so the next page used to pay the whole conversation count
-    /// again: 786 ms on a real folder, in front of the first row. What the
-    /// count lost is knowable from the removed ids alone -- the conversations
-    /// none of whose members are still in the folder, plus every lone
-    /// message, each of which was its own row -- in two statements bounded
-    /// by the ids, not the folder. The removed rows still exist, elsewhere
-    /// or hidden pending a remote delete, so their conversations can be read
-    /// off them.
+    /// An archive moves `mailboxes.total_count`, the folder count's witness, so the next page paid
+    /// the whole conversation count again (786 ms on a real folder, #1607). What was lost is
+    /// knowable from the removed ids alone: conversations with no member left in the folder plus
+    /// every lone message, in two statements bounded by the ids.
     pub async fn conversations_gone_from(
         &self,
         mailbox: MailboxId,
@@ -2297,9 +1953,6 @@ impl<'a> ThreadRepository<'a> {
         Ok(lone + emptied as u32)
     }
 
-    /// The SQL [`Self::rows_for`] reads representatives with, for `threads`
-    /// conversation ids and `lone` message ids, so a test can ask the
-    /// planner about it the way [`Self::explain`] lets it ask about a page.
     pub fn explain_rows_for(&self, query: &ThreadListQuery, threads: usize, lone: usize) -> String {
         let Some(_) = query.mailbox else {
             return format!(
@@ -2341,9 +1994,6 @@ impl<'a> ThreadRepository<'a> {
         arms.join("\n UNION ALL\n")
     }
 
-    /// One conversation row per result of `sql`, filled out the way a page
-    /// is: participants, and for a folder-scoped read the representative
-    /// message. `arguments` are the statement's, in placeholder order.
     async fn rows_from(
         &self,
         sql: &str,
@@ -2381,13 +2031,9 @@ impl<'a> ThreadRepository<'a> {
         let mut page: Vec<(ThreadListRow, Option<MessageId>)> = rows;
         drop(statement);
 
-        // Two more statements for the whole page, rather than two per row.
         let ids: Vec<ThreadId> = page.iter().filter_map(|(row, _)| row.id).collect();
         let mut participants = self.participants_for(&ids).await?;
         if scoped {
-            // The window already named the representative of every row, so
-            // this is one read by id rather than a window function over the
-            // conversations.
             let wanted: Vec<MessageId> = page.iter().filter_map(|(_, id)| *id).collect();
             let mut latest: HashMap<MessageId, MessageListRow> =
                 MessageRepository::new(self.connection)
@@ -2422,25 +2068,11 @@ impl<'a> ThreadRepository<'a> {
         Ok(page.into_iter().map(|(row, _)| row).collect())
     }
 
-    /// The SQL a thread page runs, for `EXPLAIN QUERY PLAN`.
-    ///
-    /// # Why the folder-scoped shape is still flat
-    ///
-    /// The window is over `threads`, ordered by `last_at DESC, id DESC` over
-    /// `idx_threads_account_last_at` — the same seek the unscoped list makes,
-    /// so SQLite never sorts and never scans the table. Everything the folder
-    /// contributes is a **correlated subquery per row of the page**, not a
-    /// join that widens the set being ordered: whether the folder holds any
-    /// of the conversation, how much of it is unread here, and whether any of
-    /// it is flagged here. Each of those seeks
-    /// `idx_messages_thread_mailbox (thread_id, mailbox_id, sort_at DESC,
-    /// id DESC)`, which migration 0012 added for exactly this, and each is
-    /// bounded by the size of one conversation rather than by the mailbox.
-    ///
-    /// So a page costs `limit` index seeks plus a constant per row, whatever
-    /// the folder holds — which is what "page k of threads costs what page k
-    /// of messages costs" means. `the_thread_list_plan_never_sorts` is the
-    /// structural half of that claim and `store_reads` is the empirical half.
+    /// The window is over `threads` by `last_at DESC, id DESC` on `idx_threads_account_last_at`, so
+    /// it never sorts or scans. The folder contributes correlated subqueries per page row, not a
+    /// join that widens the ordered set; each seeks `idx_messages_thread_mailbox` and is bounded by
+    /// one conversation, so a page costs `limit` seeks plus a constant.
+    /// `the_thread_list_plan_never_sorts` is the structural check, `store_reads` the empirical one.
     pub fn explain(&self, query: &ThreadListQuery) -> String {
         // `message_count > 0` hides a conversation whose messages have all been
         // hidden: an empty row is not something the user can act on.
@@ -2463,9 +2095,6 @@ impl<'a> ThreadRepository<'a> {
         } else {
             ""
         };
-        // The folder's slice of this row's conversation. Spelled once and
-        // reused, so the aggregates cannot drift apart on what counts as a
-        // member here.
         let slice = slice(Membership::Folder, "?2");
         let window = representative_filter(Membership::Folder, "?2", "");
         format!(
@@ -2484,14 +2113,9 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// One window of the thread list at a row offset, for a list model that
-    /// scrolls by index.
-    ///
-    /// Prefer [`ThreadRepository::page`]: an offset is counted from the top of
-    /// the list every time, so a conversation that moves while the user
-    /// scrolls shifts every row down and this window silently skips one. The
-    /// store's seek marks exist to keep the offset small — see
-    /// `postio_runtime::store`.
+    /// Prefer [`ThreadRepository::page`]: an offset counts from the top every time, so a
+    /// conversation that moves while the user scrolls silently skips a row. The store's seek marks
+    /// (`postio_runtime::store`) keep the offset small.
     pub async fn page_at(
         &self,
         query: &ThreadListQuery,
@@ -2503,10 +2127,7 @@ impl<'a> ThreadRepository<'a> {
         self.page_with(query, &format!(" OFFSET {offset}")).await
     }
 
-    /// Where every `stride`-th row of a folder's list begins, as the cursor a
-    /// page resumes after: `(offset, cursor)` for offsets `stride`,
-    /// `2 * stride`, ... -- what a scrollbar jump seeks from instead of
-    /// skipping (#1610).
+    /// What a scrollbar jump seeks from instead of skipping (#1610).
     pub async fn boundaries(
         &self,
         query: &ThreadListQuery,
@@ -2516,12 +2137,9 @@ impl<'a> ThreadRepository<'a> {
             return Ok(Vec::new());
         };
         let stride = stride.max(1);
-        // One pass over the folder's own index, newest first, keys only --
-        // no correlated predicate per row. A row of the list is the first
-        // message of its conversation met in that order (the representative
-        // the window's `NOT EXISTS` asks for), or a message in no
-        // conversation at all; counting them as they go by is counting the
-        // list's rows.
+        // One pass over the folder's index, newest first, keys only: a list row is the first
+        // message of its conversation met in that order, or a message in no conversation, so
+        // counting as they go by counts rows.
         let mut rows = sql::statement(
             self.connection,
             &format!(
@@ -2563,15 +2181,10 @@ impl<'a> ThreadRepository<'a> {
         Ok(boundaries)
     }
 
-    /// How many threads the list would show.
     pub async fn count(&self, account_id: AccountId) -> Result<u32> {
         self.count_of(&ThreadListQuery::account(account_id)).await
     }
 
-    /// How many threads `query`'s scope would show.
-    ///
-    /// The folder-scoped count is the same `EXISTS` the page uses, so the
-    /// number and the rows cannot disagree about what "in this folder" means.
     pub async fn count_of(&self, query: &ThreadListQuery) -> Result<u32> {
         let count: i64 = match query.mailbox {
             None => {
@@ -2583,10 +2196,6 @@ impl<'a> ThreadRepository<'a> {
                 )
                 .await?
             }
-            // The same predicate the window uses, so the number and the rows
-            // cannot disagree about what a row is: one per conversation the
-            // folder holds, plus one per message it holds that belongs to no
-            // conversation.
             Some(mailbox) => {
                 sql::one(
                     self.connection,
@@ -2600,13 +2209,10 @@ impl<'a> ThreadRepository<'a> {
         Ok(count as u32)
     }
 
-    /// The SQL [`Self::count_of`] counts a folder with, so a test can ask the
-    /// planner about it.
     pub fn explain_count_of(&self) -> String {
         folder_count_sql(Membership::Folder)
     }
 
-    /// The members of a thread, oldest first.
     pub async fn member_ids(&self, id: ThreadId) -> Result<Vec<MessageId>> {
         sql::all(
             self.connection,
@@ -2620,17 +2226,10 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The members of a thread as a child row draws them, oldest first
-    /// (spec 013 R6): one statement, a seek on `idx_messages_thread` and a
-    /// primary-key seek per member for what a row needs, whatever the
-    /// thread's length.
-    ///
-    /// `line` is the sender's own words when the body stage has cut them,
-    /// [`Line::Quoted`] when they are empty, and the stored preview, cut where
-    /// an attribution begins, while no body is here. `answers` is resolved
-    /// here over the members' own `Message-ID`s, folded as
-    /// [`RfcMessageId::folded`] folds them, and is set only for a parent that
-    /// is not the member just before.
+    /// One statement: a seek on `idx_messages_thread` and a primary-key seek per member, whatever
+    /// the length (spec 013 R6). `line` is the sender's own words when cut, [`Line::Quoted`] when
+    /// empty, else the stored preview cut at an attribution. `answers` is set only for a parent
+    /// that is not the member just before.
     pub async fn members(&self, id: ThreadId) -> Result<Vec<ThreadMember>> {
         let rows = sql::all(
             self.connection,
@@ -2690,7 +2289,6 @@ impl<'a> ThreadRepository<'a> {
             .collect())
     }
 
-    /// The SQL [`Self::members`] runs.
     pub fn explain_members() -> String {
         format!(
             "SELECT {LIST_COLUMNS}, messages.own_line, messages.rfc_message_id, messages.in_reply_to,
@@ -2710,8 +2308,6 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// The account thread `id` belongs to, or `None` when it is gone. One
-    /// rowid seek.
     pub async fn account_of(&self, id: ThreadId) -> Result<Option<AccountId>> {
         sql::first(
             self.connection,
@@ -2722,15 +2318,12 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The thread message `id` is in, if it is in one. One rowid seek.
     pub async fn thread_id_of(&self, id: MessageId) -> Result<Option<ThreadId>> {
         thread_of(self.connection, id).await
     }
 
-    /// The claim a mute or a split of thread `id` is keyed by, folded, with
-    /// the thread's account: its oldest message's `Message-ID` (the root, as
-    /// research R3 has it), or any claim of the thread when no message
-    /// carries one. `None` when the thread has nothing to be keyed by.
+    /// The oldest message's `Message-ID` (the root, research R3) or any claim of the thread; `None`
+    /// when it has none.
     async fn root_claim(&self, id: ThreadId) -> Result<Option<(AccountId, String)>> {
         let Some(account) = sql::first(
             self.connection,
@@ -2774,11 +2367,8 @@ impl<'a> ThreadRepository<'a> {
         Ok(claim.map(|claim| (account, claim)))
     }
 
-    /// Mutes thread `id` (spec 013 FR-012): its new replies are archived on
-    /// arrival from now on. Muting a muted thread changes nothing.
-    ///
-    /// Written against a `Message-ID` the thread claims, not against the
-    /// thread, so the mute survives a merge and a renumbering (research R3).
+    /// Written against a claimed `Message-ID`, not the thread, so the mute survives a merge and
+    /// renumbering (research R3). Muting a muted thread changes nothing.
     pub async fn mute(&self, id: ThreadId) -> Result<()> {
         if !self.muted(&[id]).await?.is_empty() {
             return Ok(());
@@ -2799,7 +2389,6 @@ impl<'a> ThreadRepository<'a> {
         Ok(())
     }
 
-    /// Unmutes thread `id`: every mute any of its claims holds is forgotten.
     pub async fn unmute(&self, id: ThreadId) -> Result<()> {
         sql::execute(
             self.connection,
@@ -2813,13 +2402,9 @@ impl<'a> ThreadRepository<'a> {
         Ok(())
     }
 
-    /// Which of `ids` are muted, with the replies filed away since (spec 013
-    /// FR-012): one statement for the page, none for an empty one.
-    ///
-    /// Driven from `thread_mutes`, a table of the few threads a person has
-    /// muted, into `thread_links` by its unique key: the rows it reads are
-    /// the mutes, however long the page's threads are. A thread holding two
-    /// mutes (two muted halves that merged) answers their sum.
+    /// Driven from `thread_mutes` (a few threads) into `thread_links` by its unique key, so the
+    /// rows read are the mutes however long the threads. A thread holding two mutes answers their
+    /// sum.
     pub async fn muted(&self, ids: &[ThreadId]) -> Result<HashMap<ThreadId, u32>> {
         if ids.is_empty() {
             return Ok(HashMap::new());
@@ -2838,7 +2423,6 @@ impl<'a> ThreadRepository<'a> {
         Ok(muted)
     }
 
-    /// The SQL [`Self::muted`] runs for a page of `threads`.
     pub fn explain_muted(threads: usize) -> String {
         format!(
             "SELECT l.thread_id, m.replies_since
@@ -2850,8 +2434,6 @@ impl<'a> ThreadRepository<'a> {
         )
     }
 
-    /// Adds `replies` to the count of replies filed away in muted thread
-    /// `id`: what the row says beside "muted". Nothing when it is not muted.
     pub async fn note_muted_replies(&self, id: ThreadId, replies: u32) -> Result<()> {
         let key = sql::first(
             self.connection,
@@ -2876,19 +2458,12 @@ impl<'a> ThreadRepository<'a> {
         Ok(())
     }
 
-    /// Takes message `message` and every message that replies to it,
-    /// directly or not, out of its thread into a new one of their own, and
-    /// remembers it (spec 013 FR-007): a later message naming one of them
-    /// joins the new thread, and nothing merges them back.
+    /// Takes the message and every reply to it into a new thread and remembers it (spec 013): a
+    /// later message naming one joins the new thread, nothing merges them back. One transaction;
+    /// members are read once (ids and references, no bodies).
     ///
-    /// One transaction: the new thread, the messages moved, the claims of
-    /// their own `Message-ID`s relinked, both threads' aggregates recomputed,
-    /// and the `thread_splits` row. The thread's members are read once (their
-    /// ids and references, no bodies); nothing else of the mailbox is.
-    ///
-    /// Refused when `message` has no `Message-ID` to be remembered by, and
-    /// when everything in the thread answers it (the first message: nothing
-    /// would stay).
+    /// Refused when `message` has no `Message-ID` to be remembered by, or when everything answers
+    /// it (nothing would stay).
     pub async fn split(&self, message: MessageId) -> Result<ThreadId> {
         sql::in_scope(self.connection, |transaction| async move {
             let Some((original, account, own)) = sql::first(
@@ -3007,9 +2582,7 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// Takes a split back: thread `split` is folded into `into`, the thread
-    /// it came out of, and the record of the split is forgotten, so a later
-    /// reply to the message joins `into` again. What `z` does after a split.
+    /// What `z` does after a split: forgets the split record so a later reply joins `into` again.
     pub async fn unsplit(&self, split: ThreadId, into: ThreadId) -> Result<()> {
         if split == into {
             return Ok(());
@@ -3036,9 +2609,8 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// Thread `id`'s subject: `None` when there is no such thread, and
-    /// `Some(None)` when it has no subject. One statement, a rowid seek, with
-    /// none of [`Self::get`]'s reads of the members.
+    /// `Some(None)` when the thread has no subject. A rowid seek, none of [`Self::get`]'s member
+    /// reads.
     pub async fn subject(&self, id: ThreadId) -> Result<Option<Option<String>>> {
         sql::first(
             self.connection,
@@ -3049,9 +2621,6 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The unsent reply in thread `id`, found by `drafts.thread_id`: its
-    /// newest, when it has more than one. One statement, a seek on
-    /// `idx_drafts_thread`.
     pub async fn draft(&self, id: ThreadId) -> Result<Option<ThreadDraft>> {
         sql::first(self.connection, Self::explain_draft(), [id.get()], |row| {
             let text: Option<String> = row.col(1)?;
@@ -3069,19 +2638,14 @@ impl<'a> ThreadRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::draft`] runs.
     pub fn explain_draft() -> &'static str {
         "SELECT id, body_text, body_html, updated_at FROM drafts
           WHERE thread_id = ?1 AND state <> 'sent'
           ORDER BY updated_at DESC, id DESC LIMIT 1"
     }
 
-    /// Everyone who has written in each of `ids`, in first-seen order.
-    ///
-    /// One statement for the whole page. `min(received_at)` is what orders
-    /// them, and SQLite takes the bare `name`/`address` columns from the row
-    /// that minimum came from — so the display name is the one the participant
-    /// first appeared under.
+    /// One statement for the page. `min(received_at)` orders them, and SQLite takes the bare
+    /// `name`/`address` from that row, so the display name is the one first used.
     async fn participants_for(
         &self,
         ids: &[ThreadId],
@@ -3124,10 +2688,8 @@ impl<'a> ThreadRepository<'a> {
         Ok(participants)
     }
 
-    /// The newest message in each of `ids`, as a list row.
-    ///
-    /// One statement for the whole page: `row_number()` picks the newest per
-    /// thread, and the sender lookups then run only for the rows that survive.
+    /// One statement: `row_number()` picks the newest per thread, and sender lookups run only for
+    /// survivors.
     async fn latest_messages_for(
         &self,
         ids: &[ThreadId],
@@ -3136,8 +2698,7 @@ impl<'a> ThreadRepository<'a> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        // Still one statement for the whole page: the folder narrows what the
-        // window function ranks, it does not turn this into a query per row.
+        // The folder narrows what the window function ranks; still one statement.
         let scope = match mailbox {
             Some(mailbox) => format!(" AND mailbox_id = {}", mailbox.get()),
             None => String::new(),
@@ -3161,13 +2722,9 @@ impl<'a> ThreadRepository<'a> {
             &mut statement,
             ids.iter().map(|id| id.get()).collect::<Vec<_>>(),
             |row| {
-                // `LIST_COLUMNS` rather than a hand-written copy of it. This
-                // query used to spell the same thirteen columns out again, and
-                // adding a fourteenth to `LIST_COLUMNS` left this one behind --
-                // `read_list_row` then asked for a column index the statement did
-                // not have, and the unified list failed to page at all while every
-                // storage-level test passed. `thread_id` is the second column in
-                // both, which is what lets the reader be shared.
+                // `LIST_COLUMNS`, not a copy: a hand-written copy fell behind when a column was
+                // added, and the unified list failed to page while every storage test passed.
+                // `thread_id` is the second column in both.
                 Ok((ThreadId::new(row.col(1)?), read_list_row(row)?))
             },
         )
@@ -3210,7 +2767,6 @@ impl<'a> ThreadRepository<'a> {
     }
 }
 
-/// The thread a message is currently in.
 async fn thread_of(connection: &Connection, message_id: MessageId) -> Result<Option<ThreadId>> {
     let mut statement =
         sql::statement(connection, "SELECT thread_id FROM messages WHERE id = ?1").await?;
@@ -3224,12 +2780,7 @@ async fn thread_of(connection: &Connection, message_id: MessageId) -> Result<Opt
     )
 }
 
-/// Recomputes one thread's aggregates from its members, in whatever
-/// transaction the caller is already in.
-///
-/// The subject is the normalized subject of the oldest member — the message
-/// that named the conversation — recomputed here because a merge can change
-/// which message that is.
+/// The subject is the oldest member's, recomputed since a merge can change which that is.
 async fn recompute_in(connection: &Connection, id: ThreadId) -> Result<()> {
     let root_subject: Option<String> = sql::one(
         connection,
@@ -3269,9 +2820,6 @@ async fn recompute_in(connection: &Connection, id: ThreadId) -> Result<()> {
     Ok(())
 }
 
-/// What a row draws of a marker, from the columns
-/// [`ThreadRepository::explain_focus_markers`] reads starting at `first`:
-/// kind, event start and end, due date, excerpt, answer, invitation state.
 fn read_marker_summary(row: &Row, first: usize) -> Result<MarkerSummary> {
     let time = |index: usize| -> Result<Option<DateTime<Utc>>> {
         Ok(row.col::<Option<i64>>(first + index)?.map(from_millis))
@@ -3296,10 +2844,12 @@ fn read_marker_summary(row: &Row, first: usize) -> Result<MarkerSummary> {
             .map(super::markers::answer_of)
             .transpose()?,
         cancelled: state == Some(super::InviteState::Cancelled),
+        clash: None,
+        moved_from: row.col::<Option<i64>>(first + 7)?.map(from_millis),
+        notice: row.col::<String>(first + 9)? == "notice",
     })
 }
 
-/// [`read_thread`], with the thread's columns starting at `offset`.
 fn read_thread_offset(row: &Row, offset: usize) -> Result<Thread> {
     Ok(Thread {
         id: ThreadId::new(row.col(offset)?),

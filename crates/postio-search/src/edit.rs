@@ -1,82 +1,42 @@
-//! Term edits: the one way anything but the keyboard changes a query.
-//!
-//! The query **string** is the one source of truth (spec 010, D1). A chip's
-//! ✕, a filter button, a popover's check, the timeline's band and a
-//! relaxation each send an [`Edit`], and [`apply`] turns the string the
-//! person typed into the next one. Nothing builds query text anywhere else,
-//! so there is never a second state to drift from the first.
-//!
-//! The rules, which are what makes it safe to hand the result straight back
-//! to the field the person is typing in:
-//!
-//! * Tokens keep their order and their raw text, except the one edited:
-//!   `after:aug1` stays `after:aug1` when a `from:` beside it changes.
-//! * A token the person typed is edited **in place** and never duplicated:
-//!   adding `from:ada` to `from:Ada atlas` changes nothing, and adding it to
-//!   `from: atlas` fills the half-typed `from:` where it stands.
-//! * What is written is [`spell`]'s one canonical form (D13).
-//! * A popover's check of a second value of a field the query already holds
-//!   is **either**, not both (D26): `from:ada` becomes `from:{ada tomas}`
-//!   in place, and unchecking one leaves the plain clause of the other.
-//!   [`Edit::Add`] -- a typed operator, a "Narrow to" pill -- still asks
-//!   for both, as typing two clauses always has.
-//! * The result is whitespace-normalised: one space between tokens.
+//! Term edits: the one way anything but the keyboard changes a query. The query string is the one
+//! source of truth: every control sends an [`Edit`] and [`apply`] turns the typed string into the
+//! next one.
+//! Tokens keep their order and raw text except the one edited, which is edited in place and never
+//! duplicated; what is written is [`spell`]'s canonical form (D13).
+//! A popover's check of a second value of a field already held is either, not both (D26):
+//! `from:ada` becomes `from:{ada tomas}`; [`Edit::Add`] still asks for both.
 
 use chrono::NaiveDate;
 
 use crate::parser::parse;
 use crate::query::{Clause, Field, Filter, Token, TokenKind, spell};
 
-/// One change to a query, as a control asks for it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Edit {
-    /// Add a clause, spelled by [`spell`]: in place of a half-typed operator
-    /// of its field, or appended. A clause already there is not added again.
     Add(Clause),
-    /// Remove one token, by index into [`crate::ParsedQuery::tokens`].
     Remove {
-        /// The token's index.
         token: usize,
     },
-    /// Put `with` where one token stands.
     Replace {
-        /// The token's index.
         token: usize,
-        /// What it becomes.
         with: Clause,
     },
-    /// A filter button or a popover's check: add the filter if no positive
-    /// clause holds it -- into the field's positive clause, as a set, when
-    /// the field takes one (D26) -- and take it out of every positive clause
-    /// that does. An exclusion of it is turned round rather than
-    /// contradicted.
+    /// Add the filter if no positive clause holds it (into the field's clause as a set when it
+    /// takes one, D26), else take it out of every positive clause that does. An exclusion of it is
+    /// turned round rather than contradicted.
     Toggle(Filter),
-    /// The timeline and the Date popover: replaces every `after:` and
-    /// `before:` (half-typed ones too), the first of each in place.
     SetDates {
-        /// The new lower bound, inclusive; `None` removes it.
         after: Option<NaiveDate>,
-        /// The new upper bound, exclusive; `None` removes it.
         before: Option<NaiveDate>,
     },
-    /// Keep the free words, drop every operator, complete or half typed (D24).
     ClearFilters,
-    /// ⌥-click in a popover: [`Edit::Toggle`]'s mirror over the negated
-    /// clause.
     Exclude(Filter),
-    /// Every complete `after:` and `before:`, in place: relative to today
-    /// (`after:90d`) when `rolling`, else its calendar day
-    /// (`after:2026-07-01`). How a saved search keeps its dates (D14).
+    /// How a saved search keeps its dates (D14).
     Dates {
-        /// Relative, or fixed.
         rolling: bool,
     },
 }
 
-/// `query` with `edit` applied. See the module docs for the rules.
-///
-/// `today` is what relative dates in `query` resolve against, as for
-/// [`crate::parse`]; it decides only which tokens are complete.
 pub fn apply(query: &str, edit: Edit, today: NaiveDate) -> String {
     let parsed = parse(query, today);
     let tokens = parsed.tokens();
@@ -155,11 +115,6 @@ pub fn apply(query: &str, edit: Edit, today: NaiveDate) -> String {
     join(words.into_iter().flatten())
 }
 
-/// [`Edit::Toggle`] (`negated` false) and [`Edit::Exclude`] (true): take
-/// `filter` out of every clause of this polarity that holds it; or, when
-/// none does, take it out of the other polarity's and put it in this one's
-/// -- extending a clause of its field into a set (D26), else where the
-/// other one stood, else as [`add`] would.
 fn flip(tokens: &[Token], words: &mut Vec<Option<String>>, filter: &Filter, negated: bool) {
     let here = holders(tokens, filter, negated);
     if !here.is_empty() {
@@ -213,8 +168,6 @@ fn flip(tokens: &[Token], words: &mut Vec<Option<String>>, filter: &Filter, nega
     }
 }
 
-/// The clauses of polarity `negated` that hold `filter`, as a value of
-/// their own or one of a set's.
 fn holders<'a>(tokens: &'a [Token], filter: &Filter, negated: bool) -> Vec<(usize, &'a Clause)> {
     tokens
         .iter()
@@ -235,8 +188,6 @@ fn holders<'a>(tokens: &'a [Token], filter: &Filter, negated: bool) -> Vec<(usiz
         .collect()
 }
 
-/// `clause` without `filter` among its values: the rest, or `None` when
-/// nothing is left.
 fn without(clause: &Clause, filter: &Filter) -> Option<Clause> {
     let rest: Vec<Filter> = clause
         .filter
@@ -251,7 +202,6 @@ fn without(clause: &Clause, filter: &Filter) -> Option<Clause> {
     })
 }
 
-/// [`Edit::Add`]'s rule, shared with a toggle that finds nothing to remove.
 fn add(tokens: &[Token], words: &mut Vec<Option<String>>, clause: &Clause) {
     let already = tokens.iter().any(|token| {
         matches!(&token.kind, TokenKind::Filter(c)
@@ -273,15 +223,10 @@ fn add(tokens: &[Token], words: &mut Vec<Option<String>>, clause: &Clause) {
     }
 }
 
-/// Whether two filters ask for the same thing. A name is the same name
-/// whatever its case -- `from:Ada` is `from:ada`, `label:atlas` is
-/// `label:Atlas` -- because every executor arm that reads one compares it
-/// that way.
+/// A name is the same whatever its case, because every executor arm compares it that way.
 pub fn same(a: &Filter, b: &Filter) -> bool {
     let fold = |s: &str| s.to_lowercase();
     if matches!(a, Filter::AnyOf(_)) || matches!(b, Filter::AnyOf(_)) {
-        // Two sets are the same when each holds every value of the other,
-        // in any order.
         let within = |x: &Filter, y: &Filter| {
             x.alternatives()
                 .iter()
@@ -305,9 +250,8 @@ pub fn same(a: &Filter, b: &Filter) -> bool {
     }
 }
 
-/// The words, one space apart. A phrase or a set left open (the person was
-/// still typing it) is closed when anything follows it, or the parser would
-/// read what follows as part of it.
+/// A phrase or set left open is closed when anything follows it, or the parser would read what
+/// follows as part of it.
 pub(crate) fn join(words: impl Iterator<Item = String>) -> String {
     let words: Vec<String> = words.collect();
     let last = words.len().saturating_sub(1);
@@ -560,7 +504,6 @@ mod tests {
 
     #[test]
     fn toggle_extends_a_held_field_into_a_set_in_place() {
-        // D26: a second person checked in one popover is either of them.
         assert_eq!(
             edit("atlas from:ada budget", Edit::Toggle(from("tomas"))),
             "atlas from:{ada tomas} budget"
@@ -687,8 +630,6 @@ mod tests {
 
     #[test]
     fn dates_turn_rolling_or_fixed_and_nothing_else_moves() {
-        // D14: a saved search keeps its dates in the one language, relative
-        // when they roll and ISO when they stay put.
         let today = NaiveDate::from_ymd_opt(2026, 9, 29).unwrap();
         let rolling = |query: &str| apply(query, Edit::Dates { rolling: true }, today);
         let fixed = |query: &str| apply(query, Edit::Dates { rolling: false }, today);

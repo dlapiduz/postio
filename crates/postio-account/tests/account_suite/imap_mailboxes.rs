@@ -1,12 +1,3 @@
-//! Folder discovery: `SPECIAL-USE` where a server offers it, the provider
-//! name table where it does not, and hierarchy either way.
-//!
-//! The three transcripts below are the naming this has to survive: a server
-//! that advertises no `SPECIAL-USE` at all and spells things its own way, one
-//! that advertises everything but buries it under a container folder, and the
-//! well-behaved case where names and attributes agree. All replayed with no
-//! socket.
-
 use std::sync::Arc;
 
 use postio_account::backend::{MailboxFilter, MailboxSummary};
@@ -41,7 +32,6 @@ async fn pool_over(connector: ScriptedConnector) -> ConnectionPool {
     )
 }
 
-/// Builds a `LIST` reply from `(attributes, path)` rows.
 fn listing(rows: &[(&str, &str)]) -> String {
     let mut reply = String::new();
     for (attributes, path) in rows {
@@ -59,13 +49,7 @@ fn role_of(mailboxes: &[MailboxSummary], path: &str) -> MailboxRole {
         .role
 }
 
-// ---------------------------------------------------------------------------
-// A server with no SPECIAL-USE at all
-// ---------------------------------------------------------------------------
-
-/// A server that returns no role attributes at all, and spells sent and trash
-/// its own way. At least one mainstream provider behaves exactly like this,
-/// which is why the name table is not optional.
+/// No role attributes and its own names for sent and trash, like at least one mainstream provider.
 fn listing_without_special_use() -> String {
     listing(&[
         ("\\HasNoChildren", "INBOX"),
@@ -195,15 +179,8 @@ async fn a_noselect_folder_is_reported_as_unable_to_hold_messages() {
     assert!(mailboxes.iter().all(|mailbox| mailbox.path != "Nowhere"));
 }
 
-// ---------------------------------------------------------------------------
-// Servers that do advertise SPECIAL-USE
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn roles_come_from_the_attributes_a_server_does_advertise() {
-    // Most of these names would resolve on their own, but `[Container]/All Mail`
-    // is the archive and nothing about that name says so — only the attribute
-    // does.
     let rows = listing(&[
         ("\\HasNoChildren", "INBOX"),
         ("\\Noselect \\HasChildren", "[Container]"),
@@ -298,8 +275,6 @@ async fn a_user_folder_that_merely_looks_special_does_not_take_the_role() {
     assert_eq!(role_of(&mailboxes, "Deleted Messages"), MailboxRole::Trash);
     assert_eq!(role_of(&mailboxes, "Old/Trash"), MailboxRole::Regular);
 
-    // Exactly one folder holds each role, which is what the sidebar and the
-    // archive key depend on.
     for role in [MailboxRole::Sent, MailboxRole::Trash] {
         assert_eq!(
             mailboxes
@@ -311,10 +286,6 @@ async fn a_user_folder_that_merely_looks_special_does_not_take_the_role() {
         );
     }
 }
-
-// ---------------------------------------------------------------------------
-// Subscriptions
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn listing_everything_costs_one_round_trip_and_asks_no_lsub() {
@@ -376,10 +347,6 @@ async fn a_rejected_list_is_reported_rather_than_returning_no_folders() {
 
     assert!(error.to_string().contains("LIST"));
 }
-
-// ---------------------------------------------------------------------------
-// Live server
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 #[ignore = "talks to a live IMAP server; set POSTIO_TEST_IMAP_USER and POSTIO_TEST_IMAP_PASSWORD"]

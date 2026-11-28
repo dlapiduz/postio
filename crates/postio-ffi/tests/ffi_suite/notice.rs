@@ -1,26 +1,14 @@
-//! The blocked-images notice, and the two standing grants behind it (#1274).
-//!
-//! Remote images are blocked by default and the reader says so. What it says
-//! — how many, and about whom — has to cross, and so does the decision to
-//! stop asking: a per-sender or per-domain grant that lived in one frontend
-//! would be a second answer to "may this sender see me", which is the one
-//! place two implementations are least acceptable.
-
 use chrono::Utc;
 use postio_ffi::{RemoteImagesFfi, Session, SessionOptions};
 use postio_model::{EmailAddress, Message};
 use postio_storage::repository::{MessageRepository, StoredBody};
 use postio_storage::test_support;
 
-/// A session over a store holding one message from `sender` whose body
-/// points at `images` remote pictures.
 async fn a_message_with_images(sender: &str, images: usize) -> (std::sync::Arc<Session>, i64) {
     let (session, messages) = a_store_with(&[(sender, images)]).await;
     (session, messages[0])
 }
 
-/// A session over a store holding one message that reads as bulk mail —
-/// nested tables, which is the arrangement reader view exists to reduce.
 async fn a_bulk_message(sender: &str) -> (std::sync::Arc<Session>, i64) {
     let (session, messages) = a_store_with_html(&[(
         sender,
@@ -31,7 +19,6 @@ async fn a_bulk_message(sender: &str) -> (std::sync::Arc<Session>, i64) {
     (session, messages[0])
 }
 
-/// A session over a store holding one message per `(sender, images)` pair.
 async fn a_store_with(senders: &[(&str, usize)]) -> (std::sync::Arc<Session>, Vec<i64>) {
     let bodies: Vec<(&str, String)> = senders
         .iter()
@@ -51,7 +38,6 @@ async fn a_store_with(senders: &[(&str, usize)]) -> (std::sync::Arc<Session>, Ve
     a_store_with_html(&borrowed).await
 }
 
-/// As [`a_store_with`], with the body written out.
 async fn a_store_with_html(senders: &[(&str, &str)]) -> (std::sync::Arc<Session>, Vec<i64>) {
     let database = test_support::memory().await;
     let scratch = tempfile::tempdir().expect("a scratch directory");
@@ -114,8 +100,6 @@ async fn a_message_pointing_at_pictures_says_how_many_were_blocked() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_message_with_nothing_held_back_has_no_notice_at_all() {
-    // A notice with nothing to report should not be on screen: it teaches
-    // people to dismiss the one that matters.
     let (session, message) = a_message_with_images("ada@example.com", 0).await;
     assert!(session.reader_notice(message).await.is_none());
 }
@@ -142,8 +126,6 @@ async fn allowing_a_sender_lasts_and_the_notice_says_so() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn allowing_a_domain_covers_the_addresses_under_it() {
-    // The case one address at a time cannot solve: a service that never
-    // sends twice from the same address.
     let (session, message) = a_message_with_images("notices-3a7f@relay.example.net", 2).await;
     session.allow_domain("relay.example.net".to_owned());
 
@@ -158,9 +140,6 @@ async fn allowing_a_domain_covers_the_addresses_under_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_grant_is_about_this_sender_and_nobody_else() {
-    // One store, two senders at the same domain: allowing an address must
-    // not quietly allow everybody who shares its domain, which is the
-    // difference between the two menu items.
     let (session, messages) = a_store_with(&[("ada@example.com", 2), ("bo@example.com", 2)]).await;
     session.allow_sender("ada@example.com".to_owned());
 
@@ -183,9 +162,8 @@ async fn a_grant_is_about_this_sender_and_nobody_else() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_document_still_blocks_until_the_frontend_asks_for_allowed() {
-    // The grant is a *decision*, not a rendering: what the reader renders is
-    // still the frontend's call, so a build that ignored the notice cannot
-    // accidentally leak by consulting the list twice.
+    // The grant is a decision, not a rendering: what the reader renders is still the frontend's
+    // call.
     let (session, message) = a_message_with_images("ada@example.com", 2).await;
     session.allow_sender("ada@example.com".to_owned());
 
@@ -198,11 +176,8 @@ async fn the_document_still_blocks_until_the_frontend_asks_for_allowed() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_bulk_message_opens_as_its_sender_built_it() {
-    // Spec 006 FR-031, which GTK and the shared thread page follow: reader
-    // view is a command away, never the default. The Mac's single-message
-    // pane opened bulk mail reduced, so one application had two rules.
-    // Bulk mail, which is what reader view is *for*: nested tables are what
-    // a campaign template does and a person writing mail does not.
+    // Reader view is a command away, never the default; the Mac opened bulk mail reduced, so one
+    // application had two rules.
     let (session, message) = a_bulk_message("notices@relay.example.net").await;
 
     let opened = session
@@ -217,8 +192,6 @@ async fn a_bulk_message_opens_as_its_sender_built_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn reader_view_is_asked_for_one_message_at_a_time() {
-    // `toggle_reader_view`: per message and per view. Asking reduces this
-    // message; not asking draws it as sent again.
     let (session, message) = a_bulk_message("notices@relay.example.net").await;
 
     let reduced = session
@@ -240,11 +213,8 @@ async fn reader_view_is_asked_for_one_message_at_a_time() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_notice_carries_the_counts_the_parts_panel_needs() {
-    // The summary is a sentence and the parts panel needs numbers: whether
-    // "Render once" is offered at all is `part_held_back_note`'s answer, and
-    // that takes the counts rather than the wording. Deriving them by
-    // parsing "6 remote images blocked" back apart would be a second reader
-    // of a string written for people.
+    // The parts panel needs counts, not the sentence: parsing "6 remote images blocked" apart would
+    // be a second reader of a string for people.
     let (session, message) = a_message_with_images("notices@relay.example.net", 6).await;
     let notice = session
         .reader_notice(message)
@@ -264,12 +234,8 @@ async fn the_notice_carries_the_counts_the_parts_panel_needs() {
     );
 }
 
-// -- `always_show_images` as a command (#1706) ----------------------------
-
 #[tokio::test(flavor = "multi_thread")]
 async fn always_show_images_grants_the_sender_the_notice_names() {
-    // The key presses what the notice's "Always allow" presses: a standing
-    // grant for this message's sender, and nobody else's.
     let (session, messages) = a_store_with(&[("ada@example.com", 2), ("bo@example.com", 2)]).await;
 
     assert!(
@@ -296,8 +262,8 @@ async fn always_show_images_grants_the_sender_the_notice_names() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn always_show_images_does_nothing_where_the_notice_offers_nothing() {
-    // GTK's rule: a key on a message with nothing held back does nothing at
-    // all. Writing a grant there would be consent nobody was asked for.
+    // A key on a message with nothing held back does nothing; a grant there would be consent nobody
+    // was asked for.
     let (session, message) = a_message_with_images("ada@example.com", 0).await;
 
     assert!(!session.always_show_images_for(message).await);

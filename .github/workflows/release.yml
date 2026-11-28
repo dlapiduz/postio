@@ -1,37 +1,14 @@
 name: Release
 
-# A release is the push that merges a release pull request (#1714).
-#
-# The version moves in that pull request -- `scripts/release-prepare.sh
-# X.Y.Z` makes it: the bump, the notes in docs/releases/X.Y.Z.md, one commit
-# -- so `main` always says the version it is. This workflow runs on every
-# push to `main`, and its first job answers "is this a release?" in seconds:
-# only when `Cargo.toml` names a version with no tag yet, newer than the
-# newest one. Every other push stops there.
-#
-# It used to run on a tag and bump the version itself, in every build job, on
-# a copy of the tree it could never commit -- an automated push cannot pass
-# `main`'s ruleset. So `main` said 0.3.0 while v0.4.2 was out.
-#
-# What a release ships is `.github/release-variants.json`, one row per
-# package. Each kind of package is one job below, run once per row of that
-# kind, so a second Flatpak or a second tarball is a row, not a job. Every
-# package carries its own SBOM and a provenance attestation.
-#
-# Nothing is published until everything is built and the full suite has
-# passed on the commit (the packages build beside it): `publish` creates the
-# release as a draft, attaches every asset and `SHA256SUMS`, checks the list
-# against the variants file, and only then publishes -- which is also what
-# creates the tag. A package that fails to build leaves no release and no
-# tag, rather than a release with a hole in it (v0.3.0, v0.4.0 and v0.4.1 are
-# tags with no release, from the old shape).
-#
-# `workflow_dispatch` builds every package as a workflow artifact, versioned
-# `<version>-dev.<sha>`, and publishes nothing.
-#
-# A Flatpak build compiles the whole workspace --release inside a sandbox
-# against a ~3 GB runtime it has to download first; that is why none of this
-# is part of CI.
+# A release is the push that merges a release pull request (#1714): `scripts/release-prepare.sh
+# X.Y.Z` bumps the version and writes docs/releases/X.Y.Z.md. This workflow runs on every push to
+# `main`; the first job stops it unless `Cargo.toml` names a version with no tag yet, newer than the
+# newest one. `.github/release-variants.json` lists what ships, one row per package; each kind is
+# one job run per row, with an SBOM and provenance attestation. Nothing is published until
+# everything is built and the full suite passed: `publish` makes a draft, attaches every asset and
+# `SHA256SUMS`, checks the list against the variants file, then publishes, which creates the tag.
+# `workflow_dispatch` builds every package as an artifact versioned `<version>-dev.<sha>` and
+# publishes nothing.
 on:
   push:
     branches: [main]
@@ -48,8 +25,7 @@ permissions:
   attestations: write    # to publish the provenance and SBOM attestations
   actions: read          # `plan` asks whether the nightly passed this commit
 
-# Never cancel a release half-way: a cancelled `publish` is a draft with half
-# its assets. A newer push waits, and is almost always "nothing to release".
+# Never cancel a release half-way: a cancelled `publish` leaves a draft with half its assets.
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -69,9 +45,8 @@ jobs:
       tarballs: ${{ steps.matrices.outputs.tarballs }}
       macos: ${{ steps.matrices.outputs.macos }}
     steps:
-      # One commit is enough: `release-plan.sh` asks origin for its tags
-      # (`git ls-remote`) rather than trusting this clone, which has none at
-      # this depth whatever `fetch-tags` says.
+      # One commit is enough: `release-plan.sh` asks origin for its tags (`git ls-remote`); this
+      # clone has none.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/python
 
@@ -84,7 +59,6 @@ jobs:
           # shellcheck disable=SC2086  # an empty $SKIP_SUITE is no argument
           scripts/release-plan.sh $SKIP_SUITE | tee -a "$GITHUB_OUTPUT"
 
-      # One JSON list per kind of package, for each build job's matrix.
       - name: Read what the release ships
         id: matrices
         if: steps.plan.outputs.build == 'true'
@@ -98,22 +72,11 @@ jobs:
             echo "macos=$(python3 scripts/release-variants.py matrix macos-app --version "$VERSION")"
           } | tee -a "$GITHUB_OUTPUT"
 
-  # **The full suite, and nothing ships without it** (2026-09-19).
-  #
-  # The pull-request gate is the sanity tier, so the integration suites that
-  # catch layers which each pass and were never joined up run on the nightly
-  # timer and here. A release is the last point at which finding one is
-  # cheaper than shipping it.
-  #
-  # The push that merged the release started `nightly.yml` on this same
-  # commit, and it runs the identical suite -- the same `--profile ci-full`
-  # through the same flake-retry script, the doctests, the storyboard passes
-  # -- so this job waits for that answer rather than giving it a second time
-  # beside it (2026-11-16; `scripts/release-await-nightly.sh` has the cases).
-  # Red stops the release. Only when there is no answer to wait for -- that
-  # run cancelled by a newer push, or never started -- do `suite` and
-  # `storyboards` below run here. Skipped, with them, when the nightly had
-  # already passed this commit before the release started (`plan` asks).
+  # The full suite, and nothing ships without it. The push that merged the release started
+  # `nightly.yml` on this commit with the identical suite, so this job waits for that answer
+  # (`scripts/release-await-nightly.sh`). Red stops the release. `suite` and `storyboards` below run
+  # only when there is no answer (cancelled or never started), and are skipped when `plan` found a
+  # green nightly.
   nightly:
     name: Full suite on main
     needs: plan
@@ -133,12 +96,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: scripts/release-await-nightly.sh >> "$GITHUB_OUTPUT"
 
-  # The suite here, when the nightly gave no answer, or for a dispatch.
-  #
-  # `--profile ci-full`: the measurement tier runs too, minus the one
-  # measurement that asserts on a stopwatch, which a shared runner cannot
-  # defend, and the storyboard passes, which `storyboards` below runs in
-  # parallel. `.config/nextest.toml` says which and why.
+  # The suite here, when the nightly gave no answer, or for a dispatch. `--profile ci-full` omits
+  # the stopwatch measurement and the storyboard passes (run by `storyboards`);
+  # `.config/nextest.toml` says why.
   suite:
     name: Full suite
     needs: [plan, nightly]
@@ -167,32 +127,23 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
-      # Through the flake-retry script, not a bare nextest run. A release does
-      # not ship on a test that only failed because this runner was busy, and
-      # it does not *fail to ship* on one either: a target that fails once is
-      # retried alone before it is allowed to block anything, and one that
-      # fails twice still blocks.
+      # Through the flake-retry script: a target that fails once is retried alone before it blocks,
+      # and one that fails twice still blocks.
       - name: Run the release gate
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- scripts/test-with-flake-retry.sh ci-full
 
-      # nextest does not run doctests and does not say so.
       - name: cargo test --doc
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: dbus-run-session -- cargo test --workspace --doc
 
-  # Focus's two storyboard passes, which `profile.ci-full` holds out so they
-  # can run beside the suite instead of stopping it for twelve minutes; the
-  # nightly's `storyboards` job says why. Same condition as `suite`, because
-  # the nightly at this commit runs these too.
-  # The storyboard passes' test binary, built once for the four shards
-  # below, as ci.yml's `frontend-build` builds the frontend suites for its
-  # six: each shard used to compile focus_suite itself, about ten minutes of
-  # every shard before it played a window (2026-11-17). It restores the
-  # `build-app` cache that job keeps warm on `main` -- the same crate's test
-  # build -- and saves none, so the two never race to write one key.
+  # Focus's two storyboard passes, held out of `profile.ci-full` so they run beside the suite; same
+  # condition as `suite`.
+  #
+  # The test binary, built once for the four shards, which restore the `build-app` cache ci.yml
+  # keeps warm on `main` and save none.
   storyboards-build:
     name: Build the storyboard passes
     needs: [plan, nightly]
@@ -220,9 +171,8 @@ jobs:
       - name: Install cargo-nextest
         run: scripts/install-nextest.sh
 
-      # The attachment text helper, which the archive carries to the shards
-      # (`profile.ci-storyboards.archive`): without it a PDF's words are
-      # found nowhere (#2178).
+      # The attachment text helper rides in the archive to the shards
+      # (`profile.ci-storyboards.archive`) (#2178).
       - name: cargo build (postio-extract-helper)
         run: cargo build -p postio-session --bin postio-extract-helper
 
@@ -247,10 +197,8 @@ jobs:
       !cancelled() && needs.plan.outputs.build == 'true' && needs.plan.outputs.suite == 'run'
       && (needs.nightly.result == 'skipped' || needs.nightly.outputs.answer == 'run-here')
     runs-on: ubuntu-26.04
-    # Each pass is one test that plays hundreds of windows, so nextest
-    # cannot split it; the tests split themselves by
-    # `POSTIO_STORYBOARD_SHARD` (postio-storyboard's `shard`). One job ran
-    # 32-52 minutes and was the release's longest wait (2026-11-16).
+    # Each pass is one test that plays hundreds of windows; the tests split themselves by
+    # `POSTIO_STORYBOARD_SHARD`.
     strategy:
       fail-fast: false
       matrix:
@@ -259,7 +207,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/python
 
-      # The system libraries and the toolchain, and nothing to build.
       - uses: ./.github/actions/rust-workspace
         with:
           build-cache: "false"
@@ -285,8 +232,6 @@ jobs:
           name: storyboard-tests
           path: ${{ runner.temp }}
 
-      # The archive and the remap pass through to the isolated retry too:
-      # `test-with-flake-retry.sh` hands its further arguments to both runs.
       - name: cargo nextest run --profile ci-storyboards
         env:
           POSTIO_TEST_PATIENCE: "3"
@@ -296,12 +241,10 @@ jobs:
           --archive-file "$RUNNER_TEMP/storyboard-tests.tar.zst"
           --workspace-remap "$GITHUB_WORKSPACE"
 
-  # One job per Flatpak row of the variants file. A build job reads the tree
-  # as it is: the version is already in it, because the release pull request
-  # put it there, and the manifests build from the checkout (`"type": "dir"`).
+  # One job per Flatpak row of the variants file; it builds the checkout as it is, since the release
+  # PR already holds the version.
   flatpak:
     name: Flatpak (${{ matrix.variant.id }})
-    # Beside the gates, not after them: `publish` is what waits for them.
     needs: plan
     if: needs.plan.outputs.build == 'true' && needs.plan.outputs.flatpaks != '[]'
     runs-on: ubuntu-26.04
@@ -318,10 +261,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/python
 
-      # A cold debug build already ran a runner out of disk once and killed
-      # lld with SIGBUS mid-link. This build is --release and additionally
-      # needs the runtime and SDK, so reclaim the preinstalled toolchains
-      # nothing here uses before starting rather than diagnosing it again.
+      # A --release Flatpak build needs the runtime and SDK on top of a build that already exhausted
+      # a runner's disk; reclaim unused toolchains first.
       - name: Reclaim disk
         run: |
           df -h /
@@ -342,12 +283,9 @@ jobs:
           flatpak remote-add --user --if-not-exists flathub \
             https://flathub.org/repo/flathub.flatpakrepo
 
-      # The runtime and SDK are read from the manifest rather than repeated
-      # here. The SDK *extensions* are not: `rust-stable` is a freedesktop
-      # extension whose branches follow freedesktop's versions, not GNOME's,
-      # so naming it with the manifest's runtime version resolves to nothing.
-      # `flatpak-builder --install-deps-from` below reads the manifest and
-      # installs what it actually requires.
+      # The runtime and SDK come from the manifest. The SDK extensions do not: `rust-stable` follows
+      # freedesktop's branches, not GNOME's, so `flatpak-builder --install-deps-from` below installs
+      # what is required.
       - name: Install the runtime the manifest asks for
         run: |
           RUNTIME=$(jq -r '.runtime + "//" + (."runtime-version"|tostring)' "$MANIFEST")
@@ -356,10 +294,8 @@ jobs:
           echo "sdk:     $SDK"
           flatpak install --user -y flathub "$RUNTIME" "$SDK"
 
-      # Flatpak builds offline, so every crate is pinned by checksum up front.
-      # Generated rather than committed: a stale copy is worse than none,
-      # since it would silently build something other than what Cargo.lock
-      # resolves.
+      # Flatpak builds offline, so crates are pinned by checksum. Generated, not committed: a stale
+      # copy would build something other than Cargo.lock.
       - name: Generate the offline cargo sources
         run: |
           pip install --quiet aiohttp PyYAML tomlkit
@@ -374,11 +310,8 @@ jobs:
           key: ${{ runner.os }}-flatpak-${{ matrix.variant.app_id }}-${{ hashFiles('Cargo.lock', matrix.variant.manifest) }}
           restore-keys: ${{ runner.os }}-flatpak-${{ matrix.variant.app_id }}-
 
-      # About says the commit beside the version (app.rs's COMMIT). The
-      # manifest builds from a copy with no .git, so the commit is handed
-      # in through its environment -- here, after the cache key above was
-      # read from the manifest as committed, so every release still
-      # restores the same cache.
+      # The manifest builds from a copy with no .git, so the commit (app.rs's COMMIT) is passed in
+      # the environment, after the cache key is read.
       - name: Stamp the commit
         run: |
           jq --arg commit "$(git rev-parse --short=9 HEAD)" \
@@ -392,13 +325,9 @@ jobs:
             --install-deps-from=flathub \
             --repo=repo build-dir "$MANIFEST"
 
-      # Each bundle carries what its manifest installs, listed per bundle:
-      # Postio, which is Focus (specs/007-postio-focus C27), has its binary,
-      # its one desktop entry and its metainfo; the terminal bundle has
-      # postio-tui and no desktop entry. Both carry postio-mcp. A manifest
-      # that stops installing one of them still builds, so look inside
-      # before publishing rather than finding out from a user. `packaging.rs`
-      # in postio-gtk's tests holds these lists to the manifests.
+      # Each bundle carries what its manifest installs; a manifest that stops installing one still
+      # builds, so look inside.
+      # `packaging.rs` in postio-gtk's tests holds these lists to the manifests.
       - name: Check the build carries the app
         run: |
           case "$APP_ID" in
@@ -427,8 +356,6 @@ jobs:
             --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
           ls -lh "$ASSET"
 
-      # What actually went into this build, from the same Cargo.lock
-      # flatpak-cargo-generator read for the offline sources.
       - name: Generate the SBOM
         uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
@@ -438,9 +365,8 @@ jobs:
           upload-artifact: false
           upload-release-assets: false
 
-      # A signed SLSA provenance statement tying the package to this
-      # repository, commit, workflow and runner, and the SBOM to the package.
-      # Verify with: gh attestation verify <asset> --repo dlapiduz/postio
+      # A signed SLSA provenance statement tying the package to this repository, commit and
+      # workflow, and the SBOM to the package.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -460,9 +386,7 @@ jobs:
             ${{ env.SBOM }}
           if-no-files-found: error
 
-  # One job per tarball row: a binary for a machine without Flatpak -- for the
-  # terminal app, usually a server reached over SSH -- with its README beside
-  # it.
+  # One job per tarball row: a binary for a machine without Flatpak, with its README.
   tarball:
     name: Tarball (${{ matrix.variant.id }})
     needs: plan
@@ -486,10 +410,8 @@ jobs:
           BIN: ${{ matrix.variant.bin }}
         run: cargo build --profile "$PROFILE" -p "$PACKAGE" --bin "$BIN"
 
-      # Binaries shipped beside it (`also` in the variants file): the
-      # terminal app's extraction helper, found beside the executable. Each
-      # builds under its own profile -- the helper under `release`, which
-      # unwinds, where `release-tui` aborts (#1824).
+      # Binaries shipped beside it (`also` in the variants file), each under its own profile: the
+      # helper under `release`, which unwinds, where `release-tui` aborts (#1824).
       - name: Build what ships beside it
         env:
           ALSO: ${{ toJSON(matrix.variant.also) }}
@@ -545,11 +467,8 @@ jobs:
             ${{ env.SBOM }}
           if-no-files-found: error
 
-  # The macOS app, zipped. Ad-hoc signed and not notarized (maintainer,
-  # 2026-10-01, revising ADR 0019 Q8): Gatekeeper refuses it on a double
-  # click, and a person opens it once with right-click -> Open. A Developer ID
-  # and notarization would remove that step; neither exists yet. Built on
-  # macos-latest, so Apple Silicon only.
+  # The macOS app, zipped. Ad-hoc signed and not notarized (ADR 0019 Q8): Gatekeeper refuses a
+  # double click, so open it once with right-click -> Open. Apple Silicon only.
   macos:
     name: macOS (${{ matrix.variant.id }})
     needs: plan
@@ -567,15 +486,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/python
 
-      # The pin decides; see ci.yml's `fmt` job.
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
       - name: Install the linker and cc shims
         run: scripts/install-shims.sh
 
-      # A release build of `postio-ffi`, so not CI's debug `macos-ffi`
-      # cache. Written from `main`, which is where a release runs.
+      # A release build of `postio-ffi`, so not CI's debug `macos-ffi` cache.
       - name: Restore the build cache
         uses: ./.github/actions/build-cache
         with:
@@ -587,8 +504,7 @@ jobs:
       - name: Assemble the app
         run: scripts/macos-bundle.sh --release
 
-      # `ditto`, not `zip`: it keeps the bundle's extended attributes and the
-      # ad-hoc signature intact, which `zip -r` does not.
+      # `ditto`, not `zip`: it keeps the extended attributes and the ad-hoc signature.
       - name: Zip
         run: |
           ditto -c -k --keepParent "$APP" "$ASSET"
@@ -622,12 +538,8 @@ jobs:
             ${{ env.SBOM }}
           if-no-files-found: error
 
-      # The workspace's own crates rebuild on every release, because the
-      # release moves their version; what is worth keeping is the ~470
-      # dependencies. Saved whole it was 2.5 GB, a quarter of the
-      # repository's cache quota, so it was the first thing evicted and the
-      # next release built cold (0.6.1: an hour). ci.yml's `test` job says
-      # the same of its own cache.
+      # Keep the ~470 dependencies, drop the workspace's crates, which rebuild each release: saved
+      # whole it was 2.5 GB and evicted first.
       - name: Drop workspace artifacts before caching
         if: ${{ !cancelled() }}
         run: scripts/ci-drop-workspace-artifacts.sh
@@ -636,19 +548,11 @@ jobs:
         if: ${{ !cancelled() }}
         uses: ./.github/actions/build-cache-save
 
-  # Everything built and the suite green, so: one draft, every asset, the
-  # checksums, and a check against the variants file that nothing is missing
-  # -- then publish, which creates the tag at the commit that was built.
-  # Anything short of that leaves a draft and no tag, so re-running the
-  # failed jobs finishes it.
-  #
-  # The gates are needed here and not by the packages (2026-11-16): the
-  # packages used to start only once the storyboards had finished, so a
-  # release took the gates' time plus the slowest build's -- 0.6.1's was
-  # 1h54m, of which the macOS build alone was an hour. Built beside the gates
-  # they cost the longer of the two, and a red gate still ships nothing. A
-  # gate that is skipped passed elsewhere: `plan` found a green nightly, or
-  # `nightly` did.
+  # One draft, every asset, the checksums, and a check against the variants file; then publish
+  # creates the tag at the built commit.
+  # Anything short of that leaves a draft and no tag, so re-running the failed jobs finishes it.
+  # The gates are needed here, not by the packages, so packages build beside them. A skipped gate
+  # passed elsewhere: `plan` or `nightly` found it green.
   publish:
     name: Publish
     needs: [plan, nightly, suite, storyboards-build, storyboards, flatpak, tarball, macos]
@@ -668,8 +572,7 @@ jobs:
       TAG: ${{ needs.plan.outputs.tag }}
       PRERELEASE: ${{ needs.plan.outputs.prerelease }}
     steps:
-      # Full history: drafting notes, when the release PR somehow left none,
-      # reads the commits since the last tag.
+      # Full history: drafting notes reads the commits since the last tag.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
@@ -680,8 +583,8 @@ jobs:
           path: assets
           merge-multiple: true
 
-      # Every artifact of the run lands here, and the storyboard shards' test
-      # binaries are one when the suite ran in this workflow: not a package.
+      # Every artifact of the run lands here, including the storyboard shards' test binaries, which
+      # are not packages.
       - name: Check every package is here
         run: |
           rm -f assets/storyboard-tests.tar.zst
@@ -702,8 +605,6 @@ jobs:
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 
-      # docs/releases/<version>.md is the release PR's; drafted from commit
-      # subjects only if it is somehow absent.
       - name: Notes
         run: |
           NOTES="docs/releases/${VERSION}.md"
@@ -716,16 +617,10 @@ jobs:
           cp "$NOTES" release-notes.md
           cat release-notes.md
 
-      # A 0.x is a pre-release on the release page too: it stays off the
-      # "Latest" badge, which is what the version number already says. The
-      # same rule marks the AppStream entry `type="development"`.
-      #
-      # A re-run finds its own draft and fills it again. A release that is
-      # already published is refused here even though `plan` should never
-      # have got this far for one: on 2026-10-01 a plan that could not see
-      # the tags set out to re-release v0.4.2, and `--clobber` below would
-      # have replaced its assets. The step that writes is the one that must
-      # not trust its inputs.
+      # A 0.x is a pre-release on the release page too, and marks the AppStream entry
+      # `type="development"`. A re-run fills its own draft again. An already-published release is
+      # refused even though `plan` should never get here (it once could not see the tags): the step
+      # that writes, with `--clobber`, must not trust its inputs.
       - name: Draft, attach, publish
         run: |
           flags=()
@@ -743,14 +638,11 @@ jobs:
           gh release edit "$TAG" --draft=false
           echo "published $(gh release view "$TAG" --json url --jq .url)"
 
-  # SC-004 (docs/archive/specs/005-tui-frontend): the terminal binaries are under half the
-  # desktop ones, and the terminal Flatpak with its runtime under two-thirds. Beside `publish`, not in front of it: a size is not a reason
-  # to withhold a working release, it is a reason the next one has to shrink,
-  # and a red job on the run says so.
-  #
-  # The binaries comparison follows each executable's shared libraries with
-  # `ldd`, so it needs the desktop binary built here against host GTK -- the
-  # one inside the Flatpak links against the runtime's.
+  # The terminal binaries are under half the desktop ones, and the terminal Flatpak with its runtime
+  # under two-thirds (docs/archive/specs/005-tui-frontend SC-004).
+  # Beside `publish`: a size is a reason the next release must shrink, not to withhold this one.
+  # The binaries comparison follows shared libraries with `ldd`, so it needs the desktop binary
+  # built here against host GTK.
   package-sizes:
     name: Terminal packages are small enough (SC-004)
     needs: [plan, flatpak, tarball]
@@ -774,9 +666,6 @@ jobs:
           cargo build --release -p postio-gtk --bin postio \
             -p postio-session --bin postio-extract-helper
           tar --zstd -xf "assets/postio-tui-${VERSION}-linux-x86_64.tar.zst"
-          # Each side counts the extraction helper it ships beside the app
-          # (#1824): the tarball's, and the desktop one's, both built under
-          # `release`.
           scripts/measure-package-size.sh binaries \
             "postio-tui-${VERSION}-linux-x86_64/postio-tui" \
             "postio-tui-${VERSION}-linux-x86_64/postio-extract-helper" \

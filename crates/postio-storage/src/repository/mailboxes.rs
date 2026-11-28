@@ -1,5 +1,3 @@
-//! Mailboxes: the folder tree, its special-use roles, and the sidebar's counts.
-
 use chrono::{DateTime, Utc};
 use postio_model::{
     AccountId, Generation, Mailbox, MailboxCounts, MailboxId, MailboxRole, ModSeq, RoleKind,
@@ -13,13 +11,8 @@ use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
-/// Reads and writes [`Mailbox`] rows.
-///
-/// A mailbox's UID state lives in `sync_state` rather than on the row the
-/// sidebar reads, so the sync engine can update it in the same transaction as
-/// the message writes it describes without touching what the UI is rendering.
-/// The repository joins the two back together, because a [`Mailbox`] is one
-/// thing to everybody above this layer.
+/// UID state lives in `sync_state`, so the sync engine updates it in the same transaction as its
+/// message writes without touching what the UI renders; the repository joins them back.
 #[derive(Debug)]
 pub struct MailboxRepository<'a> {
     connection: &'a Connection,
@@ -36,19 +29,11 @@ FROM mailboxes m LEFT JOIN sync_state s ON s.mailbox_id = m.id";
 
 use super::VISIBLE;
 
-/// What counts as snoozed for the sidebar's own badge: the inverse of the
-/// snooze half of [`VISIBLE`], still gated on `deleted_locally` the same way.
 const SNOOZED: &str = "deleted_locally = 0 AND snoozed_until IS NOT NULL AND snoozed_until > (strftime('%s','now') * 1000)";
 
-/// Refuses a role that names no folder (spec 003, FR-041).
-///
-/// Both writing paths go through here rather than leaning on the schema's
-/// `CHECK`, for two reasons. A constraint violation says "constraint failed"
-/// and not which role was wrong, so a caller cannot act on it. And the `CHECK`
-/// enumerates spellings, so it silently stops enforcing anything the day a
-/// role is added to the enum and not to the SQL —
-/// `scripts/checks/check-view-roles-are-not-storable.py` is what notices, and
-/// this is what it is keeping honest.
+/// Not left to the schema's `CHECK`: a violation does not name the role, and the `CHECK` enumerates
+/// spellings so it silently stops enforcing when a role is added to the enum only
+/// (`scripts/checks/check-view-roles-are-not-storable.py`).
 fn refuse_a_view(role: MailboxRole) -> Result<()> {
     match role.kind() {
         RoleKind::Folder => Ok(()),
@@ -61,12 +46,10 @@ fn refuse_a_view(role: MailboxRole) -> Result<()> {
 pub use postio_model::listing::DraftCounts;
 
 impl<'a> MailboxRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Inserts a mailbox and its sync-state row, assigning its id.
     pub async fn create(&self, mailbox: &mut Mailbox) -> Result<MailboxId> {
         refuse_a_view(mailbox.role)?;
         let account_id = require_persisted(mailbox.account_id.get(), "account")?;
@@ -99,9 +82,8 @@ impl<'a> MailboxRepository<'a> {
             let id = MailboxId::new(transaction.last_insert_rowid());
             mailbox.id = id;
 
-            // Always written, even when every value is NULL: the sync engine can
-            // then UPDATE its state without first having to wonder whether the row
-            // exists, and "never synced" stays a readable, explicit state.
+            // Always written, even all NULL, so the engine can UPDATE without checking the row
+            // exists.
             write_sync_state(&transaction, id, account_id, mailbox).await?;
 
             Ok(id)
@@ -109,7 +91,6 @@ impl<'a> MailboxRepository<'a> {
         .await
     }
 
-    /// Writes a mailbox and its sync state back.
     pub async fn update(&self, mailbox: &Mailbox) -> Result<()> {
         refuse_a_view(mailbox.role)?;
         let id = require_persisted(mailbox.id.get(), "mailbox")?;
@@ -156,21 +137,12 @@ impl<'a> MailboxRepository<'a> {
         .await
     }
 
-    /// One mailbox.
     pub async fn get(&self, id: MailboxId) -> Result<Option<Mailbox>> {
         self.one("WHERE m.id = ?1", [id.get()]).await
     }
 
-    /// Whether `id` is excluded from the background backfill lane (ADR 0016,
-    /// #350).
-    ///
-    /// A single-column read rather than [`MailboxRepository::get`] plus a
-    /// field access: `postio-sync::backfill::seed` calls this on every
-    /// top-up pass for every mailbox and does not otherwise need the row.
-    /// A mailbox that no longer exists answers `false` rather than an error
-    /// — the caller's own query over `messages` already answers "nothing to
-    /// seed" for that case, and failing open toward "still backfills" is the
-    /// safer direction for a mechanism nobody asked to turn off.
+    /// A single-column read: `postio-sync::backfill::seed` calls this every top-up pass. A missing
+    /// mailbox answers `false`, failing open toward "still backfills".
     pub async fn backfill_excluded(&self, id: MailboxId) -> Result<bool> {
         Ok(sql::first(
             self.connection,
@@ -182,15 +154,8 @@ impl<'a> MailboxRepository<'a> {
         .unwrap_or(false))
     }
 
-    /// Flips whether `id` participates in background backfill — the
-    /// settings-surface counterpart of [`super::AccountRepository`]'s
-    /// [`set_enabled`](super::AccountRepository::set_enabled), for the same
-    /// reason: the caller here is a folder's own settings toggle, not code
-    /// holding a full, freshly-loaded [`Mailbox`].
-    ///
-    /// Does not touch anything already pulled, and does not affect an
-    /// interactive, on-open fetch — only what [`MailboxRepository::backfill_excluded`]
-    /// answers for the background lane's own seeding pass.
+    /// A folder's own settings toggle. Does not touch anything already pulled or an interactive
+    /// on-open fetch.
     pub async fn set_backfill_excluded(&self, id: MailboxId, excluded: bool) -> Result<bool> {
         let changed = sql::execute(
             self.connection,
@@ -201,7 +166,6 @@ impl<'a> MailboxRepository<'a> {
         Ok(changed > 0)
     }
 
-    /// The mailbox at `path` within an account.
     pub async fn by_path(&self, account_id: AccountId, path: &str) -> Result<Option<Mailbox>> {
         sql::first(
             self.connection,
@@ -214,16 +178,9 @@ impl<'a> MailboxRepository<'a> {
         .await
     }
 
-    /// The account's mailbox for a special-use role.
-    ///
-    /// Routing is by role and never by name: iCloud calls its sent folder
-    /// `Sent Messages` and advertises no `SPECIAL-USE` attribute for it. When a
-    /// server has somehow reported two, the first by path wins, so the answer
-    /// is at least stable.
-    ///
-    /// Never a retired row. A folder the server no longer lists is one an
-    /// APPEND or a MOVE will be refused for, so a role that only a retired row
-    /// still wears is a role this account does not have (#943).
+    /// By role, never by name: iCloud's `Sent Messages` has no `SPECIAL-USE`. If a server reports
+    /// two, the first by path wins. Never a retired row: a folder the server no longer lists
+    /// refuses APPEND and MOVE (#943).
     pub async fn by_role(
         &self,
         account_id: AccountId,
@@ -238,7 +195,6 @@ impl<'a> MailboxRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::by_role`] runs: a seek on the account and role.
     pub fn explain_by_role() -> String {
         format!(
             "SELECT {MAILBOX_COLUMNS} {FROM_MAILBOXES}
@@ -247,10 +203,8 @@ impl<'a> MailboxRepository<'a> {
         )
     }
 
-    /// Every mailbox in an account, ordered by path.
-    ///
-    /// Path order is hierarchy order for the sidebar: a folder sorts
-    /// immediately before its children.
+    /// Path order is hierarchy order for the sidebar: a folder sorts immediately before its
+    /// children.
     pub async fn list_for_account(&self, account_id: AccountId) -> Result<Vec<Mailbox>> {
         sql::all(
             self.connection,
@@ -263,7 +217,6 @@ impl<'a> MailboxRepository<'a> {
         .await
     }
 
-    /// Deletes a mailbox and its messages, returning whether there was one.
     pub async fn delete(&self, id: MailboxId) -> Result<bool> {
         let deleted = sql::execute(
             self.connection,
@@ -274,7 +227,6 @@ impl<'a> MailboxRepository<'a> {
         Ok(deleted > 0)
     }
 
-    /// The cached counts on a mailbox row.
     pub async fn counts(&self, id: MailboxId) -> Result<Option<MailboxCounts>> {
         let mut statement = sql::statement(
             self.connection,
@@ -295,14 +247,8 @@ impl<'a> MailboxRepository<'a> {
         .await
     }
 
-    /// Overwrites a mailbox's cached counts.
-    ///
-    /// For a server `STATUS` response, which reports on messages that have not
-    /// been fetched yet and therefore have no local rows to count.
-    ///
-    /// `counts.snoozed` is never a server's to report — `STATUS` has no
-    /// concept of it — so the only real caller is [`Self::recount`], whose
-    /// own live scan computes a genuine value.
+    /// For a server `STATUS` response, which reports on messages not fetched yet. `counts.snoozed`
+    /// is never a server's to report, so the only real caller is [`Self::recount`].
     pub async fn set_counts(&self, id: MailboxId, counts: MailboxCounts) -> Result<()> {
         let changed = sql::execute(
             self.connection,
@@ -327,23 +273,11 @@ impl<'a> MailboxRepository<'a> {
         Ok(())
     }
 
-    /// Record that a sync pass over this mailbox **completed**, at `at`.
+    /// Completion, not attempt: a failed pass has not synced this folder, and a moving timestamp
+    /// would turn "when did this last work" into "when did this last try".
     ///
-    /// A column that nothing wrote until #1281. The schema has had it since
-    /// migration 0001, both frontends' sidebars read it, and every store in
-    /// the world held `NULL` — so a Postio with five thousand messages in it
-    /// told its user, truthfully as far as the code went, that it had never
-    /// synced.
-    ///
-    /// A narrow `UPDATE` rather than [`update`](Self::update): the row's
-    /// counts are maintained by migration 0003's triggers, and writing the
-    /// whole row back from a `Mailbox` read minutes ago would overwrite them
-    /// with whatever was true then.
-    ///
-    /// **Completion, not attempt.** A pass that failed halfway has not
-    /// synced this folder, and a timestamp that moved anyway would turn
-    /// "when did this last work" into "when did this last try", which is the
-    /// question nobody is asking.
+    /// A narrow `UPDATE`, not [`update`](Self::update): counts are maintained by migration 0003's
+    /// triggers and a stale whole-row write would overwrite them (#1281).
     pub async fn record_sync(&self, id: MailboxId, at: DateTime<Utc>) -> Result<()> {
         let changed = sql::execute(
             self.connection,
@@ -360,21 +294,11 @@ impl<'a> MailboxRepository<'a> {
         Ok(())
     }
 
-    /// Recomputes a mailbox's counts from its messages and caches them.
-    ///
-    /// **A repair tool, not routine maintenance.** Migration 0003's triggers
-    /// keep `total_count`, `unread_count` and `flagged_count` correct on
-    /// every write to `messages` — that is what made `recount` and
-    /// [`recount_account`](Self::recount_account) dead code with no
-    /// production caller in the first place (postio-qhz.7), and calling
-    /// either after an ordinary write only redoes what the trigger already
-    /// did. What is left for these to be good for: repairing a store the
-    /// triggers were not there for (the migration's own backfill), and
-    /// standing as the independent, scan-based ground truth a test can check
-    /// the trigger-maintained columns against — see
-    /// `a_seeded_store_still_agrees_with_a_recount` in
-    /// `tests/mailbox_counts.rs`, which is what would notice if the two ever
-    /// drifted apart. postio-qhz.8.
+    /// **A repair tool, not routine maintenance.** Migration 0003's triggers keep `total_count`,
+    /// `unread_count` and `flagged_count` correct on every write, so calling this after an ordinary
+    /// write redoes the trigger. Good for repairing a store the triggers were not there for, and as
+    /// the scan-based ground truth `a_seeded_store_still_agrees_with_a_recount` in
+    /// `tests/mailbox_counts.rs` checks them against.
     pub async fn recount(&self, id: MailboxId) -> Result<MailboxCounts> {
         let now_millis = "(strftime('%s','now') * 1000)";
         let not_snoozed = format!("(snoozed_until IS NULL OR snoozed_until <= {now_millis})");
@@ -405,12 +329,7 @@ impl<'a> MailboxRepository<'a> {
         Ok(counts)
     }
 
-    /// Recomputes every mailbox in an account, in one pass over its messages.
-    ///
-    /// [`recount`](Self::recount)'s repair-path doc applies here too: the
-    /// triggers maintain these columns on every write, so this is for
-    /// repairing an account whose counts have drifted, not something a
-    /// normal write path should call.
+    /// A repair path like [`recount`](Self::recount): not for normal write paths.
     pub async fn recount_account(&self, account_id: AccountId) -> Result<()> {
         sql::execute(self.connection,
             &format!(
@@ -436,23 +355,12 @@ impl<'a> MailboxRepository<'a> {
         Ok(())
     }
 
-    /// The account's totals, summed from its mailboxes' cached counts.
-    /// What the sidebar draws beside Drafts and the Outbox.
+    /// Three numbers from one read that no cached column can hold: the Outbox is not a mailbox, and
+    /// `mailboxes.total_count` counts in-flight Drafts rows, so the Drafts badge asks separately.
     ///
-    /// Three numbers from one read, none of which a cached column can hold.
-    /// The Outbox is not a mailbox, so it has no row to cache anything on.
-    /// And `mailboxes.total_count` still counts every message row filed in
-    /// Drafts, in-flight ones included — deliberately, because that is what it
-    /// means for every other folder — so the Drafts badge has to ask
-    /// separately for the number a person will actually see there.
-    ///
-    /// Bounded, and asserted as such: `idx_messages_send_state` covers
-    /// `(account_id, send_state, deleted_locally)`, so the planner ranges over
-    /// the account's drafts and reads no message row. It was partial on
-    /// `send_state IS NOT NULL` once; this planner will not read a partial
-    /// index, and for a while this walked every row of the account (#1614). The sidebar refreshes on every arrival, so a read that grew
-    /// with the mailbox would be paid on the surface redrawn most often
-    /// (Principle V; spec 003 SC-008).
+    /// Bounded: `idx_messages_send_state` covers `(account_id, send_state, deleted_locally)` so the
+    /// planner reads no message row. It must not be partial: this planner will not read a partial
+    /// index, and a walk of every row was paid on every arrival (#1614).
     pub async fn draft_counts(&self, account_id: AccountId) -> Result<DraftCounts> {
         sql::one(
             self.connection,
@@ -469,8 +377,6 @@ impl<'a> MailboxRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::draft_counts`] reads, so a test can ask the planner
-    /// about it.
     pub fn explain_draft_counts(&self) -> &'static str {
         "SELECT
                  coalesce(sum(send_state IN ('queued', 'sending')), 0),
@@ -481,10 +387,7 @@ impl<'a> MailboxRepository<'a> {
                 AND deleted_locally = 0"
     }
 
-    /// Every folder's counts in one account, summed.
-    ///
-    /// The unified strip's numbers, read from the cached columns rather than
-    /// counted -- the same rule the per-folder counts follow.
+    /// Read from the cached columns rather than counted.
     pub async fn account_counts(&self, account_id: AccountId) -> Result<MailboxCounts> {
         sql::one(
             self.connection,

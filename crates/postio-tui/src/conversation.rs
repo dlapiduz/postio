@@ -1,58 +1,81 @@
-//! What the open message holds: the message, or the messages of its
-//! conversation, of which one is shown at a time.
-//!
-//! A conversation opens on its newest message, as the desktop's does, and
-//! `p` and `n` step through the rest; each body is read when it is first
-//! shown.
+//! The one message on screen. Its thread is the controller's (ADR 0045): the terminal holds only
+//! what drawing this message needs, read when it is shown.
 
 use crate::reader::{Block, Rendered};
 use chrono::{DateTime, Utc};
 use postio_model::MessageId;
-use postio_model::listing::MessageSummary;
 use postio_ui::terminal::SafeText;
 
-/// One message of what is being read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Member {
-    /// Which message.
     pub id: MessageId,
-    /// Who sent it.
     pub from: SafeText,
-    /// Their address, for the remote-image allow list.
+    /// For the remote-image allow list.
     pub address: Option<String>,
-    /// When it arrived.
     pub when: DateTime<Utc>,
-    /// Its body, once it has arrived.
     pub body: Option<Rendered>,
-    /// What the sanitiser held back from it.
     pub held_back: postio_ui::reader::document::HeldBack,
-    /// Its body as it arrived, kept to draw it again the other way.
+    /// Kept to draw it again the other way (`view_original`).
     pub source: Option<postio_model::MessageBody>,
-    /// Whether the person asked for the sender's own markup (`view_original`).
     pub original: bool,
-    /// Whether it is drawn in reader view.
     pub reader_view: bool,
-    /// Whether its remote images are allowed: this once, or by sender. The
-    /// terminal draws no image either way; this is what the notice says.
+    /// The terminal draws no image either way; this is what the notice says.
     pub images_allowed: bool,
-    /// Whether its body has been asked for.
-    pub asked: bool,
-    /// Whether it has attachments, as its row says; its parts are asked for
-    /// only then.
-    pub has_attachments: bool,
-    /// Its parts, once asked for.
     pub parts: Vec<postio_model::Attachment>,
-    /// Whom it was written to, once its body has been read.
     pub to: Vec<SafeText>,
-    /// Who was copied.
     pub cc: Vec<SafeText>,
-    /// Why the sender may not be who they say, once its body has been read
-    /// (#1928). Ordinary mail has none.
+    /// Ordinary mail has none (#1928).
     pub warning: Option<SafeText>,
 }
 
 impl Member {
-    /// The parts a person would call attachments: named, or not inline.
+    pub fn new(id: MessageId) -> Member {
+        Member {
+            id,
+            from: SafeText::default(),
+            address: None,
+            when: DateTime::default(),
+            body: None,
+            held_back: Default::default(),
+            source: None,
+            original: false,
+            reader_view: false,
+            images_allowed: false,
+            parts: Vec::new(),
+            to: Vec::new(),
+            cc: Vec::new(),
+            warning: None,
+        }
+    }
+
+    pub fn from_row(row: &crate::row::Row) -> Member {
+        Member {
+            from: row.from.clone(),
+            address: row.address.clone(),
+            when: row.when,
+            ..Member::new(row.id)
+        }
+    }
+
+    /// The header as the store has it; every field of it came from a sender.
+    pub fn address(&mut self, row: &postio_model::Message, warning: Option<&str>) {
+        let safe = |people: &[postio_model::EmailAddress]| -> Vec<_> {
+            people
+                .iter()
+                .map(|address| SafeText::new(address.display()))
+                .collect()
+        };
+        if let Some(from) = row.from.first() {
+            self.from = SafeText::new(from.display());
+            self.address = Some(from.address.clone());
+        }
+        self.when = row.date.unwrap_or(row.received_at);
+        self.to = safe(&row.to);
+        self.cc = safe(&row.cc);
+        self.parts = row.attachments.clone();
+        self.warning = warning.map(SafeText::new);
+    }
+
     pub fn attachments(&self) -> Vec<&postio_model::Attachment> {
         self.parts
             .iter()
@@ -61,174 +84,71 @@ impl Member {
             })
             .collect()
     }
-}
 
-impl Member {
-    /// The one message a list row stands for, its body asked for.
-    pub fn from_row(row: &crate::row::Row) -> Member {
-        Member {
-            id: row.id,
-            from: row.from.clone(),
-            address: row.address.clone(),
-            when: row.when,
-            body: None,
-            held_back: Default::default(),
-            source: None,
-            original: false,
-            reader_view: false,
-            images_allowed: false,
-            asked: true,
-            has_attachments: row.attachment,
-            parts: Vec::new(),
-            to: Vec::new(),
-            cc: Vec::new(),
-            warning: None,
-        }
-    }
-
-    /// A member from a list row.
-    pub fn from_summary(summary: &MessageSummary) -> Member {
-        Member {
-            id: summary.id,
-            from: SafeText::new(summary.from.as_ref().map_or("", |from| from.display())),
-            address: summary.from.as_ref().map(|from| from.address.clone()),
-            when: summary.received_at,
-            body: None,
-            held_back: Default::default(),
-            source: None,
-            original: false,
-            reader_view: false,
-            images_allowed: false,
-            asked: false,
-            has_attachments: summary.has_attachments,
-            parts: Vec::new(),
-            to: Vec::new(),
-            cc: Vec::new(),
-            warning: None,
-        }
-    }
-}
-
-/// A message opened for itself: Filtered's row, or what the command bar
-/// found. It is not the list's cursor row, so its verbs aim at it and the
-/// list's cursor and marks are left alone.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Own {
-    /// What the message is: the header's subject, labels and read state.
-    pub row: crate::row::Row,
-    /// Where the keyboard goes when the message closes.
-    pub back: crate::app::Focus,
-}
-
-/// What the reader shows.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Reading {
-    /// The list row this was opened from.
-    pub row: MessageId,
-    /// Its messages, oldest first; one for a message on its own.
-    pub members: Vec<Member>,
-    /// The member the keyboard is on.
-    pub current: usize,
-    /// Set when it was opened for the message itself rather than for the
-    /// cursor's row.
-    pub own: Option<Own>,
-}
-
-/// What a line of a reading stands for, for a click on it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum At {
-    /// Nothing to act on.
-    Nothing,
-    /// A fold marker.
-    Fold {
-        /// Whose.
-        member: usize,
-        /// Which block.
-        block: usize,
-    },
-    /// A link, by its destination.
-    Link(String),
-    /// An attachment's line.
-    Part {
-        /// Whose.
-        member: usize,
-        /// Which of its attachments.
-        part: usize,
-    },
-}
-
-impl Reading {
-    /// Fold or unfold one fold of one member.
-    pub fn toggle_fold(&mut self, member: usize, block: usize) {
-        if let Some(body) = self
-            .members
-            .get_mut(member)
-            .and_then(|member| member.body.as_mut())
-        {
+    pub fn toggle_fold(&mut self, block: usize) {
+        if let Some(body) = self.body.as_mut() {
             body.toggle_fold(block);
         }
     }
 
-    /// Every fold in every member: expand them all, or fold them all again.
     pub fn toggle_folds(&mut self) {
-        let any_folded = self
-            .members
+        let Some(body) = self.body.as_mut() else {
+            return;
+        };
+        let any_folded = body
+            .blocks
             .iter()
-            .filter_map(|member| member.body.as_ref())
-            .any(|body| {
-                body.blocks
-                    .iter()
-                    .any(|block| matches!(block, Block::Fold { folded: true, .. }))
-            });
-        for body in self
-            .members
-            .iter_mut()
-            .filter_map(|member| member.body.as_mut())
-        {
-            for block in &mut body.blocks {
-                if let Block::Fold { folded, .. } = block {
-                    *folded = !any_folded;
-                }
+            .any(|block| matches!(block, Block::Fold { folded: true, .. }));
+        for block in &mut body.blocks {
+            if let Block::Fold { folded, .. } = block {
+                *folded = !any_folded;
             }
         }
     }
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
-    use chrono::TimeZone;
+/// Filtered's row, or what the command bar found: not the list's cursor row, so its verbs aim at
+/// it and the list's cursor and marks are left alone.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Own {
+    pub row: crate::row::Row,
+    pub back: crate::app::Focus,
+}
 
-    use super::*;
+#[derive(Debug, Clone, PartialEq)]
+pub struct Reading {
+    /// The list row it was opened from, which a step through its thread keeps.
+    pub row: MessageId,
+    pub shown: Member,
+    pub own: Option<Own>,
+}
 
-    fn member(id: i64, from: &str, body: Option<&str>) -> Member {
-        Member {
-            id: MessageId::new(id),
-            from: SafeText::new(from),
-            address: None,
-            when: Utc.with_ymd_and_hms(2026, 9, 20, 9, 0, 0).unwrap(),
-            body: body.map(crate::reader::from_text),
-            held_back: Default::default(),
-            source: None,
-            original: false,
-            reader_view: false,
-            images_allowed: false,
-            asked: false,
-            has_attachments: false,
-            parts: Vec::new(),
-            to: Vec::new(),
-            cc: Vec::new(),
-            warning: None,
+impl Reading {
+    pub fn of(row: &crate::row::Row) -> Reading {
+        Reading {
+            row: row.id,
+            shown: Member::from_row(row),
+            own: None,
         }
     }
+}
 
-    /// A message whose body is `body`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum At {
+    Nothing,
+    Fold(usize),
+    Link(String),
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+
     pub(crate) fn member_saying(id: i64, body: &str) -> Member {
-        member(id, "Ada", Some(body))
-    }
-
-    /// A message whose body is `lines` lines long.
-    pub(crate) fn member_with_lines(id: i64, lines: usize) -> Member {
-        let body: Vec<String> = (0..lines).map(|line| format!("line {line}")).collect();
-        member(id, "Ada", Some(&body.join("\n")))
+        Member {
+            from: SafeText::new("Ada"),
+            body: Some(crate::reader::from_text(body)),
+            ..Member::new(MessageId::new(id))
+        }
     }
 }

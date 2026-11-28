@@ -1,13 +1,6 @@
-//! What Focus says about its own state: the banner under the header strip,
-//! the sync label, and the page an empty list shows (research R2, slice 10;
-//! screens 16 to 19).
-//!
-//! Moved from `postio-gtk`'s window: `hear_sync`, `note_account`,
-//! `show_state` and `show_empty_or_list`. The words are
-//! `postio_ui::focus_state`'s; the controller keeps where every account
-//! stands (`postio_ui::status::Trackers`), who each account is, when mail
-//! last synced, and what it last said, so a frontend draws a banner, a label
-//! and an empty page only when one of them changes.
+//! What Focus says about its own state: the banner under the header strip, the sync label, and
+//! the page an empty list shows. The controller keeps where every account stands, who each is,
+//! and when mail last synced, so a frontend draws each only when it changes.
 
 use std::collections::BTreeSet;
 
@@ -23,95 +16,57 @@ use postio_ui::status::Trackers;
 use crate::feed::Step;
 use crate::{FocusController, Intent, Request};
 
-/// The banner under the header strip, in words, drawable as it is.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BannerView {
-    /// The heading, in bold: "You're offline".
     pub heading: String,
-    /// The sentence after it.
     pub sentence: String,
-    /// Its button, when it has one.
     pub button: Option<BannerButton>,
-    /// How far a first sync has come: messages fetched, and expected.
     pub progress: Option<(u32, u32)>,
-    /// Drawn in the error colour: a refused password, an account that
-    /// cannot sync.
     pub error: bool,
-    /// The account a refused password is for: whose credential the
-    /// button's sheet asks for.
     pub account: Option<AccountId>,
 }
 
-/// A banner's button.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BannerButton {
-    /// "Update password…", "Retry now".
     pub label: String,
-    /// What a click runs: `UpdateCredential`, or `Refresh`.
     pub command: CommandId,
-    /// The command's key, as the keymap in force spells it.
     pub key: Option<String>,
 }
 
-/// The answer to [`Request::Accounts`]: who each enabled account is, and
-/// when mail last synced before this run.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AccountsRead {
-    /// Each enabled account: where it signs in, as whom, and its name.
     pub facts: Vec<AccountFacts>,
-    /// The newest of every enabled account's folders' last completed sync.
     pub last_synced: Option<DateTime<Utc>>,
 }
 
-/// What the controller keeps of the app's state.
 #[derive(Debug, Default)]
 pub(crate) struct States {
-    /// Where every account stands, from the sync's own events.
     trackers: Trackers,
-    /// The accounts heard about, in the order they were.
     tracked: Vec<AccountId>,
-    /// Who each enabled account is.
     facts: Vec<AccountFacts>,
-    /// The accounts already asked about.
     asked: BTreeSet<AccountId>,
-    /// Whether the accounts have been asked about at all, and answered:
-    /// until they have, when mail last synced is not known.
+    /// Until they are answered, when mail last synced is not known.
     read: Reading,
-    /// When mail last synced.
     last_synced: Option<DateTime<Utc>>,
-    /// `[focus]`: the digests the empty inbox names, and whether Focus
-    /// files mail away.
     pub(crate) config: FocusConfig,
-    /// What the header strip names: the folder an empty page is about.
     place: String,
-    /// The banner last drawn, once one has been.
     banner: Option<Option<BannerView>>,
-    /// The sync label last drawn.
     label: Option<SyncLabel>,
-    /// The empty page drawn in the list's place, while one is: the list is
-    /// what a frontend draws until told otherwise.
     empty: Option<EmptyInbox>,
 }
 
-/// How far the read of who the accounts are, and when mail last synced,
-/// has come.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum Reading {
-    /// Nothing has asked.
     #[default]
     Unasked,
-    /// Asked, and not answered yet.
     Asked,
-    /// Answered, or failed: what is known is all there is.
     Read,
 }
 
 impl FocusController {
-    /// What sync said about an account: the banner and the label follow.
-    /// The first word about an account is news even when it changes
-    /// nothing in its tracker -- a tracker starts at Offline, so an account
-    /// whose first report is Offline would otherwise never be drawn as such
-    /// -- and it asks who the account is, once.
+    /// The first word about an account is news even when it changes nothing in its tracker: a
+    /// tracker starts at Offline, so an account whose first report is Offline would otherwise never
+    /// be drawn as such.
     pub(crate) fn hear_sync(&mut self, event: &Event) -> Vec<Step> {
         let mut steps = Vec::new();
         let first = match event {
@@ -135,9 +90,8 @@ impl FocusController {
         if !(first || changed) {
             return steps;
         }
-        // A folder's mark moved: the popover lists it with or without one.
-        // A folder the places have no name for yet is read for, so the
-        // label can name it when they land.
+        // A folder the places have no name for yet is read for, so the label can name it when they
+        // land.
         if let Event::MailboxSyncChanged {
             mailbox, failure, ..
         } = event
@@ -156,12 +110,10 @@ impl FocusController {
         steps
     }
 
-    /// Why `mailbox`'s last sync pass failed, while it is failing.
     pub(crate) fn failure(&self, mailbox: postio_model::MailboxId) -> Option<&str> {
         self.states.trackers.failure(mailbox)
     }
 
-    /// Follow `account`'s sync from here on; whether it is new.
     fn note_account(&mut self, account: AccountId) -> bool {
         let tracked = &mut self.states.tracked;
         let new = !tracked.contains(&account);
@@ -171,16 +123,12 @@ impl FocusController {
         new
     }
 
-    /// Who the accounts are, and when mail last synced, as read: a banner
-    /// waiting on a name can say it now.
     pub(crate) fn accounts_read(&mut self, read: Result<AccountsRead, String>) -> Vec<Step> {
         self.states.read = Reading::Read;
         let read = match read {
             Ok(read) => read,
             Err(error) => {
                 tracing::debug!(%error, "Focus could not read who its accounts are");
-                // An empty page held back for the answer is drawn on what
-                // sync has said.
                 return self.show_empty();
             }
         };
@@ -191,16 +139,11 @@ impl FocusController {
         self.show_state()
     }
 
-    /// `[focus]` as it stands now: the empty inbox names its digests and
-    /// offers Filtered only while Focus files mail away.
     pub(crate) fn set_config(&mut self, config: FocusConfig) -> Vec<Step> {
         self.states.config = config;
         self.said_again()
     }
 
-    /// What has been said, said again under what changed -- the keys a
-    /// button and a shortcut name, `[focus]` -- when it reads differently.
-    /// Nothing is said that had not been.
     pub(crate) fn said_again(&mut self) -> Vec<Step> {
         let mut steps = Vec::new();
         if self.states.banner.is_some() {
@@ -211,15 +154,10 @@ impl FocusController {
         steps
     }
 
-    /// The header strip names `name` now: what an empty folder's page is
-    /// about. Said by the controller's own [`Intent::Place`]; a frontend
-    /// that opens a folder itself says it here before it opens it.
     pub fn note_place(&mut self, name: &str) {
         name.clone_into(&mut self.states.place);
     }
 
-    /// The banner and the sync label for where every account stands, and
-    /// the empty page, which follows the same news.
     fn show_state(&mut self) -> Vec<Step> {
         let statuses = self.states.trackers.statuses(&self.states.tracked);
         let banner = focus_state::banner(&statuses, &self.states.facts);
@@ -238,8 +176,6 @@ impl FocusController {
         steps
     }
 
-    /// The sync label again, once one has been drawn, when the folders it
-    /// may name have been read again.
     pub(crate) fn relabel(&mut self) -> Vec<Step> {
         if self.states.label.is_none() {
             return Vec::new();
@@ -262,8 +198,6 @@ impl FocusController {
         vec![Step::Show(Intent::SyncLabel(label))]
     }
 
-    /// `banner` in words, its button naming its key under the keymap in
-    /// force.
     fn banner_view(&self, banner: &Banner, account: Option<AccountId>) -> BannerView {
         BannerView {
             heading: banner.heading(),
@@ -291,12 +225,9 @@ impl FocusController {
         }
     }
 
-    /// The empty page, or the list, when that has changed (screen 16).
-    ///
-    /// An empty inbox that would say it is waiting on sync first asks when
-    /// mail last synced: a store an earlier run filled has nothing to wait
-    /// for, and sync may never say so (a demo, an account that stays
-    /// quiet). The page waits for that answer rather than claim a sync.
+    /// An empty inbox that would say it is waiting on sync asks when mail last synced first: a
+    /// store an earlier run filled has nothing to wait for, and sync may never say so. The page
+    /// waits for that answer.
     pub(crate) fn show_empty(&mut self) -> Vec<Step> {
         let (empty, waiting) = match self.empty_page() {
             Page::Waiting => (self.states.empty.clone(), true),
@@ -314,16 +245,11 @@ impl FocusController {
         steps
     }
 
-    /// What the list shows in its place, if anything: a place with nothing
-    /// in it says why once its first page has landed (a list still waiting
-    /// for one is loading, not empty), and Focus's inbox with no
-    /// conversations says whether a pass has found nothing or none has
-    /// finished yet. The has-action filter showing nothing is the list's
-    /// own business.
+    /// A list still waiting for its first page is loading, not empty. The has-action filter
+    /// showing nothing is the list's own business.
     fn empty_page(&self) -> Page {
         let keymap = self.keymap();
         let place = match self.feed.scope() {
-            // The window starts on its inbox.
             None | Some(ListScope::Focus(FocusScope::Inbox)) => None,
             Some(ListScope::Focus(FocusScope::Snoozed)) => Some(EmptyPlace::Snoozed),
             Some(ListScope::Focus(FocusScope::Flagged)) => Some(EmptyPlace::Flagged),
@@ -359,24 +285,16 @@ impl FocusController {
         ))
     }
 
-    /// The controller's clock: stopped by [`crate::Input::Clock`], or the
-    /// machine's.
     pub(crate) fn now(&self) -> chrono::DateTime<chrono::Local> {
         self.pickers.clock.unwrap_or_else(postio_ui::clock::now)
     }
 }
 
-/// What [`FocusController::empty_page`] found.
 enum Page {
-    /// The page to draw in the list's place, or the list (`None`).
     Shown(Option<EmptyInbox>),
-    /// An empty inbox whose words wait on when mail last synced: what is
-    /// drawn stays.
     Waiting,
 }
 
-/// The account whose password was refused, or is missing: the one
-/// `focus_state::banner` names, the first such that is known.
 fn refused(
     statuses: &[(AccountId, postio_ui::status::SyncStatus)],
     facts: &[AccountFacts],
@@ -392,7 +310,6 @@ fn refused(
         })
 }
 
-/// The command a banner's button runs.
 fn banner_command(action: BannerAction) -> CommandId {
     match action {
         BannerAction::Retry => CommandId::Refresh,

@@ -1,14 +1,10 @@
-//! The keyboard has one home: the list. At launch, after Escape from the
-//! bar, after going to a place and after an overlay closes, the window's
-//! real keyboard focus is in the list -- never on the top bar's Compose
-//! button or the header's place button, where Space or Return would press a
-//! control instead of acting on the row (storyboard review, 2026-10).
+//! The keyboard has one home, the list: focus is never on the top bar's Compose or place button,
+//! where Space or Return would press a control.
 
 use gtk::prelude::*;
 
 use crate::support;
 
-/// Whether the window's keyboard focus is the list: its view, or a row in it.
 fn in_the_list(window: &postio_gtk::window::FocusWindow) -> bool {
     let view = window.pane().expect("the inbox").view().clone();
     gtk::prelude::GtkWindowExt::focus(window)
@@ -21,9 +17,6 @@ fn said(window: &postio_gtk::window::FocusWindow) -> String {
 
 pub fn the_window_opens_with_the_keyboard_in_the_list() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         crate::settle();
         assert!(in_the_list(&window), "{}", said(&window));
@@ -32,9 +25,6 @@ pub fn the_window_opens_with_the_keyboard_in_the_list() {
 
 pub fn escape_from_the_bar_returns_the_keyboard_to_the_list() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         support::press(&window, "slash", gtk::gdk::ModifierType::empty());
         let bar = window.bar().expect("/ opened the bar");
@@ -46,17 +36,10 @@ pub fn escape_from_the_bar_returns_the_keyboard_to_the_list() {
     });
 }
 
-/// Both places have mail: an empty place puts its page where the list was,
-/// and where the keyboard goes then is not this case's question.
 pub fn going_to_a_place_leaves_the_keyboard_in_the_list() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = support::Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Inbox mail", "Hello.", 5)
-            .await;
+        fixture.file_from_ada("Inbox mail", "Hello.", 5).await;
         let travel = fixture.folder("Travel").await;
         fixture.file_in(travel, "Train to the coast", 60).await;
         fixture.file_in(travel, "Hotel booking", 20).await;
@@ -79,8 +62,6 @@ pub fn going_to_a_place_leaves_the_keyboard_in_the_list() {
             crate::settle_until(async || !places.is_open()).await,
             "choosing a place closed the popover"
         );
-        // The keyboard comes back once the popover has gone and the list
-        // has drawn the place; a loaded machine takes more than one pass.
         assert!(
             crate::settle_until(async || support::subjects(&window)
                 == ["Hotel booking", "Train to the coast"]
@@ -104,15 +85,11 @@ pub fn going_to_a_place_leaves_the_keyboard_in_the_list() {
     });
 }
 
-/// Whether the keyboard rests on the empty page that stands in the list's
-/// place: the page itself, not a shortcut on it, where Space or Return would
-/// press the shortcut (#2195).
 fn on_the_empty_page(window: &postio_gtk::window::FocusWindow) -> bool {
     gtk::prelude::GtkWindowExt::focus(window)
         .is_some_and(|focus| focus.is_mapped() && focus.has_css_class("focus-empty"))
 }
 
-/// Whether the keyboard is on a control Space or Return would press.
 fn on_a_control(window: &postio_gtk::window::FocusWindow) -> bool {
     gtk::prelude::GtkWindowExt::focus(window).is_some_and(|focus| {
         focus.is::<gtk::Button>()
@@ -122,15 +99,8 @@ fn on_a_control(window: &postio_gtk::window::FocusWindow) -> bool {
     })
 }
 
-/// An empty place puts its page where the list was, and the keyboard rests
-/// on the page: not on its first shortcut, which GTK would otherwise hand it
-/// to as the page came in, nor on the top bar (#2195). Going back to mail
-/// puts it in the list again, on the cursor's row.
 pub fn going_to_an_empty_place_rests_the_keyboard_on_its_page() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         assert!(
             crate::settle_until(async || in_the_list(&window)).await,
@@ -147,15 +117,14 @@ pub fn going_to_an_empty_place_rests_the_keyboard_on_its_page() {
             window.place_name(),
             said(&window)
         );
-        // The page came in on a stack switch, which hands the keyboard on as
-        // it goes; let every pending turn run, then ask again.
+        // The page came in on a stack switch, which hands the keyboard on as it goes; let every
+        // pending turn run.
         crate::settle();
         assert!(
             on_the_empty_page(&window) && !on_a_control(&window),
             "{}",
             said(&window)
         );
-        // Nor does the footer offer verbs on the inbox row left behind.
         let footer_shown = || {
             support::with_class(&window, "focus-scope-footer")
                 .first()
@@ -180,13 +149,8 @@ pub fn going_to_an_empty_place_rests_the_keyboard_on_its_page() {
     });
 }
 
-/// An inbox that is empty at launch shows its page, and the keyboard is on
-/// the page from the first frame: nothing else is there to hold it.
 pub fn an_empty_inbox_at_launch_rests_the_keyboard_on_its_page() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = support::Fixture::empty().await;
         let window = postio_gtk::window::FocusWindow::new(None);
         window.present();
@@ -211,9 +175,6 @@ pub fn an_empty_inbox_at_launch_rests_the_keyboard_on_its_page() {
 
 pub fn the_keyboard_follows_the_cursor_row() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         support::keys(&window, &["j"]);
         crate::settle();
@@ -223,14 +184,8 @@ pub fn the_keyboard_follows_the_cursor_row() {
     });
 }
 
-/// A list that opens puts the cursor on its first row, and the keyboard
-/// goes with it when it was on a row: Space or Return then acts on the row
-/// the ring is drawn on, not on a row the list used to hold.
 pub fn a_list_that_opens_takes_the_keyboard_from_a_row_to_the_first() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let pane = window.pane().expect("the inbox");
         support::keys(&window, &["j", "j"]);
@@ -244,10 +199,8 @@ pub fn a_list_that_opens_takes_the_keyboard_from_a_row_to_the_first() {
             "g i left the cursor on {}",
             pane.cursor().selected()
         );
-        // The list view rebuilds its rows on the next layout, and the
-        // row that held the keyboard goes with the old ones: for a turn or
-        // more the window has no focus at all, then scroll_to(FOCUS) puts it
-        // on the new first row. Wait for that, not for one turn of the loop.
+        // The list view rebuilds its rows on the next layout and the row holding the keyboard goes
+        // with the old ones, so for a turn or more nothing has focus; wait for `scroll_to(FOCUS)`.
         let on_the_first_row = || {
             let first = pane.rows_on_screen().into_iter().next()?;
             let item = first.ancestor(gtk::glib::Type::from_name("GtkListItemWidget")?)?;

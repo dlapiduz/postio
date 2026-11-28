@@ -49,8 +49,6 @@ import test_audit  # noqa: E402  -- enabled by the sys.path line above
 NOT_JUDGED = {"measurement"}
 
 
-# --- the report: pure, and what the self-test judges ----------------------
-
 
 def load_cases(path: Path) -> dict[str, dict]:
     return {row["id"]: row for row in csv.DictReader(path.open())}
@@ -87,7 +85,6 @@ def candidates(cases: dict[str, dict], regions: dict[str, list[str]], root: Path
             if other != cid
             and int(cases[other]["cost_rank"]) <= int(row["cost_rank"])
             and sets[cid] <= sets[other]
-            # Of two equal sets only one goes; the keeper is the first in keeper_order.
             and not (sets[cid] == sets[other] and keeper_order(row) < keeper_order(cases[other]))
         ]
         if supersets:
@@ -121,8 +118,6 @@ def write_report(found: list[dict], cases: dict[str, dict], out: Path) -> None:
         print("Next: nothing to check -- scripts/test-removal-check.sh has no candidates from this crate.")
 
 
-# --- the run: per-case profiles -------------------------------------------
-
 
 def tool(name: str) -> Path:
     sysroot = subprocess.run(["rustc", "--print", "sysroot"], capture_output=True, text=True).stdout.strip()
@@ -155,7 +150,6 @@ def run_cases(packages: list[str], profiles: Path) -> None:
     shutil.rmtree(profiles, ignore_errors=True)
     env = {k: v for k, v in os.environ.items() if k != "RUSTUP_TOOLCHAIN"}
     env["NEXTEST_PROFILE"] = "per-test-coverage"
-    # A failing case still leaves a profile, and its coverage is still what it ran.
     subprocess.run(
         ["cargo", "llvm-cov", "nextest", "--no-report", *[a for p in packages for a in ("-p", p)]],
         cwd=REPO, env=env,
@@ -171,8 +165,6 @@ def instrumented_binaries(packages: list[str]) -> dict[str, Path]:
     debug = REPO / "target" / "llvm-cov-target" / "debug"
     found = {}
     for suite in json.loads(listed.stdout)["rust-suites"].values():
-        # `deps/` up to Cargo 1.99, each unit's `build/<package>/<hash>/out/`
-        # from 1.100.
         name = suite["binary-name"]
         builds = [
             p for p in (*debug.glob(f"deps/{name}-*"), *debug.glob(f"build/*/*/out/{name}-*"))

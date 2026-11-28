@@ -1,12 +1,6 @@
-//! The thread menu and the outline: the two popovers that hang from the
-//! message window's Thread button (spec 013 US5; `Design/focus-macos-threads`
-//! screens 04 and 05).
-//!
-//! The controller composes both (`postio_ui::thread_outline`) and says when to
-//! draw them; these only draw what they are given and hand back what was
-//! pressed. The menu is 340 wide, in two groups of entries (title, key, and a
-//! line under it where it helps). The outline is 440 wide: a filter field,
-//! a chip with a count for each person, 34-tall rows, and a footer of keys.
+//! The thread menu and the outline: the two popovers hung from the message window's Thread button.
+//! The controller composes both (`postio_ui::thread_outline`) and says when to draw them; these
+//! draw what they are given and hand back what was pressed.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -19,22 +13,26 @@ use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space;
 use postio_widgets::widgets::{Kind, Size};
 
-/// The menu's width, in pixels.
 const MENU_WIDTH: i32 = 340;
-/// The outline's width.
 const OUTLINE_WIDTH: i32 = 440;
-/// An outline row's height.
 const ROW_HEIGHT: i32 = 34;
 
-fn popover(parent: &impl IsA<gtk::Widget>, class: &str, width: i32) -> gtk::Popover {
+fn popover(
+    parent: &impl IsA<gtk::Widget>,
+    class: &str,
+    width: i32,
+    body: &gtk::Box,
+) -> gtk::Popover {
     let popover = gtk::Popover::new();
     popover.add_css_class(class);
     popover.set_has_arrow(false);
     popover.set_position(gtk::PositionType::Bottom);
-    // Hung from the button's right edge: the button is at the dialog's
-    // right, and a popover centred on it would run past the window.
+    // Hung from the button's right edge: the button is at the dialog's right, and a popover centred
+    // on it would run past the window.
     popover.set_halign(gtk::Align::End);
-    popover.set_size_request(width, -1);
+    // The popover's own size counts its shadow; the box a person sees is the body (focus.css).
+    body.set_size_request(width, -1);
+    popover.set_child(Some(body));
     popover.set_parent(parent);
     let held = popover.downgrade();
     parent.connect_destroy(move |_| {
@@ -45,10 +43,8 @@ fn popover(parent: &impl IsA<gtk::Widget>, class: &str, width: i32) -> gtk::Popo
     popover
 }
 
-/// Told which entry a click chose.
 type PickHandler = Rc<dyn Fn(CommandId)>;
 
-/// The menu under Thread.
 pub struct ThreadMenu {
     popover: gtk::Popover,
     body: gtk::Box,
@@ -58,8 +54,6 @@ pub struct ThreadMenu {
 }
 
 impl ThreadMenu {
-    /// The commands the menu has an entry for: read from the table that
-    /// builds it, for a thread muted or not and a message that can split.
     pub fn controls() -> Vec<CommandId> {
         let keymap = postio_core::Keymap::defaults();
         [false, true]
@@ -70,12 +64,10 @@ impl ThreadMenu {
             .collect()
     }
 
-    /// A menu hung from `parent`.
     pub fn new(parent: &impl IsA<gtk::Widget>) -> Rc<Self> {
-        let popover = popover(parent, "focus-thread-menu", MENU_WIDTH);
         let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
         body.add_css_class("focus-thread-menu-body");
-        popover.set_child(Some(&body));
+        let popover = popover(parent, "focus-thread-menu", MENU_WIDTH, &body);
         let menu = Rc::new(ThreadMenu {
             popover,
             body,
@@ -95,17 +87,14 @@ impl ThreadMenu {
         menu
     }
 
-    /// Run `handler` with the command of the entry a click chose.
     pub fn connect_pick(&self, handler: impl Fn(CommandId) + 'static) {
         self.on_pick.replace(Some(Rc::new(handler)));
     }
 
-    /// Run `handler` when the popover has closed, by whatever way.
     pub fn connect_closed(&self, handler: impl Fn() + 'static) {
         self.on_closed.replace(Some(Rc::new(handler)));
     }
 
-    /// Draw `view` and open the popover.
     pub fn show(self: &Rc<Self>, view: &ThreadMenuView) {
         while let Some(child) = self.body.first_child() {
             self.body.remove(&child);
@@ -159,25 +148,21 @@ impl ThreadMenu {
         button
     }
 
-    /// Put the popover away.
     pub fn close(&self) {
         self.popover.popdown();
         self.shown.replace(ThreadMenuView::default());
     }
 
-    /// Whether it is up.
     pub fn is_open(&self) -> bool {
         self.popover.is_visible()
     }
 
-    /// The group headings, " | " apart: what a test reads.
     pub fn groups_said(&self) -> String {
         let shown = self.shown.borrow();
         let titles: Vec<&str> = shown.groups.iter().map(|g| g.title.as_str()).collect();
         titles.join(" | ")
     }
 
-    /// Every entry's key, " | " apart.
     pub fn keycaps_said(&self) -> String {
         let shown = self.shown.borrow();
         let caps: Vec<&str> = shown
@@ -192,31 +177,31 @@ impl ThreadMenu {
 
 type OutlineHandler = Rc<dyn Fn(OutlineInput)>;
 
-/// The outline.
 pub struct OutlinePopover {
     popover: gtk::Popover,
     body: gtk::Box,
     filter: gtk::Entry,
-    chips: gtk::Box,
+    chips: adw::WrapBox,
     rows: gtk::Box,
     footer: gtk::Label,
     shown: RefCell<OutlineView>,
-    /// Raised while a view's text is being put into the field, so it is not
-    /// said back as typing.
     drawing: Cell<bool>,
     on_input: RefCell<Option<OutlineHandler>>,
     on_closed: RefCell<Option<Rc<dyn Fn()>>>,
 }
 
 impl OutlinePopover {
-    /// An outline hung from `parent`.
     pub fn new(parent: &impl IsA<gtk::Widget>) -> Rc<Self> {
-        let popover = popover(parent, "focus-outline", OUTLINE_WIDTH);
         let filter = gtk::Entry::new();
         filter.add_css_class("focus-outline-filter");
         filter.set_placeholder_text(Some("Filter this thread"));
-        let chips = gtk::Box::new(gtk::Orientation::Horizontal, space::S2);
-        chips.add_css_class("focus-outline-people");
+        // Chips side by side would set the popover's natural width, so they wrap at the body's.
+        let chips = adw::WrapBox::builder()
+            .child_spacing(space::S2)
+            .line_spacing(space::S2)
+            .natural_line_length(OUTLINE_WIDTH - 2 * space::S2)
+            .css_classes(["focus-outline-people"])
+            .build();
         let rows = gtk::Box::new(gtk::Orientation::Vertical, 0);
         rows.add_css_class("focus-outline-rows");
         let scroller = gtk::ScrolledWindow::builder()
@@ -235,10 +220,9 @@ impl OutlinePopover {
         body.append(&chips);
         body.append(&scroller);
         body.append(&footer);
-        // The keyboard starts on the list, not the field: `u` and the arrows
-        // are the outline's until `/` takes the keyboard to the field.
+        // `u` and the arrows are the outline's until `/` takes the keyboard to the field.
         body.set_focusable(true);
-        popover.set_child(Some(&body));
+        let popover = popover(parent, "focus-outline", OUTLINE_WIDTH, &body);
         let outline = Rc::new(OutlinePopover {
             popover,
             body,
@@ -262,8 +246,18 @@ impl OutlinePopover {
                 }
             }
         });
-        // Arrows and Return are the outline's even while the field holds the
-        // keyboard: the list is what they move.
+        let focus = gtk::EventControllerFocus::new();
+        let filtering = |weak: std::rc::Weak<OutlinePopover>, filtering: bool| {
+            move |_: &gtk::EventControllerFocus| {
+                if let Some(outline) = weak.upgrade() {
+                    outline.say(OutlineInput::Filtering(filtering));
+                }
+            }
+        };
+        focus.connect_enter(filtering(weak.clone(), true));
+        focus.connect_leave(filtering(weak.clone(), false));
+        outline.filter.add_controller(focus);
+        // Arrows and Return move the list even while the field holds the keyboard.
         let keys = gtk::EventControllerKey::new();
         keys.set_propagation_phase(gtk::PropagationPhase::Capture);
         keys.connect_key_pressed({
@@ -301,17 +295,14 @@ impl OutlinePopover {
         }
     }
 
-    /// Run `handler` with what is typed, chosen, moved or shown.
     pub fn connect_input(&self, handler: impl Fn(OutlineInput) + 'static) {
         self.on_input.replace(Some(Rc::new(handler)));
     }
 
-    /// Run `handler` when the popover has closed, by whatever way.
     pub fn connect_closed(&self, handler: impl Fn() + 'static) {
         self.on_closed.replace(Some(Rc::new(handler)));
     }
 
-    /// Draw `view` whole, opening the popover if it is not up.
     pub fn show(self: &Rc<Self>, view: &OutlineView) {
         self.drawing.set(true);
         if self.filter.text() != view.filter {
@@ -365,6 +356,7 @@ impl OutlinePopover {
             words.set_xalign(0.0);
             words.set_hexpand(true);
             words.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            words.set_max_width_chars(1);
             let date = gtk::Label::new(Some(&row.date));
             date.add_css_class("dim-label");
             let dot = gtk::Label::new(Some(if row.unread { "\u{25cf}" } else { " " }));
@@ -402,39 +394,31 @@ impl OutlinePopover {
         }
     }
 
-    /// The keyboard goes to the filter field.
     pub fn focus_filter(&self) {
         self.filter.grab_focus();
     }
 
-    /// Put the popover away.
     pub fn close(&self) {
         self.popover.popdown();
     }
 
-    /// What it hangs from, while it is hung from anything.
     pub fn parent(&self) -> Option<gtk::Widget> {
         self.popover.parent()
     }
 
-    /// Hang it under `rect` of its parent, rather than the parent's edge:
-    /// the list's row the outline is of.
     pub fn point_at(&self, rect: Option<&gtk::gdk::Rectangle>) {
         self.popover.set_pointing_to(rect);
     }
 
-    /// Take it off its parent, for good.
     pub fn discard(&self) {
         self.popover.popdown();
         self.popover.unparent();
     }
 
-    /// Whether it is up.
     pub fn is_open(&self) -> bool {
         self.popover.is_visible()
     }
 
-    /// Whether the field holds the keyboard.
     pub fn filtering(&self) -> bool {
         self.filter.has_focus()
             || self
@@ -443,13 +427,28 @@ impl OutlinePopover {
                 .is_some_and(|text| text.is_focus())
     }
 
-    /// How many rows are drawn.
     pub fn row_count(&self) -> usize {
         self.shown.borrow().rows.len()
     }
 
-    /// The row the keyboard is on.
+    pub fn hint(&self) -> String {
+        self.footer.text().to_string()
+    }
+
     pub fn cursor(&self) -> usize {
         self.shown.borrow().cursor
+    }
+
+    pub fn ringed(&self) -> Option<usize> {
+        let mut child = self.rows.first_child();
+        let mut at = 0;
+        while let Some(row) = child {
+            if row.has_css_class("focus-outline-cursor") {
+                return Some(at);
+            }
+            child = row.next_sibling();
+            at += 1;
+        }
+        None
     }
 }

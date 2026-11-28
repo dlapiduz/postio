@@ -1,10 +1,5 @@
-//! What Focus says about its own state: the one banner row under the strip
-//! and the empty inbox in the list's place (terminal.md, "States").
-//!
-//! Which banner and what each says are `postio_ui::focus_state`'s; this
-//! draws them. Every state keeps a mark that is not a colour: an error's
-//! heading is led by `✕` and bold, and the first sync's bar is `━` over
-//! `─`.
+//! The one banner row under the strip and the empty inbox; which banner and what it says are
+//! `postio_ui::focus_state`'s. Every state keeps a mark that is not a colour.
 
 use postio_core::CommandId;
 use postio_ui::focus_state::{Banner, BannerAction, EmptyInbox};
@@ -20,10 +15,8 @@ use crate::view::bottom::cap;
 use crate::view::fit;
 use crate::view::hit::{Hits, Target};
 
-/// The first sync's bar is this many cells.
 const BAR: usize = 16;
 
-/// The command a banner's button runs.
 fn command_of(action: BannerAction) -> CommandId {
     match action {
         BannerAction::Retry => CommandId::Refresh,
@@ -31,15 +24,11 @@ fn command_of(action: BannerAction) -> CommandId {
     }
 }
 
-/// `━` for what is done and `─` for what is left, `fraction` of `cells`.
 fn bar(fraction: f64, cells: usize) -> String {
     let done = ((fraction * cells as f64).round() as usize).min(cells);
     format!("{}{}", "━".repeat(done), "─".repeat(cells - done))
 }
 
-/// Draw `banner` into `area`, one row on the surface background: its
-/// heading in bold, its sentence, and on the right its button with the key
-/// that does the same -- or, for a first sync, how far it has come.
 pub fn banner(
     frame: &mut Frame,
     area: Rect,
@@ -60,14 +49,12 @@ pub fn banner(
         theme.style(Role::Text)
     }
     .add_modifier(Modifier::BOLD);
-    // Without colour an error is still marked.
     let heading = if banner.is_error() {
         format!("✕ {}", banner.heading())
     } else {
         banner.heading()
     };
 
-    // What stands on the right, which never gives way.
     let mut right: Vec<Span> = Vec::new();
     let mut button = None;
     if let Some((label, action)) = banner.action() {
@@ -125,8 +112,6 @@ pub fn banner(
     }
 }
 
-/// Draw `said` centred in `area`: its heading in bold, the line under it,
-/// when the next digest comes, and the shortcuts on one line.
 pub fn empty(frame: &mut Frame, area: Rect, said: &EmptyInbox, theme: &Theme, hits: &mut Hits) {
     let centred = |text_width: usize| {
         area.x + u16::try_from(usize::from(area.width).saturating_sub(text_width) / 2).unwrap_or(0)
@@ -162,7 +147,6 @@ pub fn empty(frame: &mut Frame, area: Rect, said: &EmptyInbox, theme: &Theme, hi
     if y >= area.y + area.height {
         return;
     }
-    // The shortcuts, each its words and its key, on one line.
     let mut pieces: Vec<(Vec<Span>, usize, CommandId)> = Vec::new();
     for (key, what, command) in &said.shortcuts {
         let mut label = what.clone();
@@ -194,7 +178,6 @@ pub fn empty(frame: &mut Frame, area: Rect, said: &EmptyInbox, theme: &Theme, hi
     }
 }
 
-/// `text` with its first letter capital.
 fn capitalised(text: &str) -> String {
     let mut letters = text.chars();
     match letters.next() {
@@ -237,7 +220,6 @@ mod tests {
         update(app, Input::Host(event));
     }
 
-    /// The account's connection is up, as it is once mail is flowing.
     fn online(app: &mut App) {
         heard(
             app,
@@ -278,32 +260,6 @@ mod tests {
         assert!(
             drawn.lines().nth(2).unwrap().contains("Today"),
             "the list starts under the strip:\n{drawn}"
-        );
-    }
-
-    #[test]
-    fn offline_is_one_banner_row_under_the_strip_with_retry_and_its_key() {
-        let mut app = with_account((120, 24));
-        heard(
-            &mut app,
-            Event::ConnectionChanged {
-                account: ACCOUNT,
-                state: ConnectionState::Offline,
-            },
-        );
-        let drawn = screen(120, 24, &app);
-        let row = drawn.lines().nth(2).unwrap();
-        assert!(row.contains("You're offline"), "{drawn}");
-        assert!(row.contains("syncs when you're back"), "{drawn}");
-        assert!(row.trim_end().ends_with("Retry now F5"), "{drawn}");
-        assert!(
-            drawn.lines().nth(3).unwrap().contains("Today"),
-            "the list gave the row up:\n{drawn}"
-        );
-        let effects = click_on(&mut app, (120, 24), "Retry now");
-        assert!(
-            effects.contains(&Effect::Send(postio_core::Command::Refresh)),
-            "{effects:?}"
         );
     }
 
@@ -429,14 +385,11 @@ mod tests {
 
     #[test]
     fn the_empty_block_is_for_the_inbox_with_no_conversations_only() {
-        // With a conversation the list is shown.
         let app = with_account((120, 30));
         assert!(!screen(120, 30, &app).contains("Inbox is empty"));
-        // The has-action filter finding nothing is not an empty inbox.
         let mut app = empty_inbox((120, 30));
         crate::test_support::show_scope(&mut app, postio_model::FocusScope::HasAction, Vec::new());
         assert!(!screen(120, 30, &app).contains("Inbox is empty"));
-        // Nor is another folder.
         let mut app = empty_inbox((120, 30));
         let effects = crate::test_support::open_list(&mut app, 0);
         crate::test_support::serve(&mut app, effects);

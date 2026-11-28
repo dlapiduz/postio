@@ -1,8 +1,3 @@
-//! Acceptance tests for postio-pco — the first-run autoconfig probe.
-//!
-//! Every test here runs against a mocked transport (the resolver/HTTP layer),
-//! so the default suite touches no network. Live probes are `#[ignore]`.
-
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -14,30 +9,17 @@ use postio_account::discovery::{
     ProbeStep, SettingsSource, TransportError,
 };
 
-// --- mock transport -----------------------------------------------------
-
 #[derive(Default)]
 struct MockTransport {
     autoconfig: HashMap<ProbeStep, String>,
     srv: Option<DiscoverySrvReport>,
-    /// The MX hostnames the domain publishes, best preference first (#94).
     mx: Option<Vec<String>>,
     calls: Mutex<Vec<ProbeStep>>,
-    /// Every domain (and, for the subdomain step, local part) a request was
-    /// actually made for — `postio-iigq`'s "only the domain the user typed"
-    /// audit point needs the request's own arguments, not just which step
-    /// ran.
     requested: Mutex<Vec<(ProbeStep, String, Option<String>)>>,
     stall: Option<Duration>,
-    /// Whether the token the transport was handed had already been
-    /// cancelled by the time the call ran, recorded per call. #57: the
-    /// probe held a `CancelToken` and never passed it down, so nothing at
-    /// the network layer could act on it.
+    /// Recorded per call (#57).
     saw_cancelled: Mutex<Vec<bool>>,
-    /// A clone of the token the transport was last handed, kept so the test
-    /// can ask *afterwards* whether it observed the caller's cancellation.
-    /// A transport handed a fresh token of its own would look identical at
-    /// call time and never flip here.
+    /// Kept so the test can ask afterwards; a fresh token would look identical at call time.
     held: Mutex<Option<CancelToken>>,
 }
 
@@ -56,7 +38,6 @@ impl MockTransport {
         self
     }
 
-    /// The MX hostnames the domain publishes, best preference first (#94).
     fn with_mx(mut self, hosts: &[&str]) -> Self {
         self.mx = Some(hosts.iter().map(|h| (*h).to_owned()).collect());
         self
@@ -73,7 +54,6 @@ impl MockTransport {
         self.calls.lock().unwrap().clone()
     }
 
-    /// Every request actually made, as `(step, domain, local_part)`.
     fn requested(&self) -> Vec<(ProbeStep, String, Option<String>)> {
         self.requested.lock().unwrap().clone()
     }
@@ -84,7 +64,6 @@ impl MockTransport {
         }
     }
 
-    /// What the transport could see of the caller's cancellation, per call.
     fn saw_cancelled(&self) -> Vec<bool> {
         self.saw_cancelled.lock().unwrap().clone()
     }
@@ -97,7 +76,6 @@ impl MockTransport {
         *self.held.lock().unwrap() = Some(cancel.clone());
     }
 
-    /// Whether the token the transport kept has since been cancelled.
     fn saw_cancelled_after_the_fact(&self) -> bool {
         self.held
             .lock()
@@ -168,7 +146,6 @@ impl DiscoveryTransport for MockTransport {
     }
 }
 
-/// A transport that fails the test if the probe ever reaches the network.
 struct UnreachableTransport;
 
 #[async_trait]
@@ -197,8 +174,6 @@ impl DiscoveryTransport for UnreachableTransport {
         panic!("the probe must not hit the network for a known provider");
     }
 }
-
-// --- fixtures -----------------------------------------------------------
 
 fn autoconfig_xml(imap_host: &str, smtp_host: &str) -> String {
     format!(
@@ -259,11 +234,7 @@ fn settings(outcome: &DiscoveryOutcome) -> &postio_account::discovery::AccountSe
     }
 }
 
-// --- Shipped provider presets -------------------------------------------
-//
-// Addresses in a real provider's domain are built rather than written out;
-// a literal one reads as personal data to scripts/checks/check-no-personal-data.py.
-// See CLAUDE.md, "No personal data".
+// Real-provider addresses are built, not written: a literal one trips check-no-personal-data.py.
 
 #[tokio::test]
 async fn a_shipped_provider_resolves_with_no_network_at_all() {
@@ -276,11 +247,7 @@ async fn a_shipped_provider_resolves_with_no_network_at_all() {
         assert_eq!(settings.source, SettingsSource::Builtin);
         assert_eq!(settings.imap.host, preset.imap_host());
         assert_eq!(settings.smtp.host, preset.smtp_host());
-        // Every shipped provider connects encrypted -- that is the real
-        // invariant here, not that every provider picks the *same* one.
-        // Implicit TLS and STARTTLS (office365's submission port, #868)
-        // are both real transport security; plaintext is what this must
-        // catch.
+        // Every shipped provider connects encrypted; implicit TLS and STARTTLS (#868) both count.
         assert_ne!(
             settings.imap.encryption,
             Encryption::None,
@@ -321,7 +288,6 @@ async fn a_provider_that_refuses_account_passwords_says_so_before_the_password_f
 async fn every_domain_a_shipped_provider_issues_is_recognised() {
     for preset in postio_account::discovery::presets() {
         for domain in preset.domains() {
-            // Case and address decoration must not matter.
             for address in [
                 format!("a@{domain}"),
                 format!("a@{}", domain.to_uppercase()),
@@ -355,8 +321,6 @@ async fn a_non_icloud_provider_does_not_claim_an_app_password_is_required() {
     assert!(!settings(&report.outcome).requires_app_password);
 }
 
-// --- probe order --------------------------------------------------------
-
 #[tokio::test]
 async fn the_well_known_document_wins_and_stops_the_probe() {
     let transport = Arc::new(MockTransport::new().with_autoconfig(
@@ -378,7 +342,6 @@ async fn the_well_known_document_wins_and_stops_the_probe() {
     assert_eq!(settings.smtp.encryption, Encryption::StartTls);
     assert_eq!(settings.display_name.as_deref(), Some("Example Mail"));
 
-    // Nothing after the first hit is probed.
     assert_eq!(transport.calls(), vec![ProbeStep::WellKnown]);
 }
 
@@ -403,7 +366,6 @@ async fn the_probe_walks_the_documented_order() {
             ProbeStep::Ispdb
         ]
     );
-    // Every attempt is reported so the UI can show what was tried.
     assert_eq!(report.attempts.len(), 3);
     assert!(report.attempts[0].is_miss());
     assert!(report.attempts[2].is_hit());
@@ -428,17 +390,8 @@ async fn srv_records_are_used_when_no_autoconfig_document_exists() {
     assert_eq!(transport.calls().last(), Some(&ProbeStep::Srv));
 }
 
-// --- failing fast to manual entry ---------------------------------------
-//
-// The three `elapsed() < 2s`/`< 3s` assertions below are wall-clock on
-// purpose, and are **not** the kind #100, #917 and #1068 replaced with
-// counts. Those were budgets — "this work is cheap" — where the cause is
-// countable and the stopwatch measures the machine as much as the code.
-// These assert that a probe *gives up rather than hanging*, which is
-// irreducibly a claim about time: there is nothing to count, because the
-// failure being ruled out is the absence of an event. The margins are
-// enormous (a hang is unbounded, the bound is seconds) rather than tight,
-// which is what makes them safe on a loaded box. Leave them.
+// The `elapsed()` bounds are wall-clock on purpose: they assert a probe gives up rather than hangs,
+// with margins far above the bound.
 
 #[tokio::test]
 async fn a_domain_with_no_autoconfig_fails_fast_to_manual_entry() {
@@ -479,8 +432,6 @@ async fn common_name_guesses_only_prefill_the_manual_form() {
         .await
         .unwrap();
 
-    // A guess is never presented as discovered: the user still lands in the
-    // manual form, only with the fields filled in.
     match report.outcome {
         DiscoveryOutcome::ManualEntry {
             suggestion: Some(settings),
@@ -520,8 +471,6 @@ async fn an_autoconfig_document_without_an_imap_server_is_a_miss() {
     ));
 }
 
-// --- bad input ----------------------------------------------------------
-
 #[tokio::test]
 async fn a_malformed_address_is_rejected_without_probing() {
     let probe = Probe::new(Arc::new(UnreachableTransport));
@@ -535,8 +484,6 @@ async fn a_malformed_address_is_rejected_without_probing() {
         );
     }
 }
-
-// --- cancellation and timeouts ------------------------------------------
 
 #[tokio::test]
 async fn probing_is_cancellable() {
@@ -570,16 +517,7 @@ async fn probing_is_cancellable() {
     );
 }
 
-/// #57: the probe's cancel token has to reach the transport, or nothing at
-/// the network layer can act on it.
-///
-/// This is the wiring, not the mechanism. `probing_is_cancellable` above
-/// already passed while the token stopped the probe *awaiting* an answer and
-/// left the request itself running — the transport never saw the token at
-/// all, so `PimalayaTransport` could not have cancelled a socket even in
-/// principle. Asserting that the transport receives a token which observes
-/// the caller's cancellation is the only assertion that could have failed
-/// then and passes now.
+/// The cancel token must reach the transport (#57), not only stop the probe awaiting.
 #[tokio::test]
 async fn the_transport_is_handed_a_token_that_sees_the_cancellation() {
     let transport = Arc::new(MockTransport::stalling());
@@ -593,15 +531,9 @@ async fn the_transport_is_handed_a_token_that_sees_the_cancellation() {
     );
 
     let cancel = CancelToken::new();
-    // Cancelled before the run, so every call the probe makes is made with a
-    // token that is already flagged. A transport that was handed a *fresh*
-    // token -- or none -- would report false.
     cancel.cancel();
     let _ = probe.run("user@example.org", &cancel).await;
 
-    // An already-cancelled token short-circuits before the first step, so
-    // drive it again with cancellation arriving mid-flight to get a call
-    // that actually reaches the transport.
     let cancel = CancelToken::new();
     let handle = {
         let probe = Probe::with_options(
@@ -681,7 +613,6 @@ async fn a_stalled_probe_times_out_instead_of_hanging() {
         started.elapsed()
     );
     assert!(report.attempts.iter().any(|a| a.timed_out()));
-    // The overall budget stops the walk before every step has been tried.
     assert!(transport.calls().len() < 4);
 }
 
@@ -694,14 +625,8 @@ async fn the_default_options_are_bounded() {
     assert!(!options.guess_common_names);
 }
 
-// --- postio-iigq: privacy audit ------------------------------------------
-
 #[tokio::test]
 async fn only_the_domain_the_user_typed_is_ever_probed() {
-    // No step answers with anything usable, so the probe has to walk all
-    // four before giving up into `ManualEntry` — which is what makes this
-    // exercise every endpoint's own request, not just whichever one
-    // happened to hit first.
     let transport = Arc::new(MockTransport::new());
     let probe = Probe::with_options(transport.clone(), fast_options());
 
@@ -727,9 +652,6 @@ async fn only_the_domain_the_user_typed_is_ever_probed() {
             "{step:?} asked about the wrong domain, or a stale one"
         );
         match (step, local_part) {
-            // Only the subdomain step's request carries a local part at
-            // all — the one place a provider's autoconfig can be keyed
-            // per-user rather than per-domain.
             (ProbeStep::AutoconfigSubdomain, Some(local)) => {
                 assert_eq!(local, "a.user+tag", "the wrong mailbox's local part");
             }
@@ -744,8 +666,6 @@ async fn only_the_domain_the_user_typed_is_ever_probed() {
 
 #[tokio::test]
 async fn a_guessed_suggestion_is_built_after_every_step_missed_not_instead_of_them() {
-    // Nothing here answers, the same as the domain-scoping test above, so
-    // the loop reaches every step before falling back to a guess.
     let transport = Arc::new(MockTransport::new());
     let probe = Probe::with_options(
         transport.clone(),
@@ -769,12 +689,8 @@ async fn a_guessed_suggestion_is_built_after_every_step_missed_not_instead_of_th
         other => panic!("expected a guessed suggestion, got {other:?}"),
     }
 
-    // The guess itself is string formatting, not a further request: every
-    // call the mock saw was a step, and there are only five of those.
     assert_eq!(transport.requested().len(), 5);
 }
-
-// --- live probe ---------------------------------------------------------
 
 #[tokio::test]
 #[ignore = "hits the network"]
@@ -782,8 +698,7 @@ async fn live_probe_against_the_thunderbird_ispdb() {
     use postio_account::discovery::PimalayaTransport;
 
     let probe = Probe::new(Arc::new(PimalayaTransport::new()));
-    // Built, not written out: a literal address in a real provider's domain
-    // reads as personal data to scripts/checks/check-no-personal-data.py.
+    // Built, not written out: a literal address trips check-no-personal-data.py.
     let domain = std::env::var("POSTIO_TEST_ISPDB_DOMAIN").unwrap_or_else(|_| "gmail.com".into());
     let report = probe
         .run(&format!("someone@{domain}"), &CancelToken::new())
@@ -799,13 +714,10 @@ async fn live_probe_against_the_thunderbird_ispdb() {
     );
 }
 
-// ── #94: MX records name a provider Postio ships settings for ───────────
-
 #[tokio::test]
 async fn mx_records_naming_a_known_provider_prefill_that_providers_servers() {
-    // The case the convention guess gets wrong: a custom domain delegated to
-    // a provider is not reachable at `imap.<that-domain>`. Its MX says where
-    // its mail actually goes, and the preset table knows whose host that is.
+    // A custom domain delegated to a provider is not at `imap.<that-domain>`; its MX says where
+    // mail goes.
     let transport =
         Arc::new(MockTransport::new().with_mx(&["mx01.mail.icloud.com", "mx02.mail.icloud.com"]));
     let probe = Probe::with_options(transport.clone(), fast_options());
@@ -824,9 +736,8 @@ async fn mx_records_naming_a_known_provider_prefill_that_providers_servers() {
     assert_eq!(settings.imap.host, "imap.mail.me.com");
     assert_eq!(settings.smtp.host, "smtp.mail.me.com");
 
-    // #69's trap: an iCloud custom domain authenticates as the Apple ID, and
-    // no MX lookup can know it. Prefilling a login from an MX hit would be
-    // confidently wrong in exactly the case this step exists for.
+    // #69: an iCloud custom domain authenticates as the Apple ID, so an MX hit must not prefill the
+    // login.
     assert_eq!(
         settings.login, "user@example.org",
         "the login is the address the user typed, never one MX implied"
@@ -847,8 +758,6 @@ async fn mx_records_naming_a_known_provider_prefill_that_providers_servers() {
 
 #[tokio::test]
 async fn mx_records_naming_nobody_known_are_a_miss_and_the_probe_carries_on() {
-    // Plenty of domains publish MX for a host Postio ships no row for. That
-    // is an answer, not a failure, and SRV still gets its turn.
     let transport = Arc::new(
         MockTransport::new()
             .with_mx(&["mail.some-host.example"])
@@ -875,10 +784,7 @@ async fn mx_records_naming_nobody_known_are_a_miss_and_the_probe_carries_on() {
 
 #[tokio::test]
 async fn an_mx_hit_prefills_the_manual_form_rather_than_claiming_a_discovery() {
-    // It is inference, not publication — the same reason `guess_common_names`
-    // is off by default. A domain that delegates its mail somewhere has not
-    // said anything about *how to log in*, so this must not present itself as
-    // a discovered account.
+    // MX is inference, not publication, so it must not present itself as a discovered account.
     let transport = Arc::new(MockTransport::new().with_mx(&["mx01.mail.icloud.com"]));
     let probe = Probe::with_options(transport.clone(), fast_options());
     let report = probe
@@ -891,4 +797,33 @@ async fn an_mx_hit_prefills_the_manual_form_rather_than_claiming_a_discovery() {
         "MX is better evidence than a convention guess and still not \
          authoritative"
     );
+}
+
+#[test]
+fn icloud_and_fastmail_name_their_calendar_servers_and_others_leave_it_to_discovery() {
+    let caldav = |domain: &str| {
+        postio_account::discovery::preset_for_domain(domain)
+            .and_then(|preset| preset.caldav().cloned())
+    };
+    let icloud = caldav("icloud.com").expect("iCloud's row");
+    assert_eq!(icloud.url.as_deref(), Some("https://caldav.icloud.com/"));
+    assert!(icloud.schedules);
+    let fastmail = caldav("fastmail.com").expect("Fastmail's row");
+    assert_eq!(
+        fastmail.url.as_deref(),
+        Some("https://caldav.fastmail.com/")
+    );
+    assert!(
+        caldav("gmail.com").is_none(),
+        "Google's calendars wait on its own slice (spike S3)"
+    );
+    for preset in postio_account::discovery::presets() {
+        if let Some(row) = preset.caldav() {
+            assert!(
+                row.url
+                    .as_deref()
+                    .is_none_or(|url| url.starts_with("https://"))
+            );
+        }
+    }
 }

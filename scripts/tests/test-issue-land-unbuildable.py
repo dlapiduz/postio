@@ -40,8 +40,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -49,11 +47,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 HERE = Path(__file__).resolve().parent.parent
 REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -66,9 +59,6 @@ STUB_CHECKS = [
     "check-runtime-crossings.py",
 ]
 
-# Records every call so the assertions can ask what the script *did*, not what
-# it printed. A banner can be wrong in either direction; an absent `pr create`
-# cannot.
 GH_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 printf '%s\\n' "$*" >> "$STUB_DIR/calls"
@@ -92,10 +82,6 @@ fi
 exit 0
 """
 
-# The host's GTK availability, switchable per case. `$STUB_DIR/have-gtk`
-# standing in for the real libraries is the whole point: the guard must key on
-# what the host can build, and a test that keyed on the OS name would pass on a
-# Linux box with no GTK installed while proving nothing.
 PKGCONFIG_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--exists" ]; then
     [ -f "$STUB_DIR/have-gtk" ] && exit 0
@@ -104,9 +90,6 @@ fi
 exit 0
 """
 
-# `cargo` and `rustc` are stubbed: this test is about which crates the gates
-# run over, not about the gates. Building a real crate three times would make
-# it slow and prove nothing extra.
 CARGO_STUB = """#!/usr/bin/env bash
 printf 'cargo %s\\n' "$*" >> "$STUB_DIR/calls"
 exit 0
@@ -141,9 +124,6 @@ def world(base: Path, *, have_gtk: bool, touch: str) -> tuple[Path, Path]:
     (stub_dir / "bin").mkdir(parents=True)
     (root / "scripts" / "checks").mkdir(parents=True)
 
-    # The repository's own pin, copied rather than written out: a literal
-    # here went stale at the 1.99 bump, and on a runner that has only the
-    # pinned toolchain the sandbox then had no rustfmt to run.
     (root / "rust-toolchain.toml").write_text(
         (REPO_ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"), encoding="utf-8"
     )
@@ -157,11 +137,6 @@ def world(base: Path, *, have_gtk: bool, touch: str) -> tuple[Path, Path]:
     shutil.copy(ISSUE_LAND, root / "scripts" / "issue-land.sh")
     (root / "scripts" / "issue-land.sh").chmod(0o755)
     shutil.copytree(HERE / "lib", root / "scripts" / "lib")
-    # The land script shells out to this after opening the PR. Stubbed rather
-    # than copied: the real one polls `gh pr checks`, which is its own test's
-    # business, and its absence would make every case here exit non-zero --
-    # which is how the first draft of this file reported a passing hard-stop
-    # that had not actually stopped anything.
     wait = root / "scripts" / "wait-for-checks.sh"
     wait.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
     wait.chmod(0o755)
@@ -214,7 +189,6 @@ def land(root: Path, stub_dir: Path, *args: str) -> subprocess.CompletedProcess[
 
 
 def main() -> int:
-    # 1. The crate this host cannot build.
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         root, stub_dir = world(base, have_gtk=False, touch="postio-gtk")
@@ -243,7 +217,6 @@ def main() -> int:
             f"a PR was opened despite the refusal:\n{calls}",
         )
 
-    # 2. A crate the unbuildable ones depend on: lands, but labelled.
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         root, stub_dir = world(base, have_gtk=False, touch="postio-core")
@@ -262,7 +235,6 @@ def main() -> int:
             f"the unverified gap was not recorded anywhere:\n{calls}",
         )
 
-    # 3. A host that can build GTK: nothing fires, nothing changes.
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
         root, stub_dir = world(base, have_gtk=True, touch="postio-gtk")
@@ -282,15 +254,7 @@ def main() -> int:
         )
         case(
             "on a host with GTK the gates still ran over the crate",
-            # Clippy is per-crate, and so are the units since 2026-10-23
-            # (`--lib -p <crate>`, through whichever runner the host has).
-            # What this case is really about is unchanged: a host that *can*
-            # build the crate must not silently skip its gates.
-            "clippy -p postio-gtk" in calls
-            and any(
-                "--lib" in line and "-p postio-gtk" in line
-                for line in calls.splitlines()
-            ),
+            "clippy -p postio-gtk" in calls,
             f"the gates were skipped on a host that can run them:\n{calls}",
         )
 

@@ -1,9 +1,5 @@
-//! Focus's Filtered view (spec 007 US9, screen 21): what filing archived,
-//! each message with its reason, newest first, and the tabs' counts.
-//!
-//! A page is two reads: the standing decisions, through their index, and
-//! the list rows of the messages they name, in one batch. The tabs are one
-//! statement. Nothing walks a table.
+//! Focus's Filtered view: what filing archived, with its reasons, newest first.
+//! A page is two reads and the tabs one statement.
 
 use postio_client::protocol::FilteredRow;
 use postio_model::listing::StoreError;
@@ -11,8 +7,6 @@ use postio_storage::repository::{FilterDecisionRepository, FilterReason};
 
 use crate::Inner;
 
-/// Each reason's name, as the store spells it, with how many messages it
-/// keeps filtered now, in the tabs' order.
 pub(crate) async fn tabs(inner: &Inner) -> Result<Vec<(String, u32)>, StoreError> {
     let reader = inner.wiring.database.read().await?;
     Ok(FilterDecisionRepository::new(&reader)
@@ -23,8 +17,6 @@ pub(crate) async fn tabs(inner: &Inner) -> Result<Vec<(String, u32)>, StoreError
         .collect())
 }
 
-/// `limit` filtered messages from `offset`, newest first, of the reason
-/// named `reason` or of every reason.
 pub(crate) async fn page(
     inner: &Inner,
     reason: Option<String>,

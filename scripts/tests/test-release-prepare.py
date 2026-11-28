@@ -25,8 +25,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -34,7 +32,6 @@ import patience  # noqa: E402  -- enabled by the sys.path line above
 SCRIPTS = Path(__file__).resolve().parent.parent
 REPO_ROOT = SCRIPTS.parent
 SCRIPT = SCRIPTS / "release-prepare.sh"
-# Under target/, which git ignores; see scripts/checks/check-test-sandboxes.py.
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -131,7 +128,6 @@ def main() -> int:
         print(f"missing {SCRIPT}", file=sys.stderr)
         return 1
 
-    # ── the release PR ───────────────────────────────────────────────
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as d:
         _, tree = world(Path(d))
         r = run(tree, "0.5.0")
@@ -178,7 +174,6 @@ def main() -> int:
         )
         case("it says what to do next", "issue-land.sh" in out, out)
 
-    # Hand-written notes win, as they always have.
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as d:
         main, tree = world(Path(d))
         (main / "docs" / "releases").mkdir(parents=True)
@@ -190,7 +185,6 @@ def main() -> int:
         text = (tree / "docs" / "releases" / "0.5.0.md").read_text(encoding="utf-8")
         case("existing notes are kept as written", r.returncode == 0 and text == "Written by a person.\n", r.stdout + r.stderr + text)
 
-    # ── refusals ─────────────────────────────────────────────────────
     for bad, why in (("0.4.2", "the version that is already out"), ("0.4.1", "a version behind the newest tag"), ("v0.5.0", "a v-prefixed version"), ("0.5", "a non-semver version")):
         with tempfile.TemporaryDirectory(dir=SANDBOXES) as d:
             _, tree = world(Path(d))

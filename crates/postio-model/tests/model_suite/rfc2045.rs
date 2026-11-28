@@ -1,22 +1,5 @@
-//! The MIME audit, made executable (#680).
-//!
-//! `docs/rfc-compliance.md` states the verdicts; this is the half a machine
-//! can check, one case per row, so a verdict that stops being true fails a run
-//! rather than becoming a wrong sentence in a file nobody re-reads. Same
-//! arrangement as `rfc5322.rs`.
-//!
-//! **What is not here.** One of the three gaps the audit found has no test
-//! asserting the fix, because a test that asserts a bug is worthless and one
-//! that asserts the fix cannot pass before it: #901 (`encoding_problems`
-//! reaches nobody). Its *inputs* are here and in the corpus, so the case the
-//! fix has to handle is pinned even while the behaviour is wrong. #900 (an
-//! unusable boundary loses the body and offers the container as an
-//! attachment) and #899 (a `--boundary` mid-line truncates the body, fixed by
-//! `mail-parser` 1.0) are covered below.
-
 use postio_model::{mime, test_corpus};
 
-/// A `multipart/mixed` with one `text/plain` part carrying `body`.
 fn multipart(body: &str) -> Vec<u8> {
     format!(
         "From: ada@example.com\r\nMIME-Version: 1.0\r\n\
@@ -26,7 +9,6 @@ Content-Type: multipart/mixed; boundary=\"SEP\"\r\n\r\n\
     .into_bytes()
 }
 
-/// A single-part message with the given headers and body bytes.
 fn single(headers: &str, body: &[u8]) -> Vec<u8> {
     let mut raw =
         format!("From: ada@example.com\r\nMIME-Version: 1.0\r\n{headers}\r\n\r\n").into_bytes();
@@ -34,16 +16,8 @@ fn single(headers: &str, body: &[u8]) -> Vec<u8> {
     raw
 }
 
-// ---------------------------------------------------------------------------
-// RFC 2045 §5 — Content-Type parameters
-// ---------------------------------------------------------------------------
-
 #[test]
 fn an_rfc2231_filename_is_reassembled_across_continuations_and_decoded() {
-    // The three spellings a non-ASCII filename arrives in are already a corpus
-    // fixture; this is the one that needs both halves at once — continuation
-    // numbering *and* a charset tag — because getting either wrong produces a
-    // filename that looks plausible and is wrong.
     let raw = b"From: ada@example.com\r\nMIME-Version: 1.0\r\n\
 Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n\
 --b\r\nContent-Type: text/plain\r\n\r\nhello\r\n\
@@ -61,9 +35,6 @@ Content-Disposition: attachment;\r\n\tfilename*0*=utf-8''%C3%A9t%C3%A9;\r\n\
 
 #[test]
 fn a_quoted_boundary_may_contain_a_semicolon_and_a_space() {
-    // The reason boundaries are allowed to be quoted at all, and the case a
-    // parameter splitter that splits on `;` before it looks at quotes gets
-    // wrong.
     let raw = b"From: ada@example.com\r\nMIME-Version: 1.0\r\n\
 Content-Type: multipart/mixed; boundary=\"--=_Part 1; x\"\r\n\r\n\
 ----=_Part 1; x\r\nContent-Type: text/plain\r\n\r\nhello\r\n\
@@ -73,10 +44,6 @@ Content-Type: multipart/mixed; boundary=\"--=_Part 1; x\"\r\n\r\n\
 
 #[test]
 fn a_boundary_quoted_mid_line_does_not_end_the_part() {
-    // RFC 2046 §5.1.1: a delimiter begins a line. `mail-parser` 0.11 matched
-    // `--SEP` anywhere and kept `one\r\nnot `; 1.0 matches it at the start of
-    // a line only (#899). A bounce or a digest quoting another message's
-    // delimiter is the mail this protects.
     let parsed = mime::parse(&multipart("one\r\nnot --SEP here\r\ntwo"));
     assert_eq!(
         parsed.body.text.as_deref(),
@@ -85,10 +52,44 @@ fn a_boundary_quoted_mid_line_does_not_end_the_part() {
 }
 
 #[test]
+fn a_line_that_only_starts_with_the_boundary_does_not_end_the_part() {
+    for body in [
+        "FIRSTLINE\r\n--SEP this is not a delimiter\r\nSECONDLINE",
+        "FIRSTLINE\r\n--SEP\tnor this\r\nSECONDLINE",
+        "FIRSTLINE\r\n--SEP--this is no close either\r\nSECONDLINE",
+        "ALPHA\r\n--SEPX\r\nBETA",
+    ] {
+        assert_eq!(
+            mime::parse(&multipart(body)).body.text.as_deref(),
+            Some(body),
+            "the body was cut short"
+        );
+    }
+}
+
+#[test]
+fn a_body_quoting_its_own_boundary_reads_whole_and_keeps_its_attachment() {
+    let parsed = mime::parse(test_corpus::load("multipart-boundary-quoted-in-body").bytes());
+    let text = parsed.body.text.expect("a text body");
+    for line in [
+        "1. Mid-line, as in: the parts are split on --=_quoted_5e0a here.",
+        "--=_quoted_5e0a is only a delimiter when nothing but spaces follow it.",
+        "--=_quoted_5e0aX is a different boundary altogether.",
+        "All three are body text. This sentence is the end of the message.",
+    ] {
+        assert!(text.contains(line), "lost {line:?} from {text:?}");
+    }
+    assert!(!parsed.encoding_problems, "nothing here was damaged");
+    let names: Vec<_> = parsed
+        .parts
+        .iter()
+        .map(|part| part.attachment.filename.as_deref())
+        .collect();
+    assert_eq!(names, [Some("delimiter-rule.txt")]);
+}
+
+#[test]
 fn the_defaults_rfc2045_gives_are_filled_in() {
-    // §5.2: no `Content-Type` means `text/plain; charset=us-ascii`, for the
-    // message and for a part inside a multipart alike. A parser that treated
-    // "absent" as "unknown" would put the body in the attachment list.
     assert_eq!(
         mime::parse(b"From: ada@example.com\r\n\r\nplain body\r\n")
             .body
@@ -104,15 +105,8 @@ Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n--b\r\n\r\nno content type\
     );
 }
 
-// ---------------------------------------------------------------------------
-// RFC 2045 §6 — Content-Transfer-Encoding
-// ---------------------------------------------------------------------------
-
 #[test]
 fn quoted_printable_soft_breaks_join_and_undecodable_sequences_survive() {
-    // §6.7. A soft break is a `=` at end of line and joins with nothing
-    // between; `=ZZ` is not a hex pair and the RFC lets a robust decoder leave
-    // it alone, which is what "show what arrived" means here.
     let parsed = mime::parse(&single(
         "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable",
         b"soft=\r\nbreak and a stray =ZZ\r\n",
@@ -125,11 +119,6 @@ fn quoted_printable_soft_breaks_join_and_undecodable_sequences_survive() {
 
 #[test]
 fn base64_with_a_stray_byte_is_read_around_it_and_says_so() {
-    // `mail-parser` 1.0 skips a byte outside the alphabet and decodes the
-    // rest, so the words a sender meant arrive; 0.11 gave up on the part and
-    // showed the base64 itself. The flag is unchanged: the reader is still
-    // looking at a reading, not at what was sent (#901 is that the flag
-    // reaches nobody; this pins the half that works).
     let parsed = mime::parse(&single(
         "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64",
         b"aGVsbG8g*d29ybGQ\r\n",
@@ -143,11 +132,6 @@ fn base64_with_a_stray_byte_is_read_around_it_and_says_so() {
 
 #[test]
 fn an_unknown_transfer_encoding_is_flagged() {
-    // §6.4: an unrecognised Content-Transfer-Encoding must be treated as
-    // `application/octet-stream`. Showing the payload verbatim as text is a
-    // defensible degradation -- it beats an empty body -- but it is a guess,
-    // and a guess the reader presents as the message is the failure #901 is
-    // about. The audit found this one not even flagged.
     let parsed = mime::parse(&single(
         "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: x-uuencode",
         b"begin 644 note.txt\r\nM:&5L;&\\@=V]R;&0`\r\n`\r\nend\r\n",
@@ -162,15 +146,6 @@ fn an_unknown_transfer_encoding_is_flagged() {
 
 #[test]
 fn a_charset_that_decoded_lossily_is_flagged() {
-    // The case a user actually reports as mojibake, and the lossy direction
-    // of it: the octets are latin-1, the header says utf-8, and what survives
-    // is U+FFFD. Nothing later can recover the bytes -- once the replacement
-    // character is in the stored body it is in the search index and in every
-    // reply that quotes it.
-    //
-    // `is_encoding_problem` cannot see this. It is about the *transfer*
-    // encoding, so it is false in both directions of a charset mismatch,
-    // which is why #901 is worse than "computed and read by nothing" here.
     let parsed = mime::parse(&single(
         "Content-Type: text/plain; charset=utf-8",
         b"\xe9t\xe9 was the summer\r\n",
@@ -193,9 +168,6 @@ fn a_charset_that_decoded_lossily_is_flagged() {
 
 #[test]
 fn a_charset_that_decoded_cleanly_is_not_flagged() {
-    // The control: text containing a replacement character the *sender* sent
-    // is not a decoding failure, and flagging every U+FFFD would make the
-    // caveat meaningless on the mail that legitimately carries one.
     let parsed = mime::parse(&single(
         "Content-Type: text/plain; charset=utf-8",
         "the glyph \u{fffd} is what a font shows for a missing character\r\n".as_bytes(),
@@ -226,8 +198,6 @@ fn base64_and_quoted_printable_round_trip_from_the_corpus() {
 
 #[test]
 fn eight_bit_and_binary_bodies_arrive_as_their_own_bytes() {
-    // §6.2 and §6.8: both mean "not encoded". Anything that tried to decode
-    // them would corrupt exactly the mail that needed no help.
     let text = mime::parse(&single(
         "Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit",
         "Grüße\r\n".as_bytes(),
@@ -242,15 +212,8 @@ fn eight_bit_and_binary_bodies_arrive_as_their_own_bytes() {
     assert_eq!(binary.parts[0].content, b"\x00\x01\x02\r\n");
 }
 
-// ---------------------------------------------------------------------------
-// RFC 2046 §5.1 — multipart structure
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_delimiter_needs_its_own_line_and_may_carry_transport_padding() {
-    // §5.1.1. The boundary word without its dashes is body text, and trailing
-    // whitespace after a real delimiter is transport padding rather than part
-    // of the boundary.
     assert_eq!(
         mime::parse(&multipart("one\r\nSEP\r\ntwo"))
             .body
@@ -271,13 +234,6 @@ fn a_delimiter_needs_its_own_line_and_may_carry_transport_padding() {
 
 #[test]
 fn a_multipart_whose_boundary_never_appears_falls_back_to_its_own_text() {
-    // #900, RFC 2046 §5.1.1: a multipart entity whose boundary parameter is
-    // "unrecognisable" must be treated as `text/plain`. The header names a
-    // boundary that was rewritten and the body still uses the old one, so
-    // `mail_parser` cannot split it into parts at all -- the whole entity
-    // comes back as a single part typed `multipart/alternative`, and the
-    // fix is Postio's to read that raw content as the body rather than as a
-    // nameless attachment (see the module docs above).
     let raw = test_corpus::load("multipart-boundary-never-appears").bytes();
     let parsed = mime::parse(raw);
 
@@ -322,10 +278,6 @@ fn a_multipart_with_an_empty_boundary_parameter_falls_back_to_its_own_text() {
 
 #[test]
 fn a_multipart_fallback_body_is_not_flagged_as_flowed() {
-    // `text_is_flowed` reads the part's own `format` attribute, and the
-    // fallback part has none of the ones a real `text/plain` would -- it is
-    // still the whole `multipart/*` header. False is the honest answer, not
-    // a guess.
     let raw = test_corpus::load("multipart-boundary-never-appears").bytes();
     let parsed = mime::parse(raw);
 
@@ -334,9 +286,6 @@ fn a_multipart_fallback_body_is_not_flagged_as_flowed() {
 
 #[test]
 fn an_ordinary_multipart_is_unaffected_by_the_fallback() {
-    // The fallback triggers on the shape (multipart-typed, no children), not
-    // on every multipart -- a message whose boundary actually works must
-    // keep going through the ordinary path.
     let parsed = mime::parse(&multipart("hello"));
 
     assert_eq!(parsed.body.text.as_deref(), Some("hello"));
@@ -344,10 +293,6 @@ fn an_ordinary_multipart_is_unaffected_by_the_fallback() {
 
 #[test]
 fn the_lost_boundary_fixture_is_the_shape_the_fix_has_to_handle() {
-    // The input half of #900. The body is right there in the bytes and the
-    // boundary named in the header appears nowhere, which is what a gateway
-    // that rewrote one and not the other leaves behind. Pinned so the fixture
-    // cannot drift into being merely well-formed mail.
     let raw = test_corpus::load("multipart-boundary-never-appears").bytes();
     let text = String::from_utf8_lossy(raw);
     let (headers, body) = text.split_once("\r\n\r\n").expect("a header block");
@@ -368,9 +313,6 @@ fn the_lost_boundary_fixture_is_the_shape_the_fix_has_to_handle() {
 
 #[test]
 fn a_multipart_nested_forty_deep_neither_panics_nor_loses_its_leaf() {
-    // The correctness half of the surface #147's fuzzer treats as adversarial.
-    // `parse` is documented infallible; depth is the cheapest way to break
-    // that promise, and the leaf still has to come back.
     let depth = 40;
     let mut raw = Vec::from(
         &b"From: ada@example.com\r\nMIME-Version: 1.0\r\n\
@@ -398,9 +340,6 @@ Content-Type: multipart/mixed; boundary=\"b0\"\r\n\r\n"[..],
 
 #[test]
 fn the_preamble_and_the_epilogue_are_discarded() {
-    // §5.1.1 again: the text before the first delimiter and after the closing
-    // one is not part of any body. `multipart-alternative.eml` carries both
-    // precisely so this cannot regress unnoticed.
     let parsed = mime::parse(test_corpus::load("multipart-alternative").bytes());
     let text = parsed.body.text.unwrap_or_default();
     let html = parsed.body.html.unwrap_or_default();
@@ -412,17 +351,8 @@ fn the_preamble_and_the_epilogue_are_discarded() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// RFC 2046 §4.1.2 / RFC 2049 — charset declared versus actual bytes
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_mislabelled_charset_degrades_to_readable_text_rather_than_to_an_error() {
-    // The case that produces mojibake instead of a failure, and the one most
-    // likely to be silently wrong. Every one of these has to come back as
-    // *something* a person can look at: an empty reading pane is the one
-    // answer that is worse than wrong characters, because it is
-    // indistinguishable from a message that had nothing in it (#70).
     let utf8_as_ascii = single(
         "Content-Type: text/plain; charset=us-ascii",
         "été\r\n".as_bytes(),
@@ -457,20 +387,8 @@ fn the_charset_corpus_still_produces_a_body_for_every_fixture() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// RFC 2045 §6.7 — quoted-printable a sender got wrong
-// ---------------------------------------------------------------------------
-
 #[test]
 fn a_text_html_part_whose_quoted_printable_is_invalid_is_still_shown() {
-    // Two `=` in a row is not quoted-printable -- a data URI's base64 padding
-    // left unescaped is how it usually arrives -- and `mail_parser` gives up
-    // on the whole part when it meets one. For `text/html` that used to mean
-    // no body at all: the part came back typed as "other text", was never
-    // adopted as the HTML body, and was offered as a nameless attachment
-    // instead, while the reader showed an empty pane under "parts of this
-    // message could not be decoded". Three of the first 433 bodies a real
-    // account fetched (2026-09-14) were exactly that.
     let raw = single(
         "Content-Type: text/html; charset=\"utf-8\"\r\n\
 Content-Transfer-Encoding: quoted-printable",
@@ -503,10 +421,6 @@ Content-Transfer-Encoding: quoted-printable",
 
 #[test]
 fn a_text_plain_part_whose_quoted_printable_is_invalid_is_decoded_leniently() {
-    // The same sender error in a `text/plain` part: `mail_parser` keeps the
-    // part as text but leaves it *encoded*, so `=C3=A9` reached the screen
-    // as six characters. A lenient decode undoes every valid escape and
-    // keeps the stray `=` as the sender wrote it.
     let raw = single(
         "Content-Type: text/plain; charset=\"utf-8\"\r\n\
 Content-Transfer-Encoding: quoted-printable",

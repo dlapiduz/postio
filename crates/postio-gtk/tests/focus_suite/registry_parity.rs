@@ -1,9 +1,5 @@
-//! Registry parity (US7, T059; constitution II): every command Focus offers
-//! has a key, a row in the command bar, and a control a person can see.
-//!
-//! What does not yet is named in `NOT_YET`, and each story empties it: a
-//! command that gains all three and is still listed fails too, so the list
-//! can only shrink.
+//! Every command Focus offers has a key, a command-bar row and a control a person can see. A
+//! command that gains all three and is still in `NOT_YET` fails, so the list only shrinks.
 //!
 //! POSTIO-MEASUREMENT: a sweep over every command's key, bar row and control
 //! rather than a case about one of them; it runs on the nightly timer with
@@ -16,10 +12,23 @@ use postio_core::{
 
 use crate::support;
 
-/// Commands Focus offers that still miss a key, a command-bar row or a
-/// control. The command bar lists what the list's context reaches; the rest
-/// wait for the surfaces their stories build.
 const NOT_YET: &[&str] = &[
+    "go_to_calendar",
+    "calendar_agenda",
+    "calendar_previous",
+    "calendar_next",
+    "calendar_today",
+    "pop_out",
+    "pop_in",
+    "new_event",
+    "edit_event",
+    "move_event",
+    "duplicate_event",
+    "tentative_invite",
+    "save_event",
+    "save_and_send_event",
+    "email_attendees",
+    "close_window",
     "first_message",
     "last_message",
     "toggle_selection",
@@ -30,12 +39,9 @@ const NOT_YET: &[&str] = &[
     "toggle_result_order",
     "next_in_thread",
     "prev_in_thread",
-    // The thread's own, in the open message and its outline (spec 013): each
-    // has its key, and the thread bar's chips and Thread menu are the
-    // controls for stepping, but the command bar lists what the list reaches
-    // and these contexts are the message's, the outline's and the
-    // composer's. First, latest and first unread have no button of their own
-    // (the chips step to any message); the outline's `u` is a footer hint.
+    // The thread's own commands act in the open message, outline or composer, which the command bar
+    // (what the list reaches) does not list.
+    // First, latest and first unread have no button: the chips step to any message.
     "first_in_thread",
     "latest_in_thread",
     "first_unread_in_thread",
@@ -51,8 +57,7 @@ const NOT_YET: &[&str] = &[
     "view_original",
     "toggle_reader_view",
     "darken_message",
-    // The open message's own (T213): its control is the render-mode line
-    // over an HTML body, which no list-context surface shows.
+    // The open message's own: its control is the render-mode line over an HTML body.
     "switch_treatment",
     "find_in_message",
     "find_next",
@@ -65,8 +70,6 @@ const NOT_YET: &[&str] = &[
     "stop_digesting_sender",
     "view_source",
     "open_attachment_or_link",
-    // The open message's own (T206): its control is the dialog's More, and
-    // the command bar lists what the list reaches.
     "more_actions",
     "save_search",
     "back_to_words",
@@ -85,6 +88,28 @@ const NOT_YET: &[&str] = &[
     "numbered_list",
     "insert_link",
     "quote_block",
+    // Spec 014's composer commands: the composer's, like the six above, so
+    // the bar (which lists the list's) has no row for them. The source
+    // view's toggle and Download and attach have their controls; the
+    // formatting commands get theirs with ADR 0039's toolbar (Part B).
+    "heading_2",
+    "heading_3",
+    "heading_4",
+    "heading_5",
+    "heading_6",
+    "normal_text",
+    "strikethrough",
+    "inline_code",
+    "code_block",
+    "task_list",
+    "toggle_task",
+    "indent",
+    "outdent",
+    "divider",
+    "table",
+    "clear_formatting",
+    "toggle_markdown_source",
+    "attach_remote_image",
     "unsubscribe",
     "update_credential",
     "next_scope",
@@ -109,25 +134,21 @@ const NOT_YET: &[&str] = &[
     "filtered_tab_5",
     "filtered_tab_6",
     "filtered_tab_7",
-    // The capture sheet's own keys (T158): each has its control in the
-    // sheet, and the bar lists what the list reaches, as with the pickers'.
+    // The capture sheet's own keys each have a control in the sheet; the command bar lists what the
+    // list reaches.
     "capture_change_project",
     "capture_use_subject",
     "capture_write",
-    // The Contacts view's own (specs/011-focus-contacts S13): each has its
-    // key, and most have a control in the view, its card, its form, its sheet
-    // or the popover over it -- but the command bar lists what the list
-    // Spec 010's dropdown keys (#1825): each acts on the dropdown's row
-    // under the arrows -- Show all, a recent search, a person -- so the
-    // dropdown is their control and the command bar has no row for them.
+    // Spec 010's dropdown keys (#1825) act on the dropdown's row, so the dropdown is their control
+    // and the command bar has no row for them.
     "show_all_results",
     "forget_recent",
     "exclude_suggestion",
-    // History moves by its keys alone (and the Mac's swipe), with no button
-    // (spec 010 FR-020).
+    // History moves by its keys alone (and the Mac's swipe), with no button.
     "history_back",
     "history_forward",
-    // reaches, and these are reached from the view, as the pickers' are.
+    // The Contacts view's own keys are reached from the view; the command bar lists what the list
+    // reaches.
     "contact_popover",
     "contact_open_card",
     "contact_add",
@@ -160,8 +181,6 @@ const NOT_YET: &[&str] = &[
     "contacts_export",
 ];
 
-/// What Focus offers on Linux: less what the registry keeps off it
-/// (`registry::offered_on`), which no surface here draws or answers.
 fn focus_commands_on_linux() -> impl Iterator<Item = &'static CommandSpec> {
     registry::all().filter(|spec| {
         spec.requires.offered_by(Frontend::Focus)
@@ -171,9 +190,6 @@ fn focus_commands_on_linux() -> impl Iterator<Item = &'static CommandSpec> {
 
 pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let keymap = Keymap::defaults();
         let bar = window.command_bar_rows();
@@ -186,10 +202,8 @@ pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {
             if keymap.binding(id).is_none() {
                 lacks.push("key");
             }
-            // The results' own keys (spec 010, #1825) are reached from the
-            // results, whose controls draw them -- tabs, Quick Look, the
-            // looser searches -- and the command bar lists what the list
-            // reaches: a key is what they owe here.
+            // The results' own keys (#1825) are reached from the results, whose controls draw them;
+            // the command bar lists what the list reaches.
             let results_only = spec.contexts == ContextSet::of(Context::Results);
             if !results_only && !bar.contains(&id) {
                 lacks.push("command-bar row");
@@ -218,20 +232,12 @@ pub fn every_focus_command_has_a_key_a_bar_row_and_a_control() {
     });
 }
 
-/// Commands that are answered, but not by running them here: `Quit` closes
-/// the window the case is standing in.
-const NOT_RUN: &[CommandId] = &[CommandId::Quit];
+const NOT_RUN: &[CommandId] = &[CommandId::Quit, CommandId::CloseWindow];
 
-/// A command Focus offers with its key, bar row and control must also reach
-/// an arm of `FocusWindow::act`: the three above are all things to look at,
-/// and `g s` passed them while pressing it did nothing (T236). Each command
-/// outside `NOT_YET` is run, and none may fall through to "no Focus surface
-/// answers this command yet".
+/// A command with a key, bar row and control must also reach an arm of `FocusWindow::act`: `g s`
+/// once passed those checks while pressing it did nothing.
 pub fn every_offered_command_that_is_whole_reaches_a_handler() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (_fixture, window) = support::three_in_the_inbox().await;
         let mut unanswered = Vec::new();
         for spec in focus_commands_on_linux() {
@@ -243,9 +249,8 @@ pub fn every_offered_command_that_is_whole_reaches_a_handler() {
             window.act(id);
             crate::settle();
             unanswered.extend(window.take_unanswered());
-            // Whatever it opened -- a picker, the bar, the folders,
-            // Settings -- is closed before the next. Settings is a dialog
-            // whose own keys close it, so `Back` acted on the window does not.
+            // Whatever it opened is closed before the next; Settings' own keys close it, so `Back`
+            // acted on the window does not.
             if let Some(settings) = window.settings() {
                 settings.close();
             }

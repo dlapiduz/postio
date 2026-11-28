@@ -64,7 +64,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         base = Path(raw)
 
-        # -- 1. a fully declared suite passes, and is actually looked at -----
         root = base / "clean"
         build(root, "mod a;\nmod b;\n", files=("a", "b"))
         result = run(root)
@@ -80,7 +79,6 @@ def main() -> int:
             f"how it lied to me while I was writing it:\n{result.stdout}",
         )
 
-        # -- 2. an undeclared file fails, and is named ----------------------
         root = base / "undeclared"
         build(root, "mod a;\n", files=("a", "forgotten"))
         result = run(root)
@@ -96,7 +94,6 @@ def main() -> int:
             f"the report does not say which file:\n{result.stderr}",
         )
 
-        # -- 3. untracked files are not the repository's problem ------------
         root = base / "untracked"
         build(root, "mod a;\n", files=("a", "scratch"), track=False)
         result = run(root)

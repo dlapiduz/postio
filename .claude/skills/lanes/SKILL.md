@@ -1,14 +1,11 @@
 ---
 name: lanes
-description: Report who else is working this repository right now — which issues are claimed, which worktrees exist, which branches and PRs are open, and whether any claim is stale. Use at the start of a session, and before assuming an issue is free.
+description: Report who else is working this repository now: claimed issues, worktrees, open branches and PRs, stale claims. Use at session start and before assuming an issue is free.
 ---
 
 # Lanes
 
-Several sessions work this repository at once. Each takes a GitHub issue and
-gets a private worktree, so they no longer collide in one tree — but they do
-still share a machine, a target directory, and an issue tracker. This answers
-"who else is here, and what can I safely take".
+Sessions share a machine, a target directory and an issue tracker. This answers "who else is here, and what can I safely take".
 
 ## 1. What is claimed
 
@@ -18,42 +15,29 @@ gh issue list --label in-progress --json number,title,assignees \
 git worktree list
 ```
 
-An issue labelled `in-progress` with a worktree under
-`~/src/postio-worktrees/issue-<n>` is someone's live work. Leave it alone.
+An `in-progress` issue with a worktree under `~/src/postio-worktrees/issue-<n>` is live work. Leave it alone.
 
-**A claim is not stale because it is quiet.** A session can spend hours on one
-issue — reading it, waiting on CI, running a suite — and leave no worktree
-commit or branch for most of that time. An issue claimed this morning is
-somebody's afternoon, not an abandoned lock.
-
-Treat a claim as abandoned only after **a day or more** with no worktree, no
-branch and no commits:
+A quiet claim is not a stale one: a session can spend hours reading or running a suite with no commit. Treat a claim as abandoned only after **a day or more** with no worktree, no branch and no commits:
 
 ```bash
 scripts/issue-release.sh --stale        # a day or more; the safe default
 scripts/issue-release.sh --stale 3      # a longer threshold
 ```
 
-It also clears left-over locks whose issue is no longer claimed — those are
-harmless-looking and make `issue-claim.sh` refuse that issue forever.
+It also clears left-over locks whose issue is no longer claimed; those make `issue-claim.sh` refuse the issue forever. Releasing live work is far worse than leaving a label up a day too long; when in doubt, leave it and say so.
 
-Releasing live work is far worse than leaving a label up a day too long. When
-in doubt, leave it and say so.
-
-## 2. What is in flight but not merged
+## 2. In flight, not merged
 
 ```bash
 gh pr list --json number,title,headRefName,isDraft \
   --jq '.[] | "#\(.number) \(.headRefName) \(.title)"'
 ```
 
-A branch with an open PR is finished work waiting on review, not abandoned
-work. Do not restart it.
+A branch with an open PR is finished work awaiting review. Do not restart it.
 
 ## 3. Is the machine busy
 
-This is the part the worktrees did *not* fix. Every session shares one target
-directory and cargo serialises on it, so builds queue rather than parallelise.
+Every session shares one target directory and cargo serialises on it, so builds queue.
 
 ```bash
 uptime                      # load average against 8 cores
@@ -61,10 +45,7 @@ pgrep -a "rustc|cargo" | head
 scripts/test-headless.sh --status
 ```
 
-Four concurrent release builds is what put this box into swap. If the load
-average is already above ~8, wait rather than starting a build — and never run
-`scripts/run-isolated.sh` while others are building, since it links `--release`
-in a target directory of its own.
+Four concurrent release builds put this box into swap. Above a load of ~8, wait rather than start a build. Never run `scripts/run-isolated.sh` while others build; it links `--release` in its own target directory.
 
 ## 4. What is free
 
@@ -72,10 +53,4 @@ in a target directory of its own.
 scripts/issue-claim.sh --dry-run
 ```
 
-It applies the real rules — open, `ready`, unassigned, nothing still-open
-blocking it — and names what it would take, highest priority first, without
-taking it.
-
-If that says there is nothing, **there is nothing**. Say so and stop. An issue
-without the `ready` label has not been triaged as agent-work, and an `epic`,
-`icebox` or `needs-architecture` issue is deliberately not yours to start.
+It applies the real rules (open, `ready`, unassigned, nothing open blocking) and names what it would take, highest priority first. If it says nothing, **there is nothing**: say so and stop. An issue without `ready` is not triaged as agent-work; `epic`, `icebox` and `needs-architecture` are not yours to start.

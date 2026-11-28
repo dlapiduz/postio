@@ -1,15 +1,7 @@
 name: Benches
 
-# On a timer, not on every push. This job only proves the bench targets still
-# compile -- it deliberately does not time anything, because a shared runner is
-# far too noisy to measure against a 16ms budget. Compiling the workspace a
-# second time to learn that cost ~7 minutes on every commit, which is most of
-# CI's wall clock for a signal that changes rarely.
-#
-# Nightly catches a break within a day, which is the right resolution for
-# something no one is blocked on. workflow_dispatch is there for when you have
-# just touched a bench and want to know now.
-#
+# On a timer: this job only proves the bench targets compile, and times nothing because a shared
+# runner is too noisy for a 16ms budget.
 on:
   schedule:
     - cron: "0 6 * * *"
@@ -17,7 +9,6 @@ on:
 
 permissions:
   contents: read
-  # The `changed` job reads the previous run's head SHA.
   actions: read
 
 env:
@@ -27,10 +18,8 @@ env:
   CARGO_BUILD_JOBS: 4
 
 jobs:
-  # A 33-minute release compile over a tree nobody touched proves nothing
-  # new, so a scheduled run is skipped when `main` has not moved (#1710).
-  # Clippy's `--all-targets` already type-checks the benches on every pull
-  # request; what this adds is the release-profile build of them.
+  # A scheduled run is skipped when `main` has not moved (#1710); clippy's `--all-targets` already
+  # checks benches on every PR.
   changed:
     name: Anything to compile
     runs-on: ubuntu-latest
@@ -60,34 +49,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/python
 
-      # The pin decides; see the note in ci.yml's `fmt` job. A
-      # `rustup default stable` here would silently win over
-      # rust-toolchain.toml, which is the bug #38 is about.
+      # The pin decides; a `rustup default stable` here would win over rust-toolchain.toml (#38).
       - name: Install Rust toolchain
         run: rustup show active-toolchain
 
-      # `.cargo/config.toml` names `postio-linker` and `postio-cc`; this puts
-      # them on PATH (#1101). Before the first cargo invocation, after rustup
-      # has made `$CARGO_HOME/bin` exist.
+      # Puts `postio-linker` and `postio-cc` on PATH (#1101), after rustup has made
+      # `$CARGO_HOME/bin`.
       - name: Install the linker and cc shims
         run: scripts/install-shims.sh
 
-      # The cache key has to name the compiler. It no longer moves on its own
-      # -- rust-toolchain.toml pins it (#38) -- but the bump still happens, as
-      # a commit, and the cache must not survive it: a key of Cargo.lock alone
-      # still matches afterwards, so the runner spends ~50s restoring 2 GB of
-      # artifacts built by the old compiler that cargo then throws away. A miss
-      # is cheaper than a restore that buys nothing.
+      # The cache key names the compiler: a key of Cargo.lock alone would restore 2 GB of artifacts
+      # the new compiler discards.
       - name: Identify the compiler
         id: rust
         run: echo "version=$(rustc --version | tr ' ()/' '----')" >> "$GITHUB_OUTPUT"
 
-      # The criterion harness is a separate bead. Until it lands there are no
-      # bench targets, and a missing bench is not a CI failure -- this job just
-      # reports that it skipped. Once benches/ exists it starts compiling them,
-      # with no workflow change needed. Perf budgets are asserted by the bench
-      # code itself; this job deliberately only builds, because a shared runner
-      # is far too noisy to time anything on.
+      # A missing bench is not a failure; this job only builds, since perf budgets are asserted by
+      # the bench code.
       - name: Detect bench targets
         id: detect
         run: |
@@ -130,16 +108,9 @@ jobs:
         if: steps.detect.outputs.found == 'true'
         run: cargo bench --workspace --no-run
 
-      # Keep the ~400 third-party crates; drop our own, which every commit
-      # invalidates anyway. Measured at ~39 MB against a ~2 GB cache, so this
-      # is housekeeping rather than a speed-up -- the win is that a restored
-      # cache never carries a stale artifact of ours for cargo to reason
-      # about. Deliberately conservative: it names only files this workspace
-      # produces, because deleting a third-party rlib by accident would make
-      # every later build slower, not faster.
-      #
-      # Runs as a normal step, which is what makes it take effect: post steps
-      # run after all normal ones, so actions/cache saves what is left here.
+      # Drop our own artifacts, keep the third-party crates; names only files this workspace
+      # produces.
+      # A normal step, so it runs before the post step that saves the cache.
       - name: Drop workspace artifacts before caching
         if: always()
         run: |

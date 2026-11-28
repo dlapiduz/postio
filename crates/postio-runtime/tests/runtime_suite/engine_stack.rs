@@ -1,43 +1,3 @@
-//! The sync engine's thread does not borrow the ambient stack size (#1541).
-//!
-//! `Engine::spawn` puts the whole engine on a thread of its own and then
-//! `block_on`s the sync loop there, so every frame of `sync_wave` →
-//! `sync_pass` → `resync_mailbox` → the backend's `select` future is stacked
-//! on that one thread. A `std::thread` spawned without `stack_size` gets
-//! Rust's **2 MiB** default — not the 8 MiB the kernel gives the main thread
-//! from `RLIMIT_STACK` — and nothing here ever asked for more.
-//!
-//! Measured on this workspace before the fix, by sweeping `RUST_MIN_STACK`
-//! until a sync pass stopped fitting:
-//!
-//! | path | peak stack for one trivial sync |
-//! |---|---|
-//! | `MockBackend` | between 512 KiB and 768 KiB |
-//! | real IMAP over loopback (the classic app's `attach_account` case) | between 1024 KiB and 1088 KiB |
-//!
-//! So the smallest sync this project can express — one mailbox, one message,
-//! no latency — already spends about **half** of the engine thread's ceiling,
-//! and what remains has to cover a real account: a mailbox tree rather than
-//! one folder, several passes overlapping inside `sync_wave`'s
-//! `FuturesUnordered`, and a server response deep enough to parse. Three
-//! aborts in two minutes on 2026-09-17 are what running out looks like —
-//! the classic app's `attach_account` case died with
-//! `std::sys::pal::unix::stack_overflow::imp::signal_handler` on the frame
-//! above `abort`, which is Rust's guard-page handler and not, as #1541
-//! assumed from the `free(): corrupted unsorted chunks` seen in a separate
-//! live run, memory corruption.
-//!
-//! # Why this runs in a child process
-//!
-//! `RUST_MIN_STACK` is read once and cached the first time a thread is
-//! spawned, and the test harness has already spawned one by the time a case
-//! runs. Setting it here would change nothing. So the case re-executes its
-//! own binary with the variable set, and asserts the child got through a sync
-//! pass: the fix is an explicit `stack_size`, which is precisely what makes
-//! the child stop caring what the ambient default is. It is also why this is
-//! a binary of its own rather than a `runtime_suite` module — that file's
-//! own docs say a case needing a process-global has to stay out.
-
 use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -47,20 +7,13 @@ use postio_runtime::engine::{Engine, EngineParts, NetworkSource, SystemClock};
 use postio_storage::seed::seed_small;
 use postio_storage::{BlobStore, test_support};
 
-/// Set in the child, so the case knows to do the work rather than spawn again.
 const CHILD: &str = "POSTIO_ENGINE_STACK_CHILD";
 
-/// Comfortably under what a sync pass needs, and proven to abort the engine
-/// thread before the fix: at this size six of `runtime_suite`'s seven
-/// sync-driving cases died with `thread 'postio-sync' has overflowed its
-/// stack`. Low enough to be unambiguous, high enough that the threads this
-/// test is *not* about — the harness's own runtime, the store's — still run.
+/// Comfortably under what a sync pass needs, but high enough for the harness's own threads.
 const AMBIENT_STACK: usize = 512 * 1024;
 
 const CASE: &str = "a_sync_pass_does_not_run_on_whatever_stack_it_was_given";
 
-/// One mailbox with a little mail in it. The assertion is that a pass ran at
-/// all, so the cheapest server that provokes one is the right one.
 fn server() -> MockBackend {
     let message = |n: u32| {
         format!(
@@ -81,7 +34,6 @@ fn server() -> MockBackend {
     MockBackend::builder().mailbox(inbox).build()
 }
 
-/// Drive one sync pass through a real `Engine`, on the engine's own thread.
 async fn sync_once() {
     let database = test_support::memory().await;
     let report = seed_small(&database, 3).await;
@@ -99,7 +51,6 @@ async fn sync_once() {
         database: database.clone(),
         blobs,
         backend: backend.clone(),
-        // Never dialled: nothing here queues a send.
         smtp: Arc::new(postio_smtp::transport::RustlsConnector::new().expect("a connector")),
         tokens: Arc::new(postio_account::auth::StoredPasswordSource::new(Arc::new(
             postio_account::secret::MemorySecretStore::default(),
@@ -115,8 +66,6 @@ async fn sync_once() {
     })
     .expect("the engine starts");
 
-    // A header fetch is `resync_mailbox` reached and returned from, which is
-    // the deepest frame in the crash and the whole point of the exercise.
     let waited = Instant::now();
     while backend.header_fetches().is_empty() {
         assert!(

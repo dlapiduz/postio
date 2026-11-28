@@ -1,10 +1,5 @@
-//! What every Postio frontend holds.
-//!
-//! One app at a time opens the store -- the desktop app or the terminal --
-//! and starts its host (`postio-host`) in its own process (ADR 0041). This
-//! crate is the frontend's side of that: commands go down, events come up,
-//! and reads are answered from the host's local state.
-//! `docs/archive/specs/005-tui-frontend/contracts/protocol.md` is the contract.
+//! The frontend's side of the host split (ADR 0041): commands go down, events come up, reads are
+//! answered from the host's local state.
 pub mod api;
 pub mod counting;
 pub mod protocol;

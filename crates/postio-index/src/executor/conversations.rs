@@ -1,53 +1,9 @@
-//! Conversation search (spec 010): the match answered as conversations, with
-//! every facet and the months histogram, in a fixed number of statements.
-//!
-//! # One walk, folded in Rust
-//!
-//! [`search`](super::search) reads the match twice or more -- a count, a
-//! pool, a hydrate -- and [`facets`](super::facets) walks it again per scope.
-//! A conversation search needs the whole match whatever the page: a thread
-//! is one row however many of its messages matched, the total is of
-//! conversations, and every facet is a count of conversations over the same
-//! capped match (D3). So the match is read **once**, as a *narrow
-//! projection* (research R2): the capped match joined to `messages`, each row
-//! a handful of integers -- its conversation, folder, dates and flags, its
-//! text scores, its people, labels and attachment count (columns the row
-//! keeps, D30), and one short correlated lookup (whether it has an open
-//! marker). [`Fold`] takes the rows as they
-//! stream and builds the conversations; the facets are counted from those.
-//!
-//! The walk stops as soon as it holds [`CONVERSATION_WALK_CAP`] messages
-//! (D30), so a word in every message of a large store reads the cap's worth
-//! of rows and no more.
-//!
-//! A filter that is a *set* of messages -- `from:`, `to:`, `subject:`,
-//! `filename:`, `list:`, `group:`, `label:`, `has:action`, a negated word --
-//! is read once, as ids, in one statement with the words' own matches, and
-//! the walk is then keyed by the messages that survive ([`Fold::walk_sets`]).
-//! Left in SQL as `m.id IN (…)`, this engine tests it per row walked at a
-//! cost that grows with the set: `from:` alone took 440 ms on 20,000
-//! messages, and takes 6 as a set.
-//!
-//! Then one hydrate for the rows that will be ranked or shown, and one read
-//! of the folders for how much was searched. Three statements, or four with
-//! a set, whatever the match size; `index_suite::search_statement_budget`
-//! holds that.
-//!
-//! # Ranking
-//!
-//! The executor's own: a message's text score is its metadata score plus
-//! [`BODY_SCORE_WEIGHT`] of its body score, a conversation's best message is
-//! its best-scoring match, and the conversations are ordered by that
-//! message the way [`search`](super::search) orders its pool -- first by the
-//! pool ordering (text and age, [`POOL_AGE_WEIGHT_PER_YEAR`]), then, for the
-//! best [`CONVERSATION_POOL`], by [`rank_score`](super::rank_score) and its
-//! bands ([`relevance_keys`]), with ties going to the conversation more of
-//! whose messages matched (research R3). The order never depends on which
-//! page is asked for, so paging cannot reorder what was already shown.
-//!
-//! Unlike [`search`](super::search), nothing is ordered in SQL: the fold
-//! holds every match already, and sorting ten thousand numbers in Rust is
-//! not what costs.
+//! Conversation search: the match answered as conversations with every facet and the months
+//! histogram, in a fixed number of statements.
+//! The match is read once as a narrow projection and folded in Rust, stopping at
+//! [`CONVERSATION_WALK_CAP`] messages; a filter that is a set of messages is read once as ids,
+//! since `m.id IN (…)` tested per row took 440 ms on 20,000 messages and 6 ms as a set. The order
+//! never depends on the page asked for, so paging cannot reorder what was shown.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -73,37 +29,22 @@ use super::{
 };
 use crate::error::Result;
 
-/// How many conversations, best by the pool ordering, are ranked in full.
-///
-/// A constant rather than a multiple of the page, as `search`'s pool is,
-/// because the order must not depend on the page asked for: the dropdown's
-/// four and the results' first fifty are the same four.
+/// A constant, not a multiple of the page: the order must not depend on the page asked for.
 const CONVERSATION_POOL: usize = 250;
 
-/// Two-way frequency (D21) from which a sender is "frequent": the second of
-/// [`known`](super::known)'s four steps, ten letters either way.
 const FREQUENT_SENDER: i64 = 10;
 
-/// A conversation search.
 #[derive(Debug, Clone, Copy)]
 pub struct ConversationRequest<'a> {
-    /// Which accounts to search.
     pub account: AccountScope,
-    /// The query.
     pub query: &'a ParsedQuery,
-    /// Best match or newest first.
     pub order: ConversationOrder,
-    /// How many conversations to skip.
     pub offset: u32,
-    /// How many to return: four for the dropdown, a page for the results.
     pub limit: u32,
-    /// The day the months histogram ends with (D4).
     pub today: NaiveDate,
 }
 
 impl ConversationRequest<'_> {
-    /// The same match as [`search`](super::search) would make of it: every
-    /// folder but drafts, junk and trash, unless the query names one.
     fn as_search(&self) -> SearchRequest<'_> {
         SearchRequest {
             account: self.account,
@@ -115,17 +56,11 @@ impl ConversationRequest<'_> {
     }
 }
 
-/// A forgiving query whose exact match holds fewer conversations than this
-/// is widened to the words near its own (ADR 0037, as amended): a page of
-/// the results view. It is the query's alone, never the page asked for, so
-/// the dropdown's "Show all N" and the results' count are of one list.
+/// The query's alone, never the page asked for, so the dropdown's "Show all N" and the results'
+/// count are of one list (ADR 0037).
 const FORGIVE_BELOW: usize = 50;
 
-/// The request's match, walked: its words exactly, or -- for a forgiving
-/// query whose exact match holds fewer than [`FORGIVE_BELOW`]
-/// conversations -- each word read as any of the words near it, with the
-/// conversations the exact match held. The same for the search, its Files
-/// tab and its People tab, so their counts are of one match.
+/// The same for the search, its Files tab and its People tab, so their counts are of one match.
 async fn walked(
     connection: &Connection,
     request: &ConversationRequest<'_>,
@@ -154,7 +89,6 @@ async fn walked(
     ))
 }
 
-/// `plan`'s match, walked by its sets when it has any.
 async fn walk(connection: &Connection, plan: &Plan) -> Result<Fold> {
     if plan.sets.is_empty() {
         Fold::walk(connection, plan).await
@@ -163,9 +97,6 @@ async fn walk(connection: &Connection, plan: &Plan) -> Result<Fold> {
     }
 }
 
-/// Searches as conversations: one page of hits, the total, and the facets.
-///
-/// `now` is the ranking's clock, as in [`search`](super::search).
 pub async fn search_conversations(
     connection: &Connection,
     request: &ConversationRequest<'_>,
@@ -174,9 +105,7 @@ pub async fn search_conversations(
     let start = Instant::now();
     let (fold, exact) = walked(connection, request).await?;
     let conversations = fold.conversations();
-    // What the words found exactly comes before what only their near words
-    // found (ADR 0037, as amended): `true` for every conversation, unless
-    // the search was widened.
+    // Exact matches come before what only the near words found (ADR 0037).
     let exact: Vec<bool> = conversations
         .iter()
         .map(|conversation| {
@@ -193,8 +122,6 @@ pub async fn search_conversations(
         .min(order.len());
     let page = &order.ranked[offset..end];
 
-    // The rows that need more than the fold holds: the ranked pool, and the
-    // page wherever it falls.
     let mut wanted: Vec<i64> = order
         .pool
         .iter()
@@ -207,9 +134,6 @@ pub async fn search_conversations(
     let order = order.rank(&fold, &conversations, &exact, &rows, request.query, now);
     let page: Vec<usize> = order[offset..end].to_vec();
 
-    // Where in which attachment, for the shown rows an attachment's text
-    // matched, and the Files tab's count: one statement, and none when no
-    // message carries a file or matched in one.
     let in_files: Vec<MessageId> = page
         .iter()
         .map(|at| &fold.found[conversations[*at].best])
@@ -239,7 +163,6 @@ pub async fn search_conversations(
 
     let searched = searched(connection, request).await?;
     let elapsed = start.elapsed();
-    // Shape and cost, never the query: see `search_as`.
     tracing::debug!(
         terms = request.query.text_terms().count(),
         filters = request.query.filters().count(),
@@ -258,26 +181,18 @@ pub async fn search_conversations(
         corpus_complete: searched.bodies,
         contents_complete: searched.contents,
         facets: facets(&conversations, request.today, fold.capped()),
-        // The cards the Files tab lists, counted as it lists them (#2178).
         files: cards,
         people: people_in(&conversations, &searched.own),
-        // Names are the session's to read, for the counts it keeps.
         names: FacetNames::default(),
         elapsed,
     })
 }
 
-/// One message the match holds, as the Files tab reads it.
 pub(super) struct Carrier {
-    /// The message.
     pub(super) id: MessageId,
-    /// Whether an attachment's text matched it.
     pub(super) in_file: bool,
 }
 
-/// The messages the request's match holds that carry attachments: the
-/// same walk [`search_conversations`] makes, capped as it is, one
-/// occurrence per content.
 pub(super) async fn carriers(
     connection: &Connection,
     request: &ConversationRequest<'_>,
@@ -286,7 +201,6 @@ pub(super) async fn carriers(
     Ok(carried(&fold))
 }
 
-/// The messages of `fold` that carry attachments.
 fn carried(fold: &Fold) -> Vec<Carrier> {
     fold.found
         .iter()
@@ -298,22 +212,13 @@ fn carried(fold: &Fold) -> Vec<Carrier> {
         .collect()
 }
 
-/// One person the match reaches, as the People tab counts them.
 pub(super) struct Correspondent {
-    /// Their address row.
     pub(super) address: i64,
-    /// Matched messages from them.
     pub(super) from: u64,
-    /// Matched messages to them (to, cc, bcc) not also from them.
     pub(super) to: u64,
-    /// The newest of those, in milliseconds.
     pub(super) last: i64,
 }
 
-/// Everyone the request's match is from or to, each with how many of the
-/// matched messages and the newest: the same walk [`search_conversations`]
-/// makes, capped as it is, one occurrence per content -- the people its
-/// People count is of.
 pub(super) async fn correspondents(
     connection: &Connection,
     request: &ConversationRequest<'_>,
@@ -351,17 +256,10 @@ pub(super) async fn correspondents(
     Ok(people.into_values().collect())
 }
 
-/// The words a file's name is checked for: the free text and every
-/// `filename:` value; empty when the query names no word for a file.
 pub(super) fn file_terms(query: &ParsedQuery) -> Vec<String> {
     Terms::of(query).files
 }
 
-// ---------------------------------------------------------------------------
-// The walk
-// ---------------------------------------------------------------------------
-
-/// One matched message, as the projection gave it.
 #[derive(Debug, Clone)]
 struct Found {
     id: i64,
@@ -374,58 +272,38 @@ struct Found {
     answered: bool,
     attachment: bool,
     action: bool,
-    /// Attachments it carries: the Files tab's count.
     files: u64,
-    /// Metadata score plus [`BODY_SCORE_WEIGHT`] of the body's, negative
-    /// is better, as `bm25` was.
     text: f64,
-    /// Whether the body index matched it.
     in_body: bool,
-    /// Whether an attachment's text matched it.
     in_file: bool,
     senders: Vec<i64>,
     recipients: Vec<i64>,
     labels: Vec<i64>,
 }
 
-/// One message's text scores, from whichever indexes matched it.
 #[derive(Debug, Clone, Copy, Default)]
 struct Scores {
-    /// Metadata, plus [`BODY_SCORE_WEIGHT`] of the body's and the files':
-    /// negative is better, as `bm25` was.
     text: f64,
     in_body: bool,
     in_file: bool,
 }
 
-/// The match, read once.
 #[derive(Debug, Default)]
 struct Fold {
     found: Vec<Found>,
     at: HashMap<i64, usize>,
-    /// Each content's place in [`Fold::found`]: a message filed in two
-    /// folders is one content (#1780), and one match.
+    /// A message filed in two folders is one content (#1780), and one match.
     contents: HashMap<i64, usize>,
-    /// Each exact copy's ([`COPY_KEY`]) place in [`Fold::found`]: an IMAP
-    /// message filed in two folders has two contents, and is one match
-    /// all the same (#1526).
+    /// An IMAP message filed in two folders has two contents and is one match all the same (#1526).
     copies: HashMap<String, usize>,
-    /// The occurrences another of the same content stands for, so that
-    /// their rows from the other index are passed over too.
     passed: std::collections::HashSet<i64>,
 }
 
 impl Fold {
-    /// Streams the projection into a fold: the one walk of the match,
-    /// stopped once it holds the cap's worth of messages.
-    ///
-    /// Driven by the free-text match when there is one, as `count` is, and
-    /// otherwise a walk of `messages` under the plan's conditions.
     async fn walk(connection: &Connection, plan: &Plan) -> Result<Self> {
         let mut fold = Fold::default();
         let mut params = plan.params_for(Form::Driven);
-        // Rows, not messages: the union hands a message back once per index
-        // it matched in, so twice the cap bounds the walk however it falls.
+        // Rows, not messages: the union hands a message back once per index it matched in.
         params.push(turso::Value::Integer(cap() * 2));
         let source = if plan.has_match {
             Walk::Matched
@@ -439,29 +317,18 @@ impl Fold {
         Ok(fold)
     }
 
-    /// [`Fold::walk`] for a plan with sets ([`Plan::build_sets`]): the free
-    /// text and every set read first, in one statement, and intersected
-    /// here; then the projection keyed by the messages that survive.
-    ///
-    /// Two statements where [`Fold::walk`] is one, and far cheaper whenever
-    /// a set is in play: `budget from:ada` reads the word's matches and
-    /// Ada's messages as two lists of ids, and walks `messages` only for the
-    /// few in both. Tested in SQL, each of the word's matches would have
-    /// been compared against every one of Ada's (see [`super::IdSet`]).
+    /// Two statements where [`Fold::walk`] is one, far cheaper with a set: `budget from:ada` reads
+    /// two id lists and walks `messages` only for the few in both.
     async fn walk_sets(connection: &Connection, plan: &Plan) -> Result<Self> {
-        // The free text is read here only when a set must also hold: then
-        // the walk is keyed by the messages in both. With refusals alone,
-        // the walk is the match itself, and a refused message is skipped as
-        // it streams past.
+        // Free text is read here only when a set must also hold; with refusals alone the walk is
+        // the match itself and a refused message is skipped as it streams past.
         let keeps = plan.sets.iter().any(|set| !set.negated);
         let read_text = plan.has_match && keeps;
         let mut arms: Vec<String> = Vec::new();
         let mut params: Vec<turso::Value> = Vec::new();
         if read_text {
-            // The match's own two arms, with their scores: `fts_score` bare
-            // and with the match's own parameter, as `HITS_JOIN` explains.
-            // Both indexes are keyed by content: each match is joined to
-            // every message carrying it, and the fold keeps one.
+            // `fts_score` bare with the match's own parameter, as `HITS_JOIN` explains. Both
+            // indexes are keyed by content: each match is joined to every message carrying it.
             arms.push(format!(
                 "SELECT -2, m.id, h.meta, NULL, NULL
                    FROM (SELECT content_id, fts_score({META}, ?1) AS meta
@@ -477,8 +344,6 @@ impl Fold {
                      ON m.content_id = h.content_id"
                     .to_owned(),
             );
-            // What attachments say, one row per content however many of
-            // its units match ([`HITS_JOIN_WITH_FILES`]).
             arms.push(
                 "SELECT -3, m.id, NULL, NULL, h.file
                    FROM (SELECT content_id, max(unit_score) AS file
@@ -509,8 +374,6 @@ impl Fold {
                 Ok(set) => {
                     sets[set].insert(id);
                 }
-                // A free-text arm: the score negated here, outside the
-                // projection, as `fetch_candidates` negates it.
                 Err(_) => {
                     let meta: Option<f64> = row.col(2)?;
                     let body: Option<f64> = row.col(3)?;
@@ -536,8 +399,6 @@ impl Fold {
         let refuse: std::collections::HashSet<i64> =
             refuse.into_iter().flat_map(|(_, ids)| ids).collect();
         let wanted = |id: &i64| keep.iter().all(|set| set.contains(id)) && !refuse.contains(id);
-        // The messages to walk: the free text's matches, else the smallest
-        // set that must hold; with neither, every message, less the refused.
         let candidates: Option<Vec<i64>> = if read_text {
             Some(scores.keys().copied().filter(wanted).collect())
         } else {
@@ -576,8 +437,8 @@ impl Fold {
                 } else {
                     (Walk::Messages, plan.params.clone())
                 };
-                // Twice for the union's two halves, and room for every
-                // refused row on top: the cap counts what is kept.
+                // Twice for the union's two halves, plus every refused row: the cap counts what is
+                // kept.
                 params.push(turso::Value::Integer(
                     (cap() + refuse.len() as i64).saturating_mul(2),
                 ));
@@ -594,9 +455,6 @@ impl Fold {
         Ok(fold)
     }
 
-    /// One row of the projection; answers whether to read on. `scores` are
-    /// the message's text score and whether its body matched, when they
-    /// were read apart from the row ([`Fold::walk_sets`]).
     fn take(&mut self, row: &turso::Row, scores: Option<Scores>) -> postio_storage::Result<bool> {
         let id: i64 = row.col(0)?;
         let scores = match scores {
@@ -614,8 +472,6 @@ impl Fold {
             }
         };
         if let Some(at) = self.at.get(&id) {
-            // The same message from another index: the halves add, as
-            // `fetch_candidates` adds them.
             let found = &mut self.found[*at];
             found.text += scores.text;
             found.in_body |= scores.in_body;
@@ -625,15 +481,10 @@ impl Fold {
         if self.passed.contains(&id) {
             return Ok(true);
         }
-        // Another occurrence of a content already held: the earliest stands
-        // for it, as `search`'s `where_sql` picks it. Every row the walk
-        // hands over already passed the plan's conditions and sets, so the
-        // earliest met here is the earliest that qualifies. The text score
-        // is the content's, whichever occurrence carried it.
-        //
-        // An exact copy is the same message under another content, and
-        // stands the same way. Only rows that matched reach the fold, so
-        // the copy that stands always matched.
+        // Another occurrence of a content already held: the earliest stands for it, as `search`'s
+        // `where_sql` picks it.
+        // An exact copy stands the same way; only rows that matched reach the fold, so the copy
+        // that stands always matched.
         let content: Option<i64> = row.col(15)?;
         let copy: Option<String> = row.col(17)?;
         let held_at = content
@@ -663,10 +514,8 @@ impl Fold {
             return Ok(true);
         }
         if self.capped() {
-            // The cap's worth of messages is in hand. A message met in the
-            // metadata half and not yet in the body half keeps the one score
-            // it has: past the cap, the counts are floors and the order is
-            // approximate, as `search`'s is.
+            // Past the cap the counts are floors and the order approximate, as `search`'s is: a
+            // message met in one half only keeps the one score it has.
             return Ok(false);
         }
         if let Some(content) = content {
@@ -681,7 +530,6 @@ impl Fold {
         Ok(true)
     }
 
-    /// One projection row as a match, scored as `scores` say.
     fn found(row: &turso::Row, id: i64, scores: Scores) -> postio_storage::Result<Found> {
         let thread: Option<i64> = row.col(1)?;
         let (senders, recipients) = people(row.col::<Option<String>>(11)?.as_deref());
@@ -709,13 +557,10 @@ impl Fold {
         })
     }
 
-    /// Whether the match reached the cap: every count is then a floor.
     fn capped(&self) -> bool {
         self.found.len() as u64 >= CONVERSATION_WALK_CAP
     }
 
-    /// The matched messages grouped into conversations, in the order each
-    /// was first met.
     fn conversations(&self) -> Vec<Conversation> {
         let mut index: HashMap<ConversationKey, usize> = HashMap::new();
         let mut conversations: Vec<Conversation> = Vec::new();
@@ -741,20 +586,11 @@ impl Fold {
     }
 }
 
-/// The narrow projection (research R2): the capped match, one row per
-/// message per index it matched in.
-///
-/// Every column but the scores is the message's own, and one short lookup
-/// by its id: whether it has an open marker, by `markers`' primary key.
-/// Its people, labels and attachment count are columns `messages` keeps by
-/// trigger (D30, `people_ids`, `label_ids`, `attachment_count`) -- they
-/// were three lookups a row, two thirds of a broad walk's time. A sender
-/// is spelled negated, so one column answers both the From and the To
-/// facet. `driven_join_plan` in the index suite holds that no lookup comes
-/// back.
-///
-/// The scores are projected bare and negated outside, for the reason
-/// [`HITS_JOIN`](super::HITS_JOIN) gives.
+/// One short lookup by id for the open marker; people, labels and attachment count are trigger-kept
+/// columns of `messages` (D30), where they were three lookups a row.
+/// A sender is spelled negated, so one column answers both the From and the To facet. Scores are
+/// projected bare and negated outside ([`HITS_JOIN`](super::HITS_JOIN)). `driven_join_plan` holds
+/// that no lookup comes back.
 fn projection_sql(plan: &Plan, walk: Walk) -> String {
     let (scores, from, where_sql) = match walk {
         Walk::Matched => (
@@ -788,27 +624,19 @@ fn projection_sql(plan: &Plan, walk: Walk) -> String {
     )
 }
 
-/// What the projection walks.
 #[derive(Debug, Clone, Copy)]
 enum Walk {
-    /// The free-text match, joined to `messages`
-    /// ([`super::HITS_JOIN_WITH_FILES`]).
     Matched,
-    /// `messages` under the plan's conditions.
     Messages,
-    /// The messages a JSON array of ids names, each by its key.
     Keyed,
 }
 
-/// The metadata index's five columns, as every `fts_match` on it names them.
 const META: &str = "sender, recipients, subject, filenames, list_id";
 
-/// [`CONVERSATION_WALK_CAP`], as SQL binds it.
 fn cap() -> i64 {
     i64::try_from(CONVERSATION_WALK_CAP).unwrap_or(i64::MAX)
 }
 
-/// A `group_concat` of integers, read back.
 fn ids(list: Option<&str>) -> Vec<i64> {
     list.map(|list| {
         list.split(',')
@@ -818,24 +646,19 @@ fn ids(list: Option<&str>) -> Vec<i64> {
     .unwrap_or_default()
 }
 
-/// The people column: senders negated, recipients as they are.
 fn people(list: Option<&str>) -> (Vec<i64>, Vec<i64>) {
     let (senders, recipients): (Vec<i64>, Vec<i64>) = ids(list).into_iter().partition(|id| *id < 0);
     (senders.into_iter().map(|id| -id).collect(), recipients)
 }
 
-/// One conversation of the match.
 #[derive(Debug, Clone)]
 struct Conversation {
     key: ConversationKey,
-    /// Its best match, an index into [`Fold::found`].
     best: usize,
-    /// When its newest match arrived, in milliseconds.
     newest: i64,
     matches: u32,
-    /// What Quick Look counts as its matches: the messages whose own words
-    /// or files matched, and the subject or sender once for all the rest
-    /// (#2085). `matches` counts every matched message, for the order.
+    /// Quick Look counts the messages whose own words or files matched, and the subject or sender
+    /// once for all the rest (#2085); `matches` counts every matched message, for the order.
     shown: u32,
     by_metadata: bool,
     unread: bool,
@@ -873,8 +696,6 @@ impl Conversation {
     fn add(&mut self, found: &[Found], at: usize) {
         let message = &found[at];
         let best = &found[self.best];
-        // The best text match, then the newer, then the later id: a total
-        // order, so the best message does not depend on the walk.
         if message
             .text
             .total_cmp(&best.text)
@@ -903,19 +724,10 @@ impl Conversation {
     }
 }
 
-// ---------------------------------------------------------------------------
-// The facets
-// ---------------------------------------------------------------------------
-
-/// How many senders and recipients a facet keeps: the popovers' lists.
 const FACET_PEOPLE: usize = 50;
 
-/// Every facet, counted in conversations over the fold (D3): a conversation
-/// counts once for a value when any of its matched messages has it, which
-/// is exactly when the query with that term added would still find it
-/// (SC-008). The months put a conversation in the month of its newest
-/// match (D4), and a preset counts it when its newest match is on or after
-/// the preset's start, which is when that `after:` would find it.
+/// A conversation counts once for a value when any matched message has it, which is when the query
+/// with that term added would still find it. The months use the newest match.
 fn facets(conversations: &[Conversation], today: NaiveDate, capped: bool) -> SearchFacets {
     let mut senders: HashMap<i64, u64> = HashMap::new();
     let mut recipients: HashMap<i64, u64> = HashMap::new();
@@ -978,7 +790,6 @@ fn facets(conversations: &[Conversation], today: NaiveDate, capped: bool) -> Sea
     facets
 }
 
-/// A facet's counts, most first, ties by id so the order is stable.
 fn ranked<T>(counts: HashMap<i64, u64>, keep: Option<usize>, id: fn(i64) -> T) -> Vec<Count<T>> {
     let mut counts: Vec<(i64, u64)> = counts.into_iter().collect();
     counts.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
@@ -994,7 +805,6 @@ fn ranked<T>(counts: HashMap<i64, u64>, keep: Option<usize>, id: fn(i64) -> T) -
         .collect()
 }
 
-/// Everyone the matched messages are from or to: the People tab's count.
 fn people_in(conversations: &[Conversation], own: &[i64]) -> u64 {
     let mut everyone: Vec<i64> = conversations
         .iter()
@@ -1007,15 +817,8 @@ fn people_in(conversations: &[Conversation], own: &[i64]) -> u64 {
     everyone.len() as u64
 }
 
-// ---------------------------------------------------------------------------
-// The order
-// ---------------------------------------------------------------------------
-
-/// The conversations in their order, before and after the pool is ranked.
 struct Order {
-    /// Every conversation, by the pool ordering (or by date, for Newest).
     ranked: Vec<usize>,
-    /// The ones ranked in full: the head of `ranked`, empty for Newest.
     pool: Vec<usize>,
 }
 
@@ -1024,8 +827,6 @@ impl Order {
         self.ranked.len()
     }
 
-    /// The final order: the pool by [`relevance_keys`], what the words
-    /// found exactly first, then the rest as they were.
     fn rank(
         self,
         fold: &Fold,
@@ -1060,7 +861,6 @@ impl Order {
     }
 }
 
-/// The order before the pool is ranked.
 fn order(
     fold: &Fold,
     conversations: &[Conversation],
@@ -1100,14 +900,11 @@ fn order(
     }
 }
 
-/// The pool ordering `fetch_candidates` writes in SQL, here in Rust: the
-/// text score with a linear age term, lower first.
 fn pool_key(best: &Found, now: DateTime<Utc>) -> f64 {
     let age = (now.timestamp_millis() - best.aged_from) as f64;
     best.text + POOL_AGE_WEIGHT_PER_YEAR * age / MILLIS_PER_YEAR
 }
 
-/// A conversation's best message, as the ranking reads a candidate.
 fn candidate(fold: &Fold, conversation: &Conversation, rows: &HashMap<i64, Hydrated>) -> Candidate {
     let best = &fold.found[conversation.best];
     let row = rows.get(&best.id);
@@ -1131,11 +928,6 @@ fn candidate(fold: &Fold, conversation: &Conversation, rows: &HashMap<i64, Hydra
     }
 }
 
-// ---------------------------------------------------------------------------
-// The rows shown
-// ---------------------------------------------------------------------------
-
-/// What the hydrate adds to a best message.
 #[derive(Debug, Clone, Default)]
 struct Hydrated {
     subject: Option<String>,
@@ -1143,20 +935,14 @@ struct Hydrated {
     from_address: Option<String>,
     times_seen: i64,
     sent_count: i64,
-    /// The thread's own counts, when it has one.
     thread: Option<(u32, bool, bool)>,
-    /// The message's place among its thread's members, oldest first, from
-    /// 1; `None` for a message that is in no thread.
     number: Option<u32>,
     files: Vec<(AttachmentId, String)>,
 }
 
-/// A message's place among its thread's members, as the thread's own read
-/// orders and filters them (`ThreadRepository::members`: oldest first,
-/// neither deleted nor snoozed, no draft). The outer side of the thread
-/// match is an expression so the engine keeps this a seek per row
-/// (docs/gotchas.md, "group-first"): one range of `idx_messages_thread` up
-/// to the message, so it costs its place in the thread, not the store.
+/// Ordered and filtered as the thread's own read does (`ThreadRepository::members`). The outer side
+/// of the thread match is an expression so the engine keeps this a seek per row (docs/gotchas.md,
+/// "group-first").
 const NUMBER: &str = "(SELECT count(*) FROM messages x
                         WHERE x.thread_id = m.thread_id + 0
                           AND x.received_at <= m.received_at
@@ -1166,17 +952,10 @@ const NUMBER: &str = "(SELECT count(*) FROM messages x
                                OR x.snoozed_until <= (strftime('%s','now') * 1000))
                           AND x.draft = 0)";
 
-/// The separator between a hydrated row's attachments: a unit separator,
-/// which no file name carries.
 const UNIT: char = '\u{1f}';
 
-/// One read for every message that is ranked or shown: its subject and
-/// sender, how often the person hears from and writes to that sender, its
-/// thread's counts, and its attachments' names.
-///
-/// The sender's `recipients` row is found once and joined by primary key,
-/// and the contacts probe compares against a plain column, as
-/// [`Plan::hydrate_sql`](super::Plan) does and for the reasons it gives.
+/// The sender's `recipients` row is found once and joined by primary key, and the contacts probe
+/// compares against a plain column, as [`Plan::hydrate_sql`](super::Plan) does.
 async fn hydrate(
     connection: &Connection,
     account: AccountScope,
@@ -1185,9 +964,6 @@ async fn hydrate(
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
-    // How often the person hears from the sender: this account's evidence
-    // about the address when scoped, the person's across accounts otherwise
-    // (specs/005-contacts R2).
     let affinity = match account.account() {
         Some(_) => {
             "(SELECT s.times_seen FROM contact_sightings s
@@ -1267,8 +1043,6 @@ async fn hydrate(
     Ok(rows.into_iter().collect())
 }
 
-/// The words a subject or a file name is checked for: the free text asked
-/// for, and the values of the operators about that field.
 struct Terms {
     subject: Vec<String>,
     files: Vec<String>,
@@ -1289,7 +1063,6 @@ impl Terms {
                 query
                     .filters()
                     .filter(|clause| !clause.negated)
-                    // Every value of a set (D26).
                     .flat_map(|clause| clause.filter.alternatives())
                     .filter_map(|filter| field(filter).cloned()),
             );
@@ -1309,7 +1082,6 @@ impl Terms {
     }
 }
 
-/// One row of the page.
 fn hit(
     fold: &Fold,
     conversation: &Conversation,
@@ -1322,10 +1094,8 @@ fn hit(
     let row = rows.get(&best.id).cloned().unwrap_or_default();
     let when = Some(from_millis(best.received_at));
 
-    // Where the best message matched. The body is known from which index
-    // matched it; a subject or a file name from whether the words are in
-    // it, as the row will highlight them (`highlight::find`), so the reason
-    // and the highlight cannot disagree.
+    // The body is known from which index matched it; a subject or file name from whether the words
+    // are in it, as the row will highlight them, so the reason and the highlight cannot disagree.
     let mut matches = Vec::new();
     let in_subject = row
         .subject
@@ -1360,8 +1130,6 @@ fn hit(
             when,
         });
     }
-    // What its attachments say: where in each, the first unit that
-    // matched. Its passage is cut with the others (`Req::Passages`).
     let read: Vec<&super::FileMatch> = files
         .iter()
         .filter(|file| file.message.get() == best.id)
@@ -1391,7 +1159,6 @@ fn hit(
     if in_subject {
         reasons.push(RankReason::InSubject);
     }
-    // Found by who sent it: the words in the sender's name or address.
     let in_sender = [row.from_name.as_deref(), row.from_address.as_deref()]
         .into_iter()
         .flatten()
@@ -1399,9 +1166,12 @@ fn hit(
     if in_sender {
         reasons.push(RankReason::InSender);
     }
-    // A file found it, by its name or by what it says (research R3).
-    if !named.is_empty() || !read.is_empty() {
+    // A file found it by its name or else by what it says: a match only inside the file does not
+    // say the name (#2194).
+    if !named.is_empty() {
         reasons.push(RankReason::InFileName);
+    } else if !read.is_empty() {
+        reasons.push(RankReason::InFileContent);
     }
     reasons.push(RankReason::Matches(
         conversation.shown + u32::from(conversation.by_metadata),
@@ -1440,32 +1210,18 @@ fn hit(
     }
 }
 
-/// What a search looked through.
 struct Searched {
-    /// Messages in its scope.
     messages: u64,
-    /// Every one of them has its body.
     bodies: bool,
-    /// Every attachment on this machine has had its text read.
     contents: bool,
-    /// The person's own address ids: the People count leaves them out, as
-    /// the People tab does. Read in the same statement, not one more.
     own: Vec<i64>,
 }
 
-/// How many messages the search looked through, whether every one of them
-/// has its body, and whether every downloaded attachment has been read:
-/// one read of the folders in its scope, the same scope the match uses,
-/// off the counts the schema keeps (`total_count`, `bodies_owed`; see
-/// [`corpus_complete`](super::corpus_complete)), with the indexer's own
-/// question about attachments ([`crate::index::attachments_missing_text`])
-/// answered beside it from the set the index keeps of it
-/// (`attachment_text_owed`): one seek, where asking the queue itself walked
-/// every attachment on the machine whenever nothing was waiting.
-///
-/// The attachments are every account's, as the indexer's queue is: the
-/// search cannot say it looked inside files while any file this machine
-/// holds is still unread.
+/// Read off the schema-kept counts of the folders in scope (`total_count`, `bodies_owed`), with
+/// attachments answered beside it from the set the index keeps
+/// (`attachment_text_owed`): one seek, where asking the queue walked every attachment on the
+/// machine. Attachments are every account's, as the indexer's queue is:
+/// the search cannot say it looked inside files while any file on this machine is unread.
 async fn searched(connection: &Connection, request: &ConversationRequest<'_>) -> Result<Searched> {
     let mut conditions = Vec::new();
     let mut params: Vec<turso::Value> = Vec::new();

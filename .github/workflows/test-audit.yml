@@ -1,18 +1,8 @@
 # Spec 012's three questions about the test suite, on a runner of their own
-# (specs/012-test-suite-value):
-#
-#   inventory  what is there and what it costs -- the whole workspace, GTK
-#              suites included, with durations from a JUnit report this job
-#              records, since no other workflow keeps one;
-#   coverage   which cases run nothing a case costing no more does not, per
-#              crate (scripts/test-coverage-sets.py);
-#   removal    whether removing named cases leaves a mutant uncaught
-#              (scripts/test-removal-check.sh) -- the only licence to remove
-#              a test under the spec, and too heavy for a shared machine.
-#
-# Dispatch-only: nothing here gates a pull request. Inputs reach the shell
-# through `env:`, never interpolated into a script. Reports are this
-# project's own artifacts, as mutants.yml's are; nothing goes elsewhere.
+# (specs/012-test-suite-value). Dispatch-only; inputs reach the shell through `env:`.
+#   inventory  what is there and what it costs, with durations from a JUnit report this job records;
+#   coverage   which cases run nothing a cheaper case does not (scripts/test-coverage-sets.py);
+# removal    whether removing named cases leaves a mutant uncaught (scripts/test-removal-check.sh).
 #
 #   gh workflow run test-audit.yml -f mode=inventory
 #   gh workflow run test-audit.yml -f mode=coverage -f crates='postio-config postio-focus'
@@ -102,7 +92,6 @@ jobs:
         env:
           POSTIO_TEST_PATIENCE: "3"
         run: |
-          # A failing case still has a duration; the inventory is about the suite, not its verdict.
           dbus-run-session -- cargo nextest run --workspace --profile ci --no-fail-fast || true
           scripts/test-inventory.py --junit target/nextest/ci/junit.xml
 

@@ -1,9 +1,3 @@
-//! The open-message dialog laid out as the maintainer's handoff draws it
-//! (2026-10-01; T205-T209): its size from the window, one centred column
-//! every block shares, the handoff's vertical rhythm, and its palette --
-//! each measured on what GTK allocated and drew, not on what a layer was
-//! handed.
-
 use adw::prelude::*;
 use gtk::gdk;
 use postio_model::{Attachment, EmailAddress, MessageId};
@@ -13,8 +7,6 @@ use postio_ui::focus_dialog::{self, rhythm};
 use crate::open_reading::scroller_of;
 use crate::support::{self, Fixture};
 
-/// A plain body with every kind of block the handoff draws in it:
-/// paragraphs, a list, a sign-off.
 const BODY: &str = "Hi all,\n\nUploaded v3 of the Harbor API draft with the \
     pagination changes from Monday's review. The main differences from v2:\n\n\
     - Cursor pagination on every list endpoint, replacing page and offset.\n\
@@ -23,9 +15,6 @@ const BODY: &str = "Hi all,\n\nUploaded v3 of the Harbor API draft with the \
     Please leave comments by Wednesday; I'd like to freeze it on Thursday so \
     Ben can start on the client.\n\nThanks,\nLena";
 
-/// The handoff's sample with every block present: the latest of a thread
-/// of two, from Lena Park to two people with one copied, a label, a
-/// question marker and two attachments. Answers the message.
 async fn every_block(fixture: &Fixture) -> MessageId {
     let ids = fixture.thread_of("Harbor API draft v3", 2, 10).await;
     fixture.read_all_but_last(&ids).await;
@@ -39,11 +28,8 @@ async fn every_block(fixture: &Fixture) -> MessageId {
     latest
 }
 
-/// The list the layout's mail comes from: list mail carries the unsubscribe
-/// notice, personal mail does not (T261).
 const LIST: &str = "harbor.example.com";
 
-/// Make `message` list mail, so it opens with the notice.
 async fn on_a_list(fixture: &Fixture, message: MessageId) {
     let connection = fixture.database.connect().await.expect("a connection");
     let repository = MessageRepository::new(&connection);
@@ -56,8 +42,6 @@ async fn on_a_list(fixture: &Fixture, message: MessageId) {
     repository.update(&mut row).await.expect("listed");
 }
 
-/// Address `message` as the handoff's sample is, and attach its two files
-/// when `attached`.
 async fn dress(fixture: &Fixture, message: MessageId, attached: bool) {
     let connection = fixture.database.connect().await.expect("a connection");
     let repository = MessageRepository::new(&connection);
@@ -90,18 +74,11 @@ async fn dress(fixture: &Fixture, message: MessageId, attached: bool) {
     repository.update(&mut row).await.expect("dressed");
 }
 
-/// The window as the suite's compositor gives it: its monitor is 1280x800,
-/// and mutter maximises a Focus window onto it, so the handoff's 1440 is
-/// out of reach here; the pure functions are proven at 1440 and 1920 in
-/// `postio_ui::focus_dialog`, and these cases prove the wiring at the sizes
-/// a window can be.
+/// The suite's compositor maximises onto a 1280x800 monitor, so the handoff's 1440 is out of reach;
+/// the pure functions are proven at 1440 and 1920 in `postio_ui::focus_dialog`.
 const WIDE: Option<(i32, i32)> = None;
-/// A window narrow enough to fold the action row: 1024 wide, as the
-/// handoff's screen 07.
 const NARROW: Option<(i32, i32)> = Some((1024, 700));
 
-/// Take `window` out of the maximised state the compositor may have put
-/// it in, back to the size it asked for, and wait until it is there.
 async fn restore(window: &postio_gtk::window::FocusWindow) {
     window.unmaximize();
     let asked = window.default_size();
@@ -116,8 +93,6 @@ async fn restore(window: &postio_gtk::window::FocusWindow) {
     );
 }
 
-/// A window over the fixture's mail, `size` big (or as the compositor gives
-/// it), the first row open and its body drawn.
 async fn opened_at(
     fixture: &Fixture,
     rows: usize,
@@ -133,7 +108,6 @@ async fn opened_at(
     );
     support::keys(&window, &["j"]);
     support::press(&window, "Return", gdk::ModifierType::empty());
-    // A thread's row opens once the thread has been read.
     assert!(
         crate::settle_until(async || window.reading().is_some()).await,
         "Enter opened the message"
@@ -146,31 +120,15 @@ async fn opened_at(
         .await,
         "the body was never drawn"
     );
-    // The dialog opens growing to its size: measure it once it is there.
-    let content = reading.dialog().child().expect("the dialog's content");
-    assert!(
-        crate::settle_until(
-            async || content
-                .compute_bounds(&window)
-                .is_some_and(|bounds| (bounds.width() - content.width() as f32).abs() < 0.5)
-        )
-        .await,
-        "the dialog never finished opening"
-    );
+    support::wait_for_dialog_opened(&window, &reading.dialog());
     crate::settle();
     window
 }
 
-/// #2125: the message window opens with its header -- the subject, the
-/// labels, the sender block -- in view, though the sentence its marker
-/// quotes is below the fold. The sentence is still highlighted (FR-035);
-/// the reveal stops rather than scroll the header off. Asked once the
-/// column has grown past its page, which is when the reveal acts.
+/// #2125: the header stays in view though the marker's sentence is below the fold; the reveal stops
+/// rather than scroll the header off.
 pub fn the_window_opens_with_its_header_in_view_and_the_sentence_marked() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         every_block(&fixture).await;
         let window = opened_at(&fixture, 1, WIDE).await;
@@ -188,7 +146,6 @@ pub fn the_window_opens_with_its_header_in_view_and_the_sentence_marked() {
             .await,
             "the sentence was never marked, or the column never grew past its page"
         );
-        // At rest: two looks at the column agree.
         let look = || {
             let adjustment = scroller.vadjustment();
             (adjustment.value(), adjustment.upper())
@@ -205,9 +162,8 @@ pub fn the_window_opens_with_its_header_in_view_and_the_sentence_marked() {
             "the column never came to rest: {:?}",
             look()
         );
-        // In the column's own coordinates, which the adjustment scrolls
-        // through: an allocation read off the scroller can lag a scroll by
-        // a frame, and the person sees the adjustment's.
+        // In the column's own coordinates: an allocation read off the scroller can lag a scroll by
+        // a frame.
         let column = shown(&dialog, "focus-open-column")
             .parent()
             .expect("the column's clamp");
@@ -226,8 +182,6 @@ pub fn the_window_opens_with_its_header_in_view_and_the_sentence_marked() {
             view.highlighted().is_some(),
             "the marker's sentence is no longer highlighted"
         );
-        // And the case is the one the issue is about: the sentence is below
-        // the fold, so a reveal a third of the way down would have scrolled.
         let sentence = view
             .highlight_rects()
             .iter()
@@ -240,7 +194,6 @@ pub fn the_window_opens_with_its_header_in_view_and_the_sentence_marked() {
     });
 }
 
-/// The dialog's size for `window`'s, by the handoff's rule.
 fn fitted(window: &postio_gtk::window::FocusWindow) -> (i32, i32) {
     (
         focus_dialog::dialog_width(window.width()),
@@ -248,7 +201,6 @@ fn fitted(window: &postio_gtk::window::FocusWindow) -> (i32, i32) {
     )
 }
 
-/// `widget`'s place in `root`'s coordinates: left, top, right, bottom.
 fn edges(widget: &impl IsA<gtk::Widget>, root: &impl IsA<gtk::Widget>) -> (f32, f32, f32, f32) {
     let bounds = widget
         .compute_bounds(root)
@@ -261,7 +213,6 @@ fn edges(widget: &impl IsA<gtk::Widget>, root: &impl IsA<gtk::Widget>) -> (f32, 
     )
 }
 
-/// The one widget wearing `class` under `root`, on screen.
 fn shown(root: &impl IsA<gtk::Widget>, class: &str) -> gtk::Widget {
     let widget = support::only(root, class);
     assert!(widget.is_mapped(), "{class} is not on screen");
@@ -272,9 +223,6 @@ fn near(a: f32, b: f32) -> bool {
     (a - b).abs() <= 1.0
 }
 
-/// The reader's notice on screen under `root`. The fixtures' mail is list
-/// mail (`dress` gives it a `List-Id`), so it carries the unsubscribe
-/// notice, which personal mail does not (T261).
 fn the_notice(root: &impl IsA<gtk::Widget>) -> gtk::Widget {
     let shown: Vec<gtk::Widget> = support::with_class(root, "postio-notice")
         .into_iter()
@@ -284,8 +232,6 @@ fn the_notice(root: &impl IsA<gtk::Widget>) -> gtk::Widget {
     shown[0].clone()
 }
 
-/// Withdraw the notice, as outgoing mail has none, and let the column close
-/// up behind it.
 async fn without_the_notice(reading: &postio_gtk::open::OpenMessage) {
     let dialog = reading.dialog();
     let top = || edges(reading.reader().view(), &dialog).1;
@@ -303,25 +249,16 @@ async fn without_the_notice(reading: &postio_gtk::open::OpenMessage) {
     crate::settle();
 }
 
-/// T205: the dialog is as wide and as tall as the window says, centred, and
-/// follows the window's resizes -- never the message: `j` keeps its size.
 pub fn the_dialog_is_sized_by_the_window_and_never_by_the_message() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         for minutes in [10, 20] {
-            let (message, _) = fixture
-                .file(("Ada Moreno", "ada@example.com"), "Sized", "x", minutes)
-                .await;
+            let (message, _) = fixture.file_from_ada("Sized", "x", minutes).await;
             fixture.write_body(message, "A body.").await;
         }
         let window = opened_at(&fixture, 2, NARROW).await;
         let reading = window.reading().expect("open");
         let dialog = reading.dialog();
-        // The dialog's own widget spans the window it is presented over;
-        // its content is what is drawn as the dialog.
         let size = |dialog: &adw::Dialog| {
             let content = dialog.child().expect("content");
             (content.width(), content.height())
@@ -329,7 +266,6 @@ pub fn the_dialog_is_sized_by_the_window_and_never_by_the_message() {
         assert_eq!(size(&dialog), (655, 620), "in a 1024x700 window");
         let (left, top, right, _) = edges(&dialog.child().expect("content"), &window);
         assert!(
-            // 655 is odd: half a pixel each side is as centred as it gets.
             (left - (1024.0 - 655.0) / 2.0).abs() <= 1.5
                 && ((1024.0 - right) - left).abs() <= 1.5
                 && near(top, 40.0),
@@ -344,8 +280,6 @@ pub fn the_dialog_is_sized_by_the_window_and_never_by_the_message() {
         crate::settle();
         assert_eq!(size(&dialog), (655, 620), "j resized the dialog");
 
-        // A resize either way is followed: maximised onto the monitor,
-        // then restored to the 1024x700 it asked for.
         window.maximize();
         assert!(
             crate::settle_until(async || window.width() > 1100 && size(&dialog) == fitted(&window))
@@ -370,7 +304,6 @@ pub fn the_dialog_is_sized_by_the_window_and_never_by_the_message() {
     });
 }
 
-/// One pixel of `texture`, as RGB bytes.
 fn pixel(texture: &gdk::Texture, x: i32, y: i32) -> [u8; 3] {
     let mut downloader = gdk::TextureDownloader::new(texture);
     downloader.set_format(gdk::MemoryFormat::R8g8b8a8);
@@ -379,18 +312,12 @@ fn pixel(texture: &gdk::Texture, x: i32, y: i32) -> [u8; 3] {
     [bytes[at], bytes[at + 1], bytes[at + 2]]
 }
 
-/// Whether `seen` is `want`, give or take a step of rounding.
 fn same(seen: [u8; 3], want: [u8; 3]) -> bool {
     seen.iter().zip(want).all(|(a, b)| a.abs_diff(b) <= 2)
 }
 
-/// Bare recipient addresses cannot turn the centered reader into a
-/// full-window sheet, even when their combined unbroken width is large.
 pub fn recipient_addresses_keep_the_reader_centered() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let message = fixture
             .file_addressed(
@@ -421,18 +348,11 @@ pub fn recipient_addresses_keep_the_reader_centered() {
     });
 }
 
-/// T205: the list behind the dialog is dimmed by black at 20% in light
-/// and 45% in dark, measured on a pixel of the list beside the dialog.
 pub fn the_list_behind_is_dimmed_by_black_at_20_and_45_percent() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Dimmed", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Dimmed", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         for (scheme, kept) in [
             (adw::ColorScheme::ForceLight, 0.80),
@@ -441,7 +361,6 @@ pub fn the_list_behind_is_dimmed_by_black_at_20_and_45_percent() {
             manager.set_color_scheme(scheme);
             let (window, _client) = fixture.open().await;
             crate::settle_for(std::time::Duration::from_millis(200)).await;
-            // Left of the dialog, near the foot, in the list's ground.
             let (x, y) = (40, window.height() - 30);
             let before = pixel(
                 &postio_widgets::capture::texture(&window)
@@ -454,7 +373,6 @@ pub fn the_list_behind_is_dimmed_by_black_at_20_and_45_percent() {
             support::press(&window, "Return", gdk::ModifierType::empty());
             let reading = window.reading().expect("open");
             assert!(crate::settle_until(async || reading.dialog().is_mapped()).await);
-            // The dimming fades in with the dialog: wait for where it ends.
             let want = before.map(|channel| (f64::from(channel) * kept).round() as u8);
             let seen = || {
                 pixel(
@@ -481,7 +399,6 @@ pub fn the_list_behind_is_dimmed_by_black_at_20_and_45_percent() {
     });
 }
 
-/// The blocks inside the message, top to bottom, by the class each wears.
 const BLOCKS: [&str; 6] = [
     "focus-open-thread",
     "focus-open-subject",
@@ -491,14 +408,8 @@ const BLOCKS: [&str; 6] = [
     "postio-attachments",
 ];
 
-/// T207: in a wide window and at 1024, the thread marker, subject, labels, sender
-/// block, action card, body and attachments share both edges of one column
-/// `dialog - 40` wide, inside the dialog's gutters.
 pub fn every_block_shares_both_edges_of_one_centred_column() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         for size in [WIDE, NARROW] {
             let fixture = Fixture::empty().await;
             every_block(&fixture).await;
@@ -531,9 +442,6 @@ pub fn every_block_shares_both_edges_of_one_centred_column() {
                     "{size:?}: the {what} runs {l} to {r}; the column is {left} to {right}"
                 );
             }
-            // The notice is unfilled, like the sender block, so what is in
-            // it -- its icon and its button -- meets the column's edges
-            // rather than sitting inside a margin no fill explains.
             let notice = the_notice(&dialog);
             let icon = edges(&support::only(&notice, "postio-notice-icon"), &content);
             let action = edges(
@@ -553,13 +461,8 @@ pub fn every_block_shares_both_edges_of_one_centred_column() {
     });
 }
 
-/// T208: every gap the handoff gives, from the blocks' real allocations,
-/// with every block present.
 pub fn the_blocks_keep_the_handoffs_rhythm() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         every_block(&fixture).await;
         let window = opened_at(&fixture, 1, WIDE).await;
@@ -569,8 +472,6 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             crate::settle_until(async || support::only(&dialog, "postio-attachments").is_mapped())
                 .await
         );
-        // The thread bar and the kicker are the controller's, drawn once the
-        // thread has been read.
         assert!(
             crate::settle_until(
                 async || !reading.thread_chip_said().is_empty() && reading.thread_bar_state().1 > 0
@@ -578,11 +479,8 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             .await,
             "the thread's bar never arrived"
         );
-        // Read as it opens, from its top: the reveal of the marker's
-        // sentence keeps the header in view (#2125), so nothing has moved
-        // the blocks under the bar.
-        // The bar's arrival lays the column out again, and on a slow machine
-        // over more than one pass: measure once two looks agree.
+        // The bar's arrival lays the column out again, over more than one pass on a slow machine:
+        // measure once two looks agree.
         let blocks = || {
             [
                 "focus-thread-bar",
@@ -674,8 +572,6 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             height(card)
         );
 
-        // Inside the sender block: 12px to the first row and from the last,
-        // rows 22px tall and 2px apart.
         let rows: Vec<(f32, f32, f32, f32)> = support::with_class(&dialog, "focus-open-field")
             .iter()
             .filter(|field| field.is_mapped())
@@ -690,8 +586,7 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             near(sender.3 - rows[2].3, rhythm::SENDER_PADDING as f32),
             "{rows:?} in {sender:?}"
         );
-        // Rows on a shared baseline land on a fractional pixel: a row is
-        // its 22px, give or take the one the baseline rounds into.
+        // Rows on a shared baseline land on a fractional pixel, so a row is 22px give or take one.
         for row in &rows {
             assert!(
                 (height(*row) - rhythm::SENDER_ROW as f32).abs() <= 1.5,
@@ -704,8 +599,6 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             focus_dialog::SENDER_ROW_GAP as f32
         ));
 
-        // The attachments: 16px under their hairline, chips 40px tall and
-        // 8px apart.
         let chips: Vec<(f32, f32, f32, f32)> =
             support::with_class(&dialog, "postio-attachment-card")
                 .iter()
@@ -727,8 +620,6 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
         );
         assert!(near(chips[1].0 - chips[0].2, rhythm::CHIP_GAP as f32));
 
-        // Under the last block, the column's 32px: what the scroller can
-        // reach below the attachments.
         let scroller = scroller_of(reading.reader().view());
         let reach = scroller
             .child()
@@ -746,8 +637,6 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
             reach - last
         );
 
-        // With no notice -- outgoing mail -- the card's 24 is the body's
-        // again, and the notice leaves no gap behind.
         without_the_notice(&reading).await;
         let card = at("focus-marker-card");
         let body = edges(reading.reader().view(), &dialog);
@@ -759,14 +648,8 @@ pub fn the_blocks_keep_the_handoffs_rhythm() {
     });
 }
 
-/// T208: an absent block takes its gap with it, and the next gap stays as
-/// listed: no thread, the subject is 28px under the action row; no action
-/// card, the body is 24px under the sender block.
 pub fn an_absent_block_takes_its_gap_with_it() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(("Lena Park", "lena@example.com"), "Alone", "x", 10)
@@ -799,7 +682,6 @@ pub fn an_absent_block_takes_its_gap_with_it() {
             "the body is {}px under the notice",
             body.1 - notice.3
         );
-        // And with neither card nor notice, 24 under the sender block.
         without_the_notice(&reading).await;
         let sender = at("focus-open-header-card");
         let body = edges(reading.reader().view(), &dialog);
@@ -811,16 +693,9 @@ pub fn an_absent_block_takes_its_gap_with_it() {
     });
 }
 
-/// T209: the dialog wears the handoff's palette, light and dark: its
-/// surface, the sender block on the surface with no box of its own, and
-/// the action card filled with the system's accent at 8% (light) and 12%
-/// (dark). The accent is libadwaita's, never the handoff's teal (spec C26):
-/// set another and the card follows it.
+/// The accent is libadwaita's, never the handoff's teal: set another and the card follows it.
 pub fn the_dialog_wears_its_palette_in_light_and_dark() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let manager = adw::StyleManager::default();
         let fixture = Fixture::empty().await;
         every_block(&fixture).await;
@@ -828,15 +703,12 @@ pub fn the_dialog_wears_its_palette_in_light_and_dark() {
         let window = opened_at(&fixture, 1, WIDE).await;
         let reading = window.reading().expect("open");
         let dialog = reading.dialog();
-        // The handoff's surface (SPEC.md section 6); the accent is the
-        // system's, as libadwaita resolves it for the scheme.
         let palettes = [
             (adw::ColorScheme::ForceLight, [0xfd, 0xfd, 0xfb], 0.08),
             (adw::ColorScheme::ForceDark, [0x1c, 0x21, 0x20], 0.12),
         ];
-        // The system's own accent, then another one set the way libadwaita
-        // sets it -- its named colour, which every `--accent-*` derives
-        // from -- so a card that kept any fixed colour cannot pass both.
+        // Set another accent the way libadwaita does, so a card that kept any fixed colour cannot
+        // pass both.
         let other = adw::AccentColor::Red;
         let display = gdk::Display::default().expect("a display");
         let setting = gtk::CssProvider::new();
@@ -867,8 +739,6 @@ pub fn the_dialog_wears_its_palette_in_light_and_dark() {
                 let picture = postio_widgets::capture::texture(&dialog).expect("drawn");
                 let sender = edges(&shown(&dialog, "focus-open-header-card"), &dialog);
                 let card = edges(&shown(&dialog, "focus-marker-card"), &dialog);
-                // In the dialog's margin left of the column, and inside the
-                // sender block between its rows' words and the date.
                 let inside = edges(&dialog.child().expect("content"), &dialog).0 as i32;
                 let ground = pixel(&picture.texture, inside + 20, sender.1 as i32 + 30);
                 let in_sender = pixel(
@@ -881,15 +751,12 @@ pub fn the_dialog_wears_its_palette_in_light_and_dark() {
                     (f64::from(surface[i]) * (1.0 - share) + f64::from(accent_rgb[i]) * share)
                         .round() as u8
                 });
-                // libadwaita's own standalone colour is clamped to sRGB; the
-                // stylesheet mixes the unclamped oklab one, which for a
-                // saturated accent in dark lands a few steps off it. The
-                // handoff's teal is further than this from red, in both the
-                // card and the links, so a fixed teal still fails.
+                // libadwaita's standalone colour is clamped to sRGB while the stylesheet mixes
+                // unclamped oklab, so a saturated dark accent lands a few steps off;
+                // the handoff's teal is further than this from red.
                 let close = |seen: [u8; 3], want: [u8; 3]| {
                     seen.iter().zip(want).all(|(a, b)| a.abs_diff(b) <= 10)
                 };
-                // The body's links: the accent the column hands the body.
                 let link = support::only(&dialog, "postio-flow-accent").color();
                 let link = [link.red(), link.green(), link.blue()]
                     .map(|channel| (channel * 255.0).round() as u8);
@@ -918,18 +785,10 @@ pub fn the_dialog_wears_its_palette_in_light_and_dark() {
     });
 }
 
-/// T206: below 760px the action row folds Label, Move and Delete into More
-/// (`.`), whose menu holds the three with their keys; choosing one runs
-/// its command, as its button would.
 pub fn a_narrow_dialog_folds_label_move_and_delete_into_more() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Narrow", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Narrow", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         let window = opened_at(&fixture, 1, NARROW).await;
         let reading = window.reading().expect("open");
@@ -973,7 +832,6 @@ pub fn a_narrow_dialog_folds_label_move_and_delete_into_more() {
     });
 }
 
-/// An office mail's HTML, from the corpus.
 fn office_html() -> String {
     postio_model::mime::parse(postio_model::test_corpus::load("html-work-black-text").bytes())
         .body
@@ -981,16 +839,8 @@ fn office_html() -> String {
         .expect("an HTML part")
 }
 
-/// T208: over an HTML body the render-mode line sits 24px under the action
-/// card and 12px over the body -- the card's 24 goes to the line, and the
-/// line keeps 12 of its own -- and with no card, 24 under the sender block.
-/// A notice between them is one more block: 12 under the card (or the
-/// sender block), and the 24 is the notice's to the line.
 pub fn the_render_mode_line_sits_24_under_the_card_and_12_over_the_body() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         for card in [true, false] {
             let fixture = Fixture::empty().await;
             let (message, _) = fixture
@@ -1055,14 +905,8 @@ pub fn the_render_mode_line_sits_24_under_the_card_and_12_over_the_body() {
     });
 }
 
-/// SPEC section 5: the action card's sentence wraps -- in italics, onto a
-/// second line when it needs one -- and is never cut short with an
-/// ellipsis.
 pub fn the_action_cards_sentence_wraps_and_is_never_cut() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         const LONG: &str = "Could you please leave your comments on the pagination \
             section and the rate-limit headers by Wednesday afternoon";
         let fixture = Fixture::empty().await;
@@ -1097,18 +941,10 @@ pub fn the_action_cards_sentence_wraps_and_is_never_cut() {
     });
 }
 
-/// SPEC section 2, under the Gmail keymap (docs/PRODUCT.md §8): Delete's cap
-/// reads `#`, Gmail's key for it, in the action row; the Delete key still
-/// deletes, as its alternate.
 pub fn delete_s_cap_reads_its_gmail_key_in_the_action_row() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (message, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Wide", "x", 10)
-            .await;
+        let (message, _) = fixture.file_from_ada("Wide", "x", 10).await;
         fixture.write_body(message, "A body.").await;
         let window = opened_at(&fixture, 1, WIDE).await;
         let reading = window.reading().expect("open");
@@ -1124,16 +960,8 @@ pub fn delete_s_cap_reads_its_gmail_key_in_the_action_row() {
     });
 }
 
-/// T207: a page on paper takes the paper column, `min(640, dialog - 48)`,
-/// and a layout wider than that is zoomed to fit it -- a 640px newsletter
-/// in a 607px column at 0.95, with nothing to scroll sideways -- down to
-/// 0.85; a layout that would need less is drawn at 0.85 and scrolls
-/// sideways, which a sideways scroll on the body does.
 pub fn a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_floor() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let newsletter = postio_model::mime::parse(
             postio_model::test_corpus::load("html-newsletter-own-page").bytes(),
         )
@@ -1220,15 +1048,8 @@ pub fn a_page_on_paper_is_zoomed_to_its_column_and_scrolls_sideways_below_the_fl
     });
 }
 
-/// Spec C25: the dialog's chrome keeps the system's faces -- Adwaita Sans,
-/// and Adwaita Mono for keys, dates and addresses -- at the handoff's sizes,
-/// where the handoff draws Barlow and IBM Plex Mono. Only the body, drawn
-/// by the renderer, is set in Barlow.
 pub fn the_dialogs_chrome_is_set_in_the_system_faces() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         every_block(&fixture).await;
         let window = opened_at(&fixture, 1, WIDE).await;
@@ -1263,14 +1084,8 @@ pub fn the_dialogs_chrome_is_set_in_the_system_faces() {
     });
 }
 
-/// The paper treatment's fit-to-column multiplies under the person's zoom
-/// (T242): zooming a fitted page in changes `zoom` and draws it larger, and
-/// the fit to the column stays what it was.
 pub fn paper_fit_multiplies_under_the_zoom() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let newsletter = postio_model::mime::parse(
             postio_model::test_corpus::load("html-newsletter-own-page").bytes(),
         )
@@ -1320,14 +1135,8 @@ pub fn paper_fit_multiplies_under_the_zoom() {
     });
 }
 
-/// The sender's address is the part a person checks, so the card never cuts
-/// it short while the dialog has room: the name gives first, the date after
-/// it, and an address that must shorten keeps its domain.
 pub fn the_senders_address_is_never_cut_while_there_is_room() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (message, _) = fixture
             .file(
@@ -1361,16 +1170,8 @@ pub fn the_senders_address_is_never_cut_while_there_is_room() {
     });
 }
 
-/// The maintainer, 2026-11-16: the message reads the dialog's whole width,
-/// and every band of the dialog starts its words at one left edge -- the
-/// thread bar's title, the action row's first verb, the subject, "+ Label"
-/// -- and each field's name sits on its value's line. The message has no
-/// label, so "+ Label" is the first thing on its line.
 pub fn every_band_starts_at_the_messages_left_edge() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let ids = fixture.thread_of("Harbor API draft v3", 2, 10).await;
         fixture.read_all_but_last(&ids).await;
@@ -1408,9 +1209,8 @@ pub fn every_band_starts_at_the_messages_left_edge() {
             assert_eq!(name.text(), field);
             let value = first_label(&card.child_at(1, row).expect("a field's value"));
             let (at, should) = (baseline(&name, &content), baseline(&value, &content));
-            // Two sizes centred on one 22px line share a baseline only to
-            // within their fonts' rounding, which differs between machines
-            // (1.2px on CI's fonts): a pixel and a half, not one.
+            // Two sizes centred on one 22px line share a baseline only within their fonts'
+            // rounding, which differs between machines: 1.5px, not 1.
             assert!(
                 (at - should).abs() <= 1.5,
                 "{field} sits on {at}; its value on {should}"
@@ -1421,7 +1221,6 @@ pub fn every_band_starts_at_the_messages_left_edge() {
     });
 }
 
-/// The first label at or under `root`.
 fn first_label(root: &gtk::Widget) -> gtk::Label {
     support::descendants(root)
         .into_iter()
@@ -1430,8 +1229,56 @@ fn first_label(root: &gtk::Widget) -> gtk::Label {
         .expect("a label")
 }
 
-/// Where `label`'s first line sits, in `root`'s coordinates.
 fn baseline(label: &gtk::Label, root: &impl IsA<gtk::Widget>) -> f32 {
     let top = edges(label, root).1 + label.layout_offsets().1 as f32;
     top + label.layout().baseline() as f32 / gtk::pango::SCALE as f32
+}
+
+pub fn a_folded_thread_bar_keeps_its_height_at_a_narrow_window() {
+    crate::gtk_case(async {
+        let fixture = Fixture::empty().await;
+        let ids = fixture.thread_of("Harbor API draft v3", 6, 10).await;
+        fixture.read_all_but_last(&ids).await;
+        let window = opened_at(&fixture, 1, Some((900, 700))).await;
+        let reading = window.reading().expect("open");
+        let dialog = reading.dialog();
+        assert!(
+            crate::settle_until(
+                async || !reading.thread_chip_said().is_empty() && reading.thread_bar_state().1 > 0
+            )
+            .await,
+            "the thread's bar never arrived"
+        );
+        assert!(
+            crate::settle_until(
+                async || support::with_class(&dialog, "focus-thread-chip-more")
+                    .iter()
+                    .any(gtk::Widget::is_mapped)
+            )
+            .await,
+            "six messages fold into a more chip at 900 wide: {} chips",
+            reading.thread_bar_state().1
+        );
+        let bar = || edges(&shown(&dialog, "focus-thread-bar"), &dialog);
+        let last = std::cell::RefCell::new(None);
+        assert!(
+            crate::settle_until(async || {
+                let now = bar();
+                let still = last.borrow().as_ref() == Some(&now);
+                last.replace(Some(now));
+                still
+            })
+            .await,
+            "the bar never came to rest: {:?}",
+            bar()
+        );
+        let (_, top, _, bottom) = bar();
+        assert!(
+            near(bottom - top, 60.0),
+            "the thread bar is {} tall at 900x700, not 60",
+            bottom - top
+        );
+        window.close();
+        crate::settle();
+    });
 }

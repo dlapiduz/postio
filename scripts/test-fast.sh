@@ -42,10 +42,10 @@ set -euo pipefail
 
 TREE=$(git rev-parse --show-toplevel)
 cd "$TREE"
-# The linker and CC in .cargo/config.toml are names on PATH, not paths (#1101).
 [ -x scripts/install-shims.sh ] && scripts/install-shims.sh
-# Draw compile jobs from the machine-wide pool rather than `jobs = 2` (#1104).
 [ -x scripts/jobserver.sh ] && eval "$(scripts/jobserver.sh env 2>/dev/null || true)"
+# The XDG home nextest gives its runs, so a unit test cannot reach the person's config or store.
+eval "$(scripts/test-home.sh --export)"
 
 BASE=$(cat "$(git rev-parse --git-dir)/postio-base" 2>/dev/null || echo main)
 
@@ -59,10 +59,9 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# No crates named: the ones this branch touches, uncommitted work included.
-# Deliberately not fetching first -- this runs between edits, and a network
-# round trip in the inner loop is exactly the kind of cost this exists to
-# avoid. A stale base only ever widens the list, which is harmless here.
+# No crates named: the ones this branch touches, uncommitted work included. Not fetching first,
+# since a network round trip in the inner loop is the cost this avoids; a stale base only widens the
+# list.
 if [ -z "${CRATES// /}" ]; then
     CHANGED=$(git diff --name-only "origin/$BASE...HEAD" 2>/dev/null || true; \
               git status --porcelain | sed 's/^...//')
@@ -82,9 +81,8 @@ STARTED=$(date +%s)
 RAN=0
 for crate in $CRATES; do
     [ -d "$TREE/crates/$crate" ] || continue
-    # A crate with no lib target (postio-bench is nine bench targets and an
-    # empty lib; a binary-only crate has nothing to run) is skipped rather
-    # than failing the run.
+    # A crate with no lib target (postio-bench, a binary-only crate) is skipped rather than failing
+    # the run.
     echo "--- $crate ---"
     if [ -n "$FILTER" ]; then
         cargo test -p "$crate" --lib -- "$FILTER"

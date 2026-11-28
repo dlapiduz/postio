@@ -1,30 +1,16 @@
-//! Legibility in every theme: the colour arithmetic and the rule of spec 006
-//! research R10, as pure functions.
-//!
-//! The engine's part is to supply facts — each text run's colour and the
-//! colour actually painted behind it, and what a message declares about its
-//! own backgrounds and dark support — and to apply what this returns. The
-//! rule itself is kept apart from the engine, where it is proven in
-//! milliseconds with no display. It lives in this crate rather than in
-//! `postio-ui` because `postio-ui` links `postio-core`, and with it `tokio`,
-//! which the renderer's graph may not contain (FR-001).
-//!
-//! **The floor has no large-text allowance** (spec FR-012): 4.5:1 for every
-//! run of text, 7:1 in high contrast.
+//! Legibility in every theme: the colour arithmetic and the contrast rule as pure
+//! functions, kept here because `postio-ui` links `tokio`, which the renderer's graph may not
+//! contain.
+//! The floor has no large-text allowance: 4.5:1 for every run, 7:1 in high contrast.
 
-/// An sRGB colour, each channel in `0.0..=1.0`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rgb {
-    /// Red.
     pub r: f64,
-    /// Green.
     pub g: f64,
-    /// Blue.
     pub b: f64,
 }
 
 impl Rgb {
-    /// From 8-bit channels.
     pub fn from_u8(r: u8, g: u8, b: u8) -> Rgb {
         Rgb {
             r: f64::from(r) / 255.0,
@@ -33,7 +19,6 @@ impl Rgb {
         }
     }
 
-    /// As 8-bit channels, rounded.
     pub fn to_u8(self) -> [u8; 3] {
         let channel = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
         [channel(self.r), channel(self.g), channel(self.b)]
@@ -66,40 +51,30 @@ impl Rgb {
     }
 }
 
-/// A colour in OKLCH: perceptual lightness, chroma and hue in degrees.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Oklch {
-    /// Lightness, `0.0..=1.0`.
     pub l: f64,
-    /// Chroma.
     pub c: f64,
-    /// Hue, degrees.
     pub h: f64,
 }
 
-/// The theme a message is drawn in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Theme {
-    /// The application is dark.
     pub dark: bool,
-    /// The application is in high contrast.
     pub high_contrast: bool,
 }
 
-/// WCAG relative luminance.
 pub fn relative_luminance(colour: Rgb) -> f64 {
     let [r, g, b] = colour.linear();
     0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-/// WCAG contrast ratio, `1.0..=21.0`.
 pub fn contrast(a: Rgb, b: Rgb) -> f64 {
     let (la, lb) = (relative_luminance(a), relative_luminance(b));
     let (hi, lo) = if la >= lb { (la, lb) } else { (lb, la) };
     (hi + 0.05) / (lo + 0.05)
 }
 
-/// sRGB to OKLCH.
 pub fn to_oklch(colour: Rgb) -> Oklch {
     let [r, g, b] = colour.linear();
     let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
@@ -115,7 +90,6 @@ pub fn to_oklch(colour: Rgb) -> Oklch {
     }
 }
 
-/// OKLCH to sRGB, and whether it was inside the gamut before clamping.
 pub fn from_oklch(colour: Oklch) -> (Rgb, bool) {
     let (a, b) = (
         colour.c * colour.h.to_radians().cos(),
@@ -139,8 +113,6 @@ pub fn from_oklch(colour: Oklch) -> (Rgb, bool) {
     (Rgb::from_linear(clamped), in_gamut)
 }
 
-/// The colour at `lightness` with `colour`'s hue, keeping as much of its
-/// chroma as the sRGB gamut allows.
 fn at_lightness(colour: Oklch, lightness: f64) -> Rgb {
     let wanted = Oklch {
         l: lightness,
@@ -167,19 +139,15 @@ fn at_lightness(colour: Oklch, lightness: f64) -> Rgb {
     from_oklch(Oklch { c: fits, ..wanted }).0
 }
 
-/// The contrast floor for `theme` (spec FR-012).
 pub fn floor(theme: Theme) -> f64 {
     if theme.high_contrast { 7.0 } else { 4.5 }
 }
 
-/// `text` moved in OKLCH lightness only, toward the far end from `ground`,
-/// until it meets `floor` against it. Unchanged if it already does.
 pub fn repair(text: Rgb, ground: Rgb, floor: f64) -> Rgb {
     if contrast(text, ground) >= floor {
         return text;
     }
     let colour = to_oklch(text);
-    // Toward whichever end reads better against this ground.
     let white = Rgb {
         r: 1.0,
         g: 1.0,
@@ -225,15 +193,9 @@ pub fn repair(text: Rgb, ground: Rgb, floor: f64) -> Rgb {
     }
 }
 
-/// The contrast guard of the app-colours treatment (specs/007-postio-focus
-/// T211): a colour the sender set on purpose -- a red "URGENT" -- is kept
-/// only where it reaches `floor` against `surface`, and drawn in `ink`
-/// otherwise.
-///
-/// Not [`repair`]: repair moves a colour until it reads, which keeps the
-/// sender's hue on a ground the sender never saw. App colours is the app's
-/// palette with the sender's colour as an exception, and an exception that
-/// does not read on this surface is not made to; it goes back to ink.
+/// A colour the sender set on purpose is kept only where it reaches `floor`
+/// against `surface`, else drawn in `ink`. Not [`repair`]: that would keep the
+/// sender's hue on a ground the sender never saw.
 pub fn guard(colour: Rgb, surface: Rgb, ink: Rgb, floor: f64) -> Rgb {
     if contrast(colour, surface) >= floor {
         colour
@@ -242,8 +204,6 @@ pub fn guard(colour: Rgb, surface: Rgb, ink: Rgb, floor: f64) -> Rgb {
     }
 }
 
-/// A CSS colour as an engine's computed style reports it, and its alpha:
-/// how the tests spell the palette they assert against.
 #[cfg(test)]
 fn parse_css_color(value: &str) -> Option<(Rgb, f64)> {
     let value = value.trim().to_ascii_lowercase();
@@ -309,7 +269,6 @@ fn parse_css_color(value: &str) -> Option<(Rgb, f64)> {
     named(&value).map(|rgb| (rgb, if value == "transparent" { 0.0 } else { 1.0 }))
 }
 
-/// The named colours mail actually uses, and `transparent`.
 #[cfg(test)]
 fn named(name: &str) -> Option<Rgb> {
     let [r, g, b] = match name {
@@ -338,47 +297,29 @@ fn named(name: &str) -> Option<Rgb> {
     Some(Rgb::from_u8(r, g, b))
 }
 
-/// How a message is presented in the current theme (spec FR-013).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Presentation {
-    /// Light theme: as authored, on its own canvas.
     Styled,
-    /// Dark theme, and the sender declared a dark design: theirs.
     SenderDark,
-    /// Dark theme, designed mail: on the sender's own light canvas, a sheet
-    /// of paper inside the dark app.
     Paper,
-    /// Paper the user asked to darken (FR-013a).
     Darkened,
-    /// Dark theme, not designed: on the reader's ground, text repaired.
     Adapted,
 }
 
-/// What a message says about its own colours, as an engine reads them.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MessageFacts {
-    /// The page's background colour, lifted from `<body>`/`<html>` or a
-    /// `body` rule, if the sender set one.
     pub canvas: Option<Rgb>,
-    /// Whether any element inside the message, other than the page itself,
-    /// declares a background colour or image.
     pub inner_background: bool,
-    /// Whether the sender declared dark support: `color-scheme` naming
-    /// `dark`, or a rule under `prefers-color-scheme: dark`.
     pub declares_dark: bool,
 }
 
-/// The relative luminance at and above which a page background is a
-/// client's default white rather than a design (FR-013(c)).
+/// At and above this relative luminance a page background is a client's default white, not a
+/// design.
 pub const NEAR_WHITE: f64 = 0.9;
 
-/// How a message with `facts` is presented in `theme` (FR-013).
-///
-/// In priority order: a light theme draws everything as authored; a
-/// sender's own dark design wins; designed mail -- an inner background, or a
-/// page that is not plain white -- is paper, or darkened paper if the user
-/// asked; everything else adapts to the reader's ground. A desktop client
-/// stamping a white page on every reply is not a design.
+/// In priority order: a light theme draws as authored; a sender's dark design wins;
+/// designed mail (an inner background, or a page not plain white) is paper, darkened
+/// if asked; everything else adapts. A client stamping a white page on every reply is not a design.
 pub fn classify(facts: MessageFacts, theme: Theme, darkened: bool) -> Presentation {
     if !theme.dark {
         return Presentation::Styled;
@@ -397,8 +338,6 @@ pub fn classify(facts: MessageFacts, theme: Theme, darkened: bool) -> Presentati
     }
 }
 
-/// A background colour remapped for a darkened message (FR-013a): OKLab
-/// lightness into `[0.12, 0.30]`, inverted, with its hue kept.
 pub fn darken(background: Rgb) -> Rgb {
     let colour = to_oklch(background);
     at_lightness(colour, 0.12 + (1.0 - colour.l.clamp(0.0, 1.0)) * 0.18)
@@ -428,7 +367,6 @@ mod tests {
         );
         assert!((relative_luminance(hex("#ffffff")) - 1.0).abs() < 1e-9);
         assert!(relative_luminance(hex("#000000")).abs() < 1e-9);
-        // Symmetric: the order of the two colours does not matter.
         assert_eq!(
             contrast(hex("#123456"), hex("#abcdef")),
             contrast(hex("#abcdef"), hex("#123456"))
@@ -472,24 +410,19 @@ mod tests {
         );
     }
 
-    /// The bug the user reported, repaired: dark text on the dark reader
-    /// ground, moved in lightness only until it reads.
     #[test]
     fn the_guard_keeps_a_colour_that_reads_and_inks_one_that_does_not() {
-        // The handoff's surfaces and inks (SPEC.md section 6).
         let (light, light_ink) = (hex("#fdfdfb"), hex("#1c2321"));
         let (dark, dark_ink) = (hex("#1c2120"), hex("#e7ecea"));
         let red = hex("#c00000");
         assert!(contrast(red, light) >= 4.5 && contrast(red, dark) < 4.5);
         assert_eq!(guard(red, light, light_ink, 4.5), red, "red reads on light");
         assert_eq!(guard(red, dark, dark_ink, 4.5), dark_ink, "and not on dark");
-        // Exactly at the floor is enough; just under it is not.
         let grey = hex("#767676");
         assert!(contrast(grey, hex("#ffffff")) >= 4.5);
         assert_eq!(guard(grey, hex("#ffffff"), light_ink, 4.5), grey);
         let lighter = hex("#777777");
         assert_eq!(guard(lighter, hex("#ffffff"), light_ink, 4.5), light_ink);
-        // High contrast asks for 7:1, and red on light does not reach it.
         assert_eq!(guard(red, light, light_ink, 7.0), light_ink);
     }
 
@@ -516,15 +449,12 @@ mod tests {
                 assert!(now.l > was.l, "{text}: on a dark ground, repair lightens");
             }
         }
-        // On a light ground it darkens instead.
         let after = repair(hex("#bbbbbb"), hex("#ffffff"), 4.5);
         assert!(contrast(after, hex("#ffffff")) >= 4.5 - 1e-6);
         assert!(to_oklch(after).l < to_oklch(hex("#bbbbbb")).l);
     }
 
-    /// Pixels are 8-bit. A repair that meets the floor only before rounding
-    /// paints a colour that misses it: the evaluation harness found text at
-    /// 4.48:1 that the arithmetic had put at exactly 4.5.
+    /// A repair meeting the floor only before rounding paints a colour that misses it (seen at 4.48:1).
     #[test]
     fn a_repair_still_meets_the_floor_once_painted_in_8_bits() {
         let grounds = ["#2b2b2d", "#1e1e1e", "#ffffff", "#f5f5f8", "#fff4e0"];
@@ -564,8 +494,6 @@ mod tests {
         }
     }
 
-    /// A saturated colour lightened far enough leaves the sRGB gamut; chroma
-    /// gives way rather than the floor.
     #[test]
     fn chroma_gives_way_only_when_the_gamut_runs_out() {
         let ground = hex("#2b2b2d");
@@ -584,7 +512,6 @@ mod tests {
         );
     }
 
-    /// A canvas whose relative luminance is exactly `target`.
     fn grey_at(target: f64) -> Rgb {
         let (mut low, mut high) = (0.0, 1.0);
         for _ in 0..60 {
@@ -666,7 +593,6 @@ mod tests {
         ] {
             assert_eq!(classify(message, theme, false), expected, "{what}");
         }
-        // Darken applies to paper, and to nothing else.
         assert_eq!(
             classify(facts(None, true, false), dark, true),
             Presentation::Darkened
@@ -698,7 +624,6 @@ mod tests {
                 assert!(hue_distance(was.h, after.h) <= 2.0, "{value}");
             }
         }
-        // Inverted: the lightest page becomes the darkest ground.
         assert!(to_oklch(darken(hex("#ffffff"))).l < to_oklch(darken(hex("#1f6fa8"))).l);
     }
 

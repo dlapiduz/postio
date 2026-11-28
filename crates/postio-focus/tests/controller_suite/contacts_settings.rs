@@ -1,8 +1,3 @@
-//! Settings > Contacts' Suggestions switches, from the controller's side
-//! (specs/011-focus-contacts D7, handoff screen 08): the pane asks which are
-//! on, a click on a switch asks the host to turn exactly that one over, and
-//! the pane is redrawn from the host's answer, not from a guess.
-
 use crate::search_support::asks;
 use postio_config::paths::Platform;
 use postio_focus::{Effect, FocusController, Input, Intent, NoRows, Policy, Reply, Request};
@@ -25,7 +20,6 @@ fn drawn(effects: &[Effect]) -> Option<SuggestionsView> {
     })
 }
 
-/// The pane opened and the host answered with `switches`.
 fn opened(focus: &mut FocusController, switches: ContactSuggestions) -> SuggestionsView {
     let effects = focus.handle_on(Input::ContactsSettingsOpened, &NoRows);
     let [(ticket, Request::ContactSuggestions)] = asks(&effects)[..] else {
@@ -88,7 +82,6 @@ fn each_switch_asks_for_exactly_itself_turned_over_and_is_redrawn_from_the_answe
                 row.which
             );
         }
-        // And a second click turns it back.
         let effects = focus.handle_on(Input::ContactsSuggestion(index as u32), &NoRows);
         let [(_, Request::ContactSuggestionSet { on: back, .. })] = asks(&effects)[..] else {
             panic!("{effects:?}");

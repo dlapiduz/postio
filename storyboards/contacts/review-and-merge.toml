@@ -3,7 +3,8 @@
 # records that look like one person. The arrows choose whose name and photo
 # are kept; n says they are two people and moves on; Escape is Later; Return
 # merges, and the next group follows. Every line under "Why we think so" is
-# one the scorer (`postio-classify` duplicates::score) said.
+# one the scorer (`postio-classify` duplicates::score) said. The counter says
+# how many groups are left, as the strip's Worth a look does (#2243).
 apps   = ["focus", "macos"]
 source = { kind = "spec", ref = "specs/011-focus-contacts S10" }
 seed   = "small"
@@ -38,4 +39,41 @@ expect  = "Not the same: this group is gone and the next, if any, is drawn; the 
 [[step]]
 id      = "merge"
 command = "contact_show_mail"
-expect  = "Return merges into the kept record; with nothing left the sheet closes and the list shows one person where there were several."
+check   = { notice.undo = true }
+expect  = "Return merges into the kept record and the last group follows; the counter says one is left, as the strip's Worth a look says one set. The list under the sheet shows its rows in every frame, one person where there were several: it never blanks while it is read again."
+
+[[step]]
+id      = "undo"
+command = "undo"
+check   = { notice.tone = "success" }
+expect  = "z, as the sheet's foot teaches, takes the merge back with the sheet still up: the toast says it was undone, the records are apart again in the list behind, and the group is back in the queue: the counter says two sets are left, as the strip does."
+
+[[step]]
+id      = "again"
+command = "contact_show_mail"
+expect  = "Return merges the group on screen once more, and the one the undo brought back follows: one set left, in the counter and the strip."
+
+[[step]]
+id      = "last"
+command = "contact_show_mail"
+expect  = "Merging the last group leaves nothing to review: the sheet closes onto Contacts, the list shows one person where there were several, and Worth a look is one set lower."
+
+# The sheet's counter, which only Postio publishes: how many groups are left,
+# the one on screen among them (#2243).
+[app.focus.step.sheet]
+check = { app.focus.contacts.merge = "3 sets left" }
+
+[app.focus.step.not-the-same]
+check = { app.focus.contacts.merge = "2 sets left" }
+
+[app.focus.step.merge]
+check = { notice.undo = true, app.focus.contacts.merge = "1 set left" }
+
+[app.focus.step.undo]
+check = { notice.tone = "success", app.focus.contacts.merge = "2 sets left" }
+
+[app.focus.step.again]
+check = { app.focus.contacts.merge = "1 set left" }
+
+[app.focus.step.last]
+check = { app.focus.contacts.merge = { absent = true } }

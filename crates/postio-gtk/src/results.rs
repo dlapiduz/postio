@@ -1,18 +1,9 @@
-//! The search results view (spec 010 step 3, design §3.3-3.5, screens 06
-//! and 07): the page "Show all" opens in the inbox's place.
-//!
-//! It draws what the controller says and decides nothing, as the Mac's
-//! `ResultsTable` does: the frame (`Intent::ShowResults`) -- the tabs, the
-//! count, the sort, the groups and the footer -- the query's chips and
-//! filter buttons (`Intent::Query`), and where the focus ring is
-//! (`Intent::ResultsCursor`). The rows are read by position when the list
-//! view draws them and never before, so a search of thousands costs what
-//! one of a dozen does; a row whose page has not landed is asked for, and
-//! `Intent::ResultsPage` says when to draw it again.
-//!
-//! A click is told to the controller and moves nothing here: the ring
-//! moves when the controller says. Keys reach the controller through the
-//! window's commands, as the inbox's do.
+//! The search results view: the page "Show all" opens in the inbox's place. It draws what the
+//! controller says and decides nothing.
+//! Rows are read by position when the list view draws them, so a search of thousands costs what one
+//! of a dozen does.
+//! A click is told to the controller and moves nothing here: the ring moves when the controller
+//! says.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
@@ -33,22 +24,15 @@ use postio_widgets::widgets::space::{S1, S2, S3};
 
 use crate::list::Feed;
 
-/// The body's page for the rows, and for the Files tab's grid.
 const ROWS: &str = "rows";
 const FILES: &str = "files";
-/// The body's page for the People tab's list.
 const PEOPLE: &str = "people";
-/// The body's page for a search that found nothing.
 const NOTHING: &str = "nothing";
 
-/// What a list position shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Item {
-    /// The header of `groups[index]`.
     Header(usize),
-    /// The result at this position.
     Row(u64),
-    /// The `index`th child of the expanded result (spec 013 US6).
     Child(u32),
 }
 
@@ -57,10 +41,8 @@ mod imp {
 
     #[derive(Default)]
     pub struct ResultsItems {
-        /// Each group's header position, and its group's first result.
         pub starts: RefCell<Vec<(u32, u64)>>,
         pub total: Cell<u32>,
-        /// The expanded result's position and how many children follow it.
         pub splice: Cell<Option<(u64, u32)>>,
     }
 
@@ -90,8 +72,6 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// The results list's shape: a header before each group's rows. Only
-    /// the count and where each group starts are held.
     pub struct ResultsItems(ObjectSubclass<imp::ResultsItems>)
         @implements gio::ListModel;
 }
@@ -103,13 +83,10 @@ impl Default for ResultsItems {
 }
 
 impl ResultsItems {
-    /// How many positions the list has: the groups' rows and headers, and the
-    /// expanded result's children after it.
     fn len(&self) -> u32 {
         self.imp().total.get() + self.extra()
     }
 
-    /// How many children are in the list: none while their result is not.
     fn extra(&self) -> u32 {
         match self.imp().splice.get() {
             Some((anchor, count)) if self.raw_position_of(anchor).is_some() => count,
@@ -117,8 +94,6 @@ impl ResultsItems {
         }
     }
 
-    /// The list is `groups` now: every row drawn is asked for again, and
-    /// nothing is expanded until the controller says.
     fn set_groups(&self, groups: &[ResultGroup]) {
         let mut starts = Vec::with_capacity(groups.len());
         let mut at = 0u32;
@@ -133,8 +108,6 @@ impl ResultsItems {
         self.items_changed(0, before, at);
     }
 
-    /// The children of the result at `anchor` follow it from now on (or
-    /// none, with `None`).
     fn set_splice(&self, splice: Option<(u64, u32)>) {
         if let Some((anchor, count)) = self.imp().splice.take()
             && let Some(at) = self.raw_position_of(anchor)
@@ -152,7 +125,6 @@ impl ResultsItems {
         }
     }
 
-    /// The list position of child `index` of the expanded result.
     fn child_position(&self, index: u32) -> Option<u32> {
         let (anchor, count) = self.imp().splice.get()?;
         (index < count)
@@ -160,14 +132,12 @@ impl ResultsItems {
             .flatten()
     }
 
-    /// Child `index` is drawn again.
     fn child_changed(&self, index: u32) {
         if let Some(at) = self.child_position(index) {
             self.items_changed(at, 1, 1);
         }
     }
 
-    /// What list position `at` shows.
     fn item_at(&self, at: u32) -> Option<Item> {
         if at >= self.len() {
             return None;
@@ -187,7 +157,6 @@ impl ResultsItems {
         }
     }
 
-    /// What list position `at` shows, the children not counted.
     fn raw_item_at(&self, at: u32) -> Option<Item> {
         if at >= self.imp().total.get() {
             return None;
@@ -201,7 +170,6 @@ impl ResultsItems {
         })
     }
 
-    /// The list position of the result at `position`.
     fn position_of(&self, position: u64) -> Option<u32> {
         let raw = self.raw_position_of(position)?;
         let moved = match self.imp().splice.get() {
@@ -213,8 +181,6 @@ impl ResultsItems {
         Some(raw + moved)
     }
 
-    /// The list position of the result at `position`, the children not
-    /// counted.
     fn raw_position_of(&self, position: u64) -> Option<u32> {
         let starts = self.imp().starts.borrow();
         let index = starts.iter().rposition(|(_, first)| *first <= position)?;
@@ -225,7 +191,6 @@ impl ResultsItems {
             .filter(|at| *at < self.imp().total.get())
     }
 
-    /// The results `first..first + count` changed: draw them again.
     fn rows_changed(&self, first: u64, count: u64) {
         for position in first..first.saturating_add(count) {
             if let Some(at) = self.position_of(position) {
@@ -235,7 +200,6 @@ impl ResultsItems {
     }
 }
 
-/// The results view.
 pub struct ResultsPane {
     root: gtk::Box,
     feed: Feed,
@@ -244,53 +208,41 @@ pub struct ResultsPane {
     sub_line: gtk::Label,
     tabs: gtk::Box,
     sort: gtk::Button,
-    /// "‹ Inbox", with Back's key.
     back: gtk::Button,
-    /// "Save search", with its key: what the Save popover hangs from.
     save_button: gtk::Button,
     save_popover: Rc<crate::save_popover::SavePopover>,
     chips: gtk::Box,
     query_hint: gtk::Box,
-    /// The query, drawn in the top bar's field while the results are up
-    /// ([`crate::chrome::Chrome::show_query`]).
     query: gtk::Box,
-    /// The timeline and its hint.
     timeline_line: gtk::Box,
     buttons: gtk::Box,
-    /// The filter buttons drawn, by kind: what a popover hangs from.
     filter_buttons: RefCell<Vec<(FilterKind, gtk::Button)>>,
     timeline: Rc<crate::search_popover::MonthChart>,
     timeline_hint: gtk::Label,
     popover: Rc<crate::search_popover::FilterPopover>,
     items: ResultsItems,
     list: gtk::ListView,
-    /// The rows, or the Files tab's grid in their place.
     body: gtk::Stack,
     files: Rc<crate::results_files::FilesGrid>,
     people: Rc<crate::results_files::PeopleList>,
     nothing: Rc<crate::results_files::NoResultsPage>,
-    /// The search found nothing: the page in the rows' place.
     found_nothing: Cell<bool>,
     quick_look: Rc<crate::results_files::QuickLookPanel>,
     hints: gtk::Box,
-    /// The inbox's bulk bar, offering what checked results take: one bar
-    /// for a selection wherever it is made (#2082).
     bulk: crate::bulk::Bulk,
     footer: gtk::Label,
+    foot: gtk::Box,
+    scope_footer: Rc<crate::scope_footer::ScopeFooter>,
+    window_open: Cell<bool>,
     view: RefCell<Option<ResultsView>>,
     cursor: Cell<Option<u64>>,
-    /// The expanded result's children, and the one with the ring.
     splice: RefCell<Option<postio_focus::ResultSplice>>,
     child_focus: Cell<Option<u32>>,
-    /// Positions asked for and not yet landed, so a redraw does not ask
-    /// again.
     asked: RefCell<std::collections::HashSet<u64>>,
     me: RefCell<Weak<ResultsPane>>,
 }
 
 impl ResultsPane {
-    /// An empty results view over `feed`; `act` runs a command as its key
-    /// would.
     pub fn new(feed: Feed, act: impl Fn(CommandId) + 'static) -> Rc<Self> {
         let back = gtk::Button::new();
         back.add_css_class("flat");
@@ -344,7 +296,6 @@ impl ResultsPane {
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         buttons.add_css_class("focus-results-filters");
 
-        // The timeline (design §3.3): a bar a month, the hint on its right.
         let timeline = crate::search_popover::MonthChart::new();
         timeline.widget().set_hexpand(true);
         timeline.widget().set_halign(gtk::Align::Center);
@@ -361,9 +312,8 @@ impl ResultsPane {
         let items = ResultsItems::default();
         let selection = gtk::NoSelection::new(Some(items.clone()));
         let factory = gtk::SignalListItemFactory::new();
-        // A row is drawn again as a new widget whenever it changes -- `x`,
-        // the ring moving, its page landing -- and the keyboard stays in
-        // the list across it (#2136).
+        // A row is drawn again as a new widget whenever it changes, and the keyboard stays in the
+        // list across it (#2136).
         let list = crate::rebuild::keeping_keyboard(&selection, || {
             gtk::ListView::new(Some(selection.clone()), Some(factory.clone()))
         });
@@ -422,6 +372,8 @@ impl ResultsPane {
         root.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         root.append(bulk.widget());
         root.append(&foot);
+        let scope_footer = Rc::new(crate::scope_footer::ScopeFooter::new());
+        root.append(scope_footer.widget());
 
         let popover_feed = feed.clone();
         let popover = crate::search_popover::FilterPopover::new(move |input| {
@@ -462,6 +414,9 @@ impl ResultsPane {
             hints,
             bulk,
             footer,
+            foot,
+            scope_footer,
+            window_open: Cell::new(false),
             view: RefCell::default(),
             cursor: Cell::new(None),
             splice: RefCell::default(),
@@ -520,9 +475,8 @@ impl ResultsPane {
                 }
             }
         });
-        // The keyboard goes back to the results when the Save popover
-        // goes, not to the button it hung from -- once GTK has handed it to
-        // that button, which it does after `closed`.
+        // The keyboard goes back to the results, not to the button the popover hung from, once GTK
+        // has handed it there (after `closed`).
         self.save_popover.connect_closed({
             let weak = weak.clone();
             move || {
@@ -555,17 +509,14 @@ impl ResultsPane {
         });
     }
 
-    /// The page the window puts in the inbox's place.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// The query's field: its chips and words, and what `/` does.
     pub fn query_field(&self) -> &gtk::Box {
         &self.query
     }
 
-    /// Draw the frame: the controller's `Intent::ShowResults`.
     pub fn show(&self, view: &ResultsView) {
         self.dress_head();
         self.count_line.set_text(&view.count_line);
@@ -575,8 +526,6 @@ impl ResultsPane {
         self.sort.set_visible(view.sortable);
         self.timeline.show(&view.months);
         self.timeline.widget().set_visible(!view.months.is_empty());
-        // Two lines, broken at the hint's first middle dot, as screen 06
-        // draws it; then the key that steps a month while a range is set.
         let mut hint = view.timeline_hint.replacen(" \u{b7} ", "\n", 1);
         if let Some(step) = &view.timeline_step {
             hint.push_str(&format!("\n{} {}", step.key, step.label));
@@ -590,8 +539,7 @@ impl ResultsPane {
                 _ => words::BEST_MATCH,
             }
         ));
-        // As wide as its widest words, whichever it says: the tabs beside
-        // it held still while it changed (#2082).
+        // As wide as its widest words, so the tabs beside it hold still while it changes (#2082).
         if let Some(label) = self.sort.child().and_downcast::<gtk::Label>() {
             label.set_width_chars(
                 [words::NEWEST, words::BEST_MATCH]
@@ -603,8 +551,6 @@ impl ResultsPane {
         }
         clear(&self.hints);
         let bulk = view.selected > 0;
-        // The bulk bar (§3.5) is the inbox's, over the footer: how many the
-        // next verb reaches, then its verbs with their keys.
         self.bulk
             .set_summary(bulk.then(|| words::checked_line(view.selected)).as_deref());
         if !bulk {
@@ -649,7 +595,6 @@ impl ResultsPane {
         self.reveal_cursor();
     }
 
-    /// The results `first..first + count` landed or changed.
     pub fn rows_changed(&self, first: u64, count: u64) {
         if self.showing_files() {
             self.files.refresh();
@@ -666,8 +611,8 @@ impl ResultsPane {
             }
         }
         self.items.rows_changed(first, count);
-        // A row still being read is drawn empty; the rows landing now grow
-        // into their height and push the ring down, out of view.
+        // A row still being read is drawn empty; the rows landing now grow into their height and
+        // push the ring down, out of view.
         if self
             .cursor
             .get()
@@ -677,22 +622,17 @@ impl ResultsPane {
         }
     }
 
-    /// The expanded result's children, drawn after its row; `None` takes
-    /// them away (`Intent::ResultSplice`).
     pub fn show_splice(&self, splice: Option<&postio_focus::ResultSplice>) {
         let anchor = splice.map(|splice| (splice.anchor, splice.children.len() as u32));
         self.splice.replace(splice.cloned());
         self.child_focus
             .set(splice.and_then(|splice| splice.focused));
         self.items.set_splice(anchor);
-        // The result wears its chevron's turn and loses a ring a child has.
         if let Some((anchor, _)) = anchor {
             self.items.rows_changed(anchor, 1);
         }
     }
 
-    /// The ring is on child `child` of the expanded result, or back on the
-    /// result's own row (`Intent::ResultChildFocus`).
     pub fn show_child_focus(&self, child: Option<u32>) {
         let was = self.child_focus.replace(child);
         if let Some(was) = was {
@@ -716,7 +656,6 @@ impl ResultsPane {
         }
     }
 
-    /// How many children the expanded result has drawn.
     pub fn child_count(&self) -> usize {
         self.splice
             .borrow()
@@ -724,12 +663,10 @@ impl ResultsPane {
             .map_or(0, |splice| splice.children.len())
     }
 
-    /// The child with the ring, from zero.
     pub fn child_focus(&self) -> Option<u32> {
         self.child_focus.get()
     }
 
-    /// The focus ring is on the result at `position` now.
     pub fn show_cursor(&self, position: u64) {
         if self.showing_files() {
             self.cursor.set(Some(position));
@@ -750,7 +687,6 @@ impl ResultsPane {
         self.reveal_cursor();
     }
 
-    /// Draw the query's chips and filter buttons: `Intent::Query`.
     pub fn show_query(&self, query: &QueryView) {
         clear(&self.chips);
         for chip in &query.chips {
@@ -819,7 +755,6 @@ impl ResultsPane {
             } else {
                 button.label.clone()
             };
-            // The key that opens its popover, taught on it (#2090).
             keyhint::dress(&control, &label, button.key.as_deref());
             control.add_css_class("focus-results-filter");
             if button.applied {
@@ -847,8 +782,6 @@ impl ResultsPane {
         self.filter_buttons.replace(drawn);
     }
 
-    /// Draw the page a search that found nothing shows, or take it away:
-    /// `Intent::Relaxations`.
     pub fn show_relaxations(&self, view: Option<&postio_focus::NoResultsView>) {
         match view {
             Some(view) => {
@@ -867,9 +800,7 @@ impl ResultsPane {
         }
     }
 
-    /// Show the body's `page`, the keyboard going with it when it was on
-    /// the page that goes: a hidden page keeps no keyboard, and GTK would
-    /// hand it to the top bar's first button.
+    /// A hidden page keeps no keyboard, and GTK would hand it to the top bar's first button.
     fn switch_body(&self, page: &str) {
         if self.body.visible_child_name().as_deref() == Some(page) {
             return;
@@ -880,15 +811,12 @@ impl ResultsPane {
             .and_then(|root| root.focus())
             .is_some_and(|focus| focus.is_ancestor(&self.body));
         self.body.set_visible_child_name(page);
-        // Nothing found has no months to chart (§3.10).
         self.timeline_line.set_visible(page != NOTHING);
         if had {
             self.focus();
         }
     }
 
-    /// The head's two buttons with their keys, as the keymap says them now:
-    /// "‹ Inbox" with Back's, "Save search" with its own (§3.2).
     fn dress_head(&self) {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, S1);
         line.append(&gtk::Image::from_icon_name("go-previous-symbolic"));
@@ -904,8 +832,6 @@ impl ResultsPane {
         );
     }
 
-    /// Draw the Save popover from the Save search button, or take it down:
-    /// `Intent::SavePopover`.
     pub fn show_save(&self, view: Option<&postio_focus::SaveView>) {
         match view {
             Some(view) => self.save_popover.show(
@@ -917,37 +843,30 @@ impl ResultsPane {
         }
     }
 
-    /// The Save popover.
     pub fn save_popover(&self) -> &crate::save_popover::SavePopover {
         &self.save_popover
     }
 
-    /// The no-results page.
     pub fn nothing(&self) -> &crate::results_files::NoResultsPage {
         &self.nothing
     }
 
-    /// Whether the no-results page is in the rows' place.
     pub fn showing_nothing(&self) -> bool {
         self.body.visible_child_name().as_deref() == Some(NOTHING)
     }
 
-    /// Whether the People tab's list is in the rows' place.
     pub fn showing_people(&self) -> bool {
         self.body.visible_child_name().as_deref() == Some(PEOPLE)
     }
 
-    /// The People tab's list.
     pub fn people(&self) -> &crate::results_files::PeopleList {
         &self.people
     }
 
-    /// Whether the Files tab's grid is in the rows' place.
     pub fn showing_files(&self) -> bool {
         self.body.visible_child_name().as_deref() == Some(FILES)
     }
 
-    /// Draw Quick Look over the results, or close it: `Intent::QuickLook`.
     pub fn show_quick_look(
         &self,
         view: Option<&postio_focus::QuickLookView>,
@@ -956,9 +875,7 @@ impl ResultsPane {
         self.quick_look.show(view, commands);
     }
 
-    /// An arrow while the Files tab is shown: the grid's, two ways, as on
-    /// the Mac; elsewhere the arrows are the list's keys. Whether it took
-    /// it.
+    /// Whether it took it; elsewhere the arrows are the list's keys.
     pub fn grid_arrow(&self, key: gtk::gdk::Key) -> bool {
         use postio_ui::search_view::GridArrow;
         if !self.showing_files() {
@@ -975,18 +892,14 @@ impl ResultsPane {
         true
     }
 
-    /// The Files tab's grid.
     pub fn files(&self) -> &crate::results_files::FilesGrid {
         &self.files
     }
 
-    /// Quick Look.
     pub fn quick_look(&self) -> &crate::results_files::QuickLookPanel {
         &self.quick_look
     }
 
-    /// Draw the open filter popover, hung from its button, or close it:
-    /// `Intent::Popover`.
     pub fn show_popover(&self, view: Option<&postio_focus::PopoverView>) {
         let button = view.and_then(|view| {
             self.filter_buttons
@@ -998,18 +911,14 @@ impl ResultsPane {
         self.popover.show(view, button.as_ref());
     }
 
-    /// The filter popover.
     pub fn popover(&self) -> &crate::search_popover::FilterPopover {
         &self.popover
     }
 
-    /// The timeline.
     pub fn timeline(&self) -> &crate::search_popover::MonthChart {
         &self.timeline
     }
 
-    /// A filter button: a toggle sends its term, the rest open their
-    /// popover (spec 010 FR-027).
     fn filter_clicked(&self, kind: FilterKind) {
         match kind.toggle_term() {
             Some((field, value)) => self.feed.input(Input::SearchEdit(TermEdit::Toggle {
@@ -1050,15 +959,13 @@ impl ResultsPane {
         }
     }
 
-    /// List position `at`, drawn.
     fn draw_item(&self, at: u32, item: &gtk::ListItem) -> Option<gtk::Widget> {
         match self.items.item_at(at)? {
             Item::Header(index) => {
                 let view = self.view.borrow();
                 let group = view.as_ref()?.groups.get(index)?;
                 item.set_activatable(false);
-                // A heading is no place for the keyboard: it would wear a
-                // ring of its own beside the result's.
+                // A heading is no place for the keyboard: it would wear a ring beside the result's.
                 item.set_focusable(false);
                 item.set_accessible_label(&group.accessible);
                 Some(header(group).upcast())
@@ -1083,7 +990,6 @@ impl ResultsPane {
                 let splice = self.splice.borrow();
                 let child = splice.as_ref()?.children.get(index as usize)?;
                 let gap = matches!(child, words::ResultChild::Gap { .. });
-                // A gap is a quiet line, no place for the keyboard.
                 item.set_activatable(!gap);
                 item.set_focusable(!gap);
                 let widget = self.child(index, child);
@@ -1095,9 +1001,8 @@ impl ResultsPane {
         }
     }
 
-    /// Ask for the result at `position`, once, after the list has drawn:
-    /// the answer may land at once, and the list must not change while it
-    /// is binding.
+    /// Once, after the list has drawn: the answer may land at once, and the list must not change
+    /// while it is binding.
     fn ask(&self, position: u64) {
         if !self.asked.borrow_mut().insert(position) {
             return;
@@ -1110,9 +1015,6 @@ impl ResultsPane {
         });
     }
 
-    /// One result (design §3.4): the gutter, the sender with a top hit's
-    /// reason, the subject line and the passage line, the folder, the
-    /// date.
     fn row(&self, position: u64, row: &ResultRow) -> gtk::Box {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         line.add_css_class("focus-results-row");
@@ -1190,7 +1092,6 @@ impl ResultsPane {
         }
         bottom.append(&tag);
         let passage = match &row.summary {
-            // "3 of 6 messages match", in place of the snippet.
             Some(summary) => crate::dropdown::runs_label(&[plain_run(summary)], true),
             None => crate::dropdown::runs_label(&row.passage, true),
         };
@@ -1213,8 +1114,6 @@ impl ResultsPane {
         date.set_xalign(1.0);
         line.append(&date);
 
-        // Every column on the row's middle: the two-line columns and the
-        // one-line ones alike.
         let mut column = line.first_child();
         while let Some(widget) = column {
             widget.set_valign(gtk::Align::Center);
@@ -1234,9 +1133,6 @@ impl ResultsPane {
         line
     }
 
-    /// One line under the expanded result: a message that matched, with its
-    /// tag and the words around the match, or one quiet line for the run of
-    /// messages that did not (30 tall).
     fn child(&self, index: u32, child: &words::ResultChild) -> gtk::Box {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         line.add_css_class("focus-results-child");
@@ -1249,8 +1145,6 @@ impl ResultsPane {
                 time,
                 ..
             } => {
-                // The initials avatar the thread's rows wear, and who wrote
-                // it: both come with the row, so nothing is read to draw it.
                 let avatar = gtk::Label::new(Some(initials));
                 avatar.add_css_class("focus-thread-avatar");
                 avatar.set_valign(gtk::Align::Center);
@@ -1292,11 +1186,9 @@ impl ResultsPane {
         line
     }
 
-    /// Scroll the ring's row into view, moving the list no further, once
-    /// the redraws already said have been taken: the ring is drawn by
-    /// replacing its rows, and a `scroll_to` asked before a replacement of
-    /// the row it scrolls to was dropped, leaving the ring below the view
-    /// after a few `j`s.
+    /// Once the redraws already said have been taken: the ring is drawn by replacing its rows, and
+    /// a `scroll_to` asked before a replacement of the row it scrolls to was dropped, leaving the
+    /// ring below the view after a few `j`s.
     fn reveal_cursor(&self) {
         let weak = self.me.borrow().clone();
         glib::idle_add_local_once(move || {
@@ -1306,8 +1198,6 @@ impl ResultsPane {
         });
     }
 
-    /// [`reveal_cursor`](Self::reveal_cursor), now. The first row of a
-    /// group brings its header with it.
     fn reveal_cursor_now(&self) {
         let Some(at) = self
             .cursor
@@ -1319,9 +1209,8 @@ impl ResultsPane {
         let header_above = at
             .checked_sub(1)
             .filter(|above| matches!(self.items.item_at(*above), Some(Item::Header(_))));
-        // The first row of the list shows the list from its top: the first
-        // group's heading -- "Top hits", which says why its rows come again
-        // below -- is never left just above the view.
+        // The first row shows the list from its top: the first group's heading ("Top hits") is
+        // never left just above the view.
         let from_the_top = header_above == Some(0);
         if from_the_top {
             to_the_top(&self.list);
@@ -1332,21 +1221,19 @@ impl ResultsPane {
         if !from_the_top {
             self.list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
         }
-        // The list places a row it has not drawn by an estimate of the
-        // rows' heights, which a 72 row after 40 ones outruns: once it is
-        // drawn, the ringed row is brought the rest of the way in.
+        // The list places a row it has not drawn by an estimate of row heights, which a 72 row
+        // after 40 ones outruns: once drawn, the ringed row is brought the rest of the way in.
         let frames = std::cell::Cell::new(0);
         let settled = std::cell::Cell::new(0);
         self.list.add_tick_callback(move |list, _| {
             frames.set(frames.get() + 1);
-            // Until it is wholly in view, for some four seconds of frames: a row
-            // drawn late moves the ones below it again, and a slow machine
-            // draws late.
+            // For some four seconds of frames: a row drawn late moves the ones below it again, and
+            // a slow machine draws late.
             if from_the_top {
                 to_the_top(list);
             }
-            // In view for three frames running: one frame's bounds can be
-            // from before a layout that moves the row again.
+            // In view for three frames running: one frame's bounds can be from before a layout that
+            // moves the row again.
             if nudge_into_view(list) {
                 settled.set(settled.get() + 1);
             } else {
@@ -1355,15 +1242,13 @@ impl ResultsPane {
             if settled.get() >= 3 || frames.get() >= 240 {
                 return glib::ControlFlow::Break;
             }
-            // The list's own estimate may end short of the row, where no
-            // nudge can scroll: asked again, it measures with the rows it
-            // has drawn since.
+            // The list's own estimate may end short of the row, where no nudge can scroll: asked
+            // again, it measures with the rows drawn since.
             list.scroll_to(at, gtk::ListScrollFlags::NONE, None);
             glib::ControlFlow::Continue
         });
     }
 
-    /// The subjects of the rows read so far, in order: what a test reads.
     pub fn subjects(&self) -> Vec<String> {
         let total = self.view.borrow().as_ref().map_or(0, |view| view.rows);
         (0..total)
@@ -1372,7 +1257,6 @@ impl ResultsPane {
             .collect()
     }
 
-    /// The groups' titles, in order.
     pub fn groups(&self) -> Vec<String> {
         self.view
             .borrow()
@@ -1386,7 +1270,6 @@ impl ResultsPane {
             .unwrap_or_default()
     }
 
-    /// What the Sort button says: "Sort Best match".
     pub fn sort_said(&self) -> String {
         self.sort
             .label()
@@ -1394,22 +1277,42 @@ impl ResultsPane {
             .unwrap_or_default()
     }
 
-    /// The rows' list, for what a test measures of it.
     pub fn list(&self) -> &gtk::ListView {
         &self.list
     }
 
-    /// The count line: "48 threads".
+    pub fn show_scope(&self, view: &postio_ui::scope::FooterView) {
+        self.scope_footer.set(view);
+        self.set_window_open(self.window_open.get());
+    }
+
+    /// The results' keys, Escape "back to inbox" among them, are not the window's (#2193).
+    pub fn set_window_open(&self, open: bool) {
+        self.window_open.set(open);
+        let said = !self.scope_footer.title().is_empty();
+        self.foot.set_visible(!open);
+        self.scope_footer.widget().set_visible(open && said);
+    }
+
+    pub fn window_footer(&self) -> Option<Rc<crate::scope_footer::ScopeFooter>> {
+        self.scope_footer
+            .widget()
+            .is_visible()
+            .then(|| Rc::clone(&self.scope_footer))
+    }
+
     pub fn count_line(&self) -> String {
         self.count_line.text().to_string()
     }
 
-    /// The result the focus ring is on.
+    pub fn top_reason(&self) -> Option<String> {
+        self.feed.result_row(0)?.reason
+    }
+
     pub fn cursor(&self) -> Option<u64> {
         self.cursor.get()
     }
 
-    /// The chips' words, operator and value: `from:ada@example.com`.
     pub fn chips(&self) -> Vec<String> {
         let mut chips = Vec::new();
         let mut child = self.chips.first_child();
@@ -1430,7 +1333,6 @@ impl ResultsPane {
         chips
     }
 
-    /// Click chip `index`'s ✕, as a person does.
     pub fn remove_chip(&self, index: usize) -> bool {
         let mut child = self.chips.first_child();
         let mut at = 0;
@@ -1454,7 +1356,6 @@ impl ResultsPane {
         false
     }
 
-    /// The words the selected tab draws, its count left out: "Threads".
     pub fn tab_said(&self) -> Option<String> {
         let mut child = self.tabs.first_child();
         while let Some(widget) = child {
@@ -1471,7 +1372,6 @@ impl ResultsPane {
         None
     }
 
-    /// Click the tab whose label starts with `text`, as a person does.
     pub fn click_tab(&self, text: &str) -> bool {
         let mut child = self.tabs.first_child();
         while let Some(widget) = child {
@@ -1490,7 +1390,6 @@ impl ResultsPane {
         false
     }
 
-    /// Click the filter button whose label starts with `text`.
     pub fn click_filter(&self, text: &str) -> bool {
         let mut child = self.buttons.first_child();
         while let Some(widget) = child {
@@ -1505,7 +1404,6 @@ impl ResultsPane {
         false
     }
 
-    /// The filter buttons' labels, and whether each is applied.
     pub fn filters(&self) -> Vec<(String, bool)> {
         let mut filters = Vec::new();
         let mut child = self.buttons.first_child();
@@ -1521,7 +1419,6 @@ impl ResultsPane {
         filters
     }
 
-    /// Take the keyboard: the list, which hears the window's keys.
     pub fn focus(&self) {
         if self.showing_files() {
             self.files.focus();
@@ -1535,8 +1432,8 @@ impl ResultsPane {
             self.people.focus();
             return;
         }
-        // On the ringed result, as the inbox's keyboard is on its cursor's
-        // row: the list's own focus would land on its first item.
+        // On the ringed result, as the inbox's keyboard is on its cursor's row: the list's own
+        // focus would land on its first item.
         match self
             .cursor
             .get()
@@ -1555,8 +1452,6 @@ impl ResultsPane {
     }
 }
 
-/// What a filter button says: its label, or its first label's when a
-/// keycap was set beside it.
 fn button_words(button: &gtk::Button) -> String {
     if let Some(label) = button.label() {
         return label.to_string();
@@ -1575,7 +1470,6 @@ fn button_words(button: &gtk::Button) -> String {
     String::new()
 }
 
-/// Scroll `list`'s scroller to its very top.
 fn to_the_top(list: &gtk::ListView) {
     if let Some(scroller) = list
         .ancestor(gtk::ScrolledWindow::static_type())
@@ -1585,8 +1479,6 @@ fn to_the_top(list: &gtk::ListView) {
     }
 }
 
-/// Scroll `list` by what its ringed row still lies outside its scroller:
-/// whether it was already wholly in view.
 fn nudge_into_view(list: &gtk::ListView) -> bool {
     let Some(scroller) = list
         .ancestor(gtk::ScrolledWindow::static_type())
@@ -1622,7 +1514,6 @@ fn nudge_into_view(list: &gtk::ListView) -> bool {
     }
 }
 
-/// A group's header: its title, its count, its note.
 fn header(group: &ResultGroup) -> gtk::Box {
     let line = gtk::Box::new(gtk::Orientation::Horizontal, S2);
     line.add_css_class("focus-results-header");
@@ -1643,7 +1534,6 @@ fn header(group: &ResultGroup) -> gtk::Box {
     line
 }
 
-/// A footer key: the cap, then what it does.
 fn hint_line(key: &str, label: &str) -> gtk::Box {
     let line = gtk::Box::new(gtk::Orientation::Horizontal, S1);
     line.append(&keyhint::cap(key));
@@ -1660,8 +1550,6 @@ fn clear(container: &gtk::Box) {
     }
 }
 
-/// A passage as runs: its words, the matched ones marked, an ellipsis where
-/// it was cut.
 fn passage_runs(passage: &postio_search::results::Passage) -> Vec<Run> {
     let mut runs = Vec::new();
     if passage.elided_start {

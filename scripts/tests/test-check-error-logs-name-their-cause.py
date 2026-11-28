@@ -22,8 +22,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -91,7 +89,6 @@ def main() -> int:
         r = run(root)
         case("a line-continued message is one literal", r.returncode == 0, r.stdout)
 
-        # The redaction trap, and the reason this check is narrow.
         tree(
             root,
             'fn f() {\n'

@@ -1,19 +1,3 @@
-//! Signing in with a browser, without a toolkit (#1276).
-//!
-//! The flow itself — PKCE, the loopback listener, the code exchange — is
-//! `postio-account`'s and is tested there against a mock authorization
-//! server. What is tested here is the part that used to live in the GTK
-//! composition root and could not be reached from a second frontend: which
-//! endpoints a sign-in uses, and the order the account and its refresh token
-//! are written in.
-//!
-//! **The order is the whole of the risk**, and it is `provision`'s rule
-//! applied to a token: the credential first, then the row, rolling the
-//! credential back if the row will not write. `postio-67` is what the other
-//! order cost.
-//!
-//! Nothing here reaches the network or a browser.
-
 use std::sync::Arc;
 
 use postio_account::cancel::CancelToken;
@@ -45,9 +29,6 @@ fn settings() -> AccountSettings {
 }
 
 fn client() -> OAuthClient {
-    // The user's own, always: Postio ships no client id and no secret, and a
-    // registered application's credentials in an open-source mail client are
-    // credentials every user of it shares (ADR 0006 Q1).
     OAuthClient {
         client_id: "the-users-own-client".to_owned(),
         client_secret: None,
@@ -74,12 +55,8 @@ fn signed_in() -> SignedIn {
     }
 }
 
-// -- which endpoints a sign-in uses -----------------------------------------
-
 #[tokio::test]
 async fn endpoints_given_directly_are_used_without_discovering_anything() {
-    // A preset row that names both is the ordinary case, and it must not
-    // cost a network round trip to a discovery document.
     let resolved = endpoints_for(
         Some("https://provider.example/authorize"),
         Some("https://provider.example/token"),
@@ -98,8 +75,6 @@ async fn endpoints_given_directly_are_used_without_discovering_anything() {
 
 #[tokio::test]
 async fn a_provider_with_no_endpoints_and_no_issuer_says_so_rather_than_guessing() {
-    // Guessing a consent URL is sending somebody's credentials somewhere
-    // nobody chose.
     let error = endpoints_for(None, None, None, &CancelToken::new())
         .await
         .expect_err("nothing to go on");
@@ -120,8 +95,6 @@ async fn an_unparseable_endpoint_is_refused_before_a_browser_opens() {
 
     assert!(matches!(error, SignInError::Failed(_)));
 }
-
-// -- what a completed sign-in writes ----------------------------------------
 
 #[tokio::test]
 async fn the_account_is_written_with_its_client_and_the_token_goes_to_the_keyring() {
@@ -161,8 +134,6 @@ async fn the_account_is_written_with_its_client_and_the_token_goes_to_the_keyrin
     assert_eq!(oauth.token_url, "https://provider.example/token");
     assert_eq!(oauth.refresh_token_lifetime_days, Some(90));
 
-    // The token is in the keyring and **not** in the row: a refresh token in
-    // `config.toml` or in the store is the thing ADR 0006 exists to prevent.
     let held = keyring
         .retrieve(&AccountKey::new(format!("{ADDRESS}#oauth-refresh")))
         .await
@@ -176,8 +147,6 @@ async fn the_account_is_written_with_its_client_and_the_token_goes_to_the_keyrin
 
 #[tokio::test]
 async fn signing_in_twice_leaves_one_account() {
-    // Somebody who stumbles and starts again has one account, not two — the
-    // same rule the password path keeps.
     let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
     let scopes = ["https://provider.example/mail".to_owned()];
@@ -212,9 +181,6 @@ async fn signing_in_twice_leaves_one_account() {
 
 #[tokio::test]
 async fn a_keyring_that_will_not_take_the_token_writes_no_account_row() {
-    // The order that cannot strand an account: the credential first. An
-    // account row with no reachable token could not sync, could not
-    // authenticate, and could not be repaired from inside the application.
     let database = test_support::temp().await;
     let locked = MemorySecretStore::locked();
 
@@ -245,17 +211,6 @@ async fn a_keyring_that_will_not_take_the_token_writes_no_account_row() {
 
 #[tokio::test]
 async fn signing_in_again_replaces_the_token_rather_than_throwing_it_away() {
-    // The repair path, and the one that lied. An OAuth grant expires or is
-    // revoked; the settings pane offers Reconnect; the browser opens, the
-    // person approves, and `provision_oauth` returned
-    // `AlreadyProvisioned` **before** seeding the keyring -- so the fresh
-    // refresh token was discarded, the boundary mapped `Ok(_)` to "no
-    // complaint", and the sheet closed reporting success over an account
-    // that still could not sign in.
-    //
-    // Adding the same account twice staying inert is right *about the row*.
-    // It was never right about the credential: signing in again is what
-    // somebody does precisely because the credential is wrong.
     let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
     let scopes = ["https://provider.example/mail".to_owned()];
@@ -275,7 +230,6 @@ async fn signing_in_again_replaces_the_token_rather_than_throwing_it_away() {
     .expect("the first sign-in");
     assert!(matches!(first, Provisioned::Created(_)));
 
-    // The grant is revoked and re-granted: same account, a new token.
     let mut again = signed_in();
     again.tokens.refresh_token = Some(Password::new("a-second-refresh-token"));
 
@@ -307,12 +261,8 @@ async fn signing_in_again_replaces_the_token_rather_than_throwing_it_away() {
     );
 }
 
-// -- what signing in over an existing row keeps and changes -----------------
-
 #[tokio::test]
 async fn a_chosen_name_is_the_accounts_name_and_its_identitys() {
-    // The person typed a name on the sheet; it is what the sidebar and the
-    // From header show, ahead of the provider's own name.
     let database = test_support::temp().await;
     provision_oauth(
         &database,
@@ -344,10 +294,6 @@ async fn a_chosen_name_is_the_accounts_name_and_its_identitys() {
 
 #[tokio::test]
 async fn signing_in_over_an_existing_row_repairs_it_and_keeps_its_identities() {
-    // The repair screen is reachable for an account that exists: the servers
-    // may have changed, the account may have been disabled, and it may have
-    // been a password account. Signing in again must leave the row naming
-    // the grant the person just approved, not the one they replaced.
     let database = test_support::temp().await;
     let keyring = MemorySecretStore::new();
     provision_oauth(
@@ -408,8 +354,6 @@ async fn signing_in_over_an_existing_row_repairs_it_and_keeps_its_identities() {
 
 #[test]
 fn the_proof_presents_the_token_as_xoauth2_not_as_a_password() {
-    // A bearer token sent as a PLAIN password is refused by every provider
-    // this path exists for.
     let proof = postio_session::signin::verification_settings(&settings());
     assert_eq!(proof.auth, postio_model::account::AuthMethod::XOAuth2);
     assert_eq!(proof.host, "imap.example.com");

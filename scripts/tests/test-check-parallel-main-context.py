@@ -84,7 +84,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         base = Path(raw)
 
-        # -- 1. the shape that aborted the binary ---------------------------
         root = base / "racy"
         build(root, files={"suite/main.rs": "mod a;\nmod b;\n",
                            "suite/a.rs": USES_CONTEXT,
@@ -102,11 +101,6 @@ def main() -> int:
             f"the failure does not say where to look:\n{result.stderr}",
         )
 
-        # -- 2. one test may acquire it: nothing to race --------------------
-        #
-        # `drag_out` is exactly this and is correct. A check that failed it
-        # would push a legitimate file into a sequential suite, which is
-        # where it segfaulted in the first place.
         root = base / "single"
         build(root, files={"drag_out.rs": USES_CONTEXT})
         result = run(root)
@@ -117,7 +111,6 @@ def main() -> int:
             f"{result.stdout}{result.stderr}",
         )
 
-        # -- 3. harness = false is allowed to ------------------------------
         root = base / "sequential"
         build(
             root,
@@ -135,7 +128,6 @@ def main() -> int:
             f"scheduling was refused:\n{result.stdout}{result.stderr}",
         )
 
-        # -- 4. no context at all is fine, however many tests ---------------
         root = base / "pure"
         build(root, files={"suite/main.rs": "mod a;\n", "suite/a.rs": PURE})
         result = run(root)

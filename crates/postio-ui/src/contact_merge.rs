@@ -1,7 +1,5 @@
-//! The merge sheet, in words (specs/011-focus-contacts S10, handoff screen
-//! 07): the records that look like one person, which one's name and photo
-//! are kept, why they look alike, what the result would be, and the three
-//! ways out. No toolkit here; every frontend draws the same sheet.
+//! The merge sheet in words, with no toolkit: the records, kept name and photo, evidence, result
+//! and exits.
 
 use chrono::{DateTime, Local};
 use postio_core::{CommandId, Keymap};
@@ -10,65 +8,39 @@ use postio_model::{Contact, ContactKind, MergeGroup};
 use crate::contact_edit::EditButton;
 use crate::contact_popover::{Avatar, avatar, last_word, role_line};
 
-/// One record's card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeCard {
-    /// The avatar.
     pub avatar: Avatar,
-    /// "Ada Moreno".
     pub name: String,
-    /// "saved" or "not saved".
     pub source: String,
-    /// The address it would show first.
     pub address: String,
-    /// "412 messages \u{b7} last today".
     pub stats: String,
-    /// "Keep this name and photo" on the kept record, else "Address kept".
     pub keep: String,
-    /// Whether it is the kept record: drawn with the accent ring.
     pub kept: bool,
 }
 
-/// What the merge would make.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeResult {
-    /// The kept record's avatar.
     pub avatar: Avatar,
-    /// "Ada Moreno".
     pub name: String,
-    /// "Finance lead, Northwind Partners".
     pub role: String,
-    /// "\u{2605} ada@example.org \u{b7} a.moreno@example.net".
     pub addresses: String,
-    /// "Result \u{b7} 431 messages \u{b7} saved \u{b7} the two unsaved records are folded in".
     pub line: String,
 }
 
-/// The sheet, drawn whole.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeSheetView {
-    /// "These 3 look like the same person".
     pub title: String,
-    /// "Merging keeps every address, ..."
     pub subtitle: String,
-    /// "2 of 5": where this group is in the queue; none for records chosen
-    /// by hand.
+    /// "2 sets left" in the queue; `None` for records chosen by hand.
     pub position: Option<String>,
-    /// One card per record.
     pub cards: Vec<MergeCard>,
-    /// "Why we think so".
     pub why_title: String,
-    /// The evidence, a line each.
     pub evidence: Vec<String>,
-    /// What the merge would make.
     pub result: MergeResult,
-    /// "Undo with \u{2318}Z. Merged records can be split again from the card."
     pub foot: String,
-    /// Not the same, with its key.
     pub not_same: EditButton,
-    /// Later, with its key.
     pub later: EditButton,
-    /// Merge, with its key.
     pub merge: EditButton,
 }
 
@@ -98,7 +70,6 @@ fn first_address(person: &Contact) -> String {
         .unwrap_or_default()
 }
 
-/// The key that takes a merge back, as this keyboard spells it.
 fn undo_key(keymap: &Keymap) -> String {
     if keymap.platform() == Some(postio_config::paths::Platform::Apple) {
         "\u{2318}Z".to_owned()
@@ -109,8 +80,7 @@ fn undo_key(keymap: &Keymap) -> String {
     }
 }
 
-/// The person the merge makes: the kept record, with the title and company
-/// of the others where it has none, which is what the join does.
+/// The kept record, taking title and company from the others where it has none.
 fn result_of(keeper: &Contact, others: &[&Contact]) -> Contact {
     let mut result = keeper.clone();
     let blank = |value: &Option<String>| value.as_deref().is_none_or(|v| v.trim().is_empty());
@@ -125,12 +95,10 @@ fn result_of(keeper: &Contact, others: &[&Contact]) -> Contact {
     result
 }
 
-/// The sheet for `group`, with the record at `kept` keeping its name and
-/// photo.
 pub fn view(
     group: &MergeGroup,
     kept: usize,
-    position: Option<(usize, usize)>,
+    left: Option<usize>,
     keymap: &Keymap,
     now: DateTime<Local>,
     synced_with: Option<&str>,
@@ -222,7 +190,9 @@ pub fn view(
         title: format!("These {} look like the same person", number_word(group.people.len())),
         subtitle: "Merging keeps every address, so mail from any of them shows as one person. Nothing is deleted from your mail."
             .to_owned(),
-        position: position.map(|(at, of)| format!("{} of {of}", at + 1)),
+        position: left.map(|left| {
+            format!("{left} {} left", if left == 1 { "set" } else { "sets" })
+        }),
         cards,
         why_title: "Why we think so".to_owned(),
         evidence: group.evidence.clone(),
@@ -290,10 +260,12 @@ mod tests {
 
     #[test]
     fn the_sheet_says_how_many_and_what_it_keeps() {
-        let sheet = view(&group(), 0, Some((0, 2)), &keymap(), now(), None);
+        let sheet = view(&group(), 0, Some(2), &keymap(), now(), None);
         assert_eq!(sheet.title, "These 3 look like the same person");
         assert!(sheet.subtitle.starts_with("Merging keeps every address"));
-        assert_eq!(sheet.position.as_deref(), Some("1 of 2"));
+        assert_eq!(sheet.position.as_deref(), Some("2 sets left"));
+        let last = view(&group(), 0, Some(1), &keymap(), now(), None);
+        assert_eq!(last.position.as_deref(), Some("1 set left"));
         assert_eq!(sheet.why_title, "Why we think so");
         assert_eq!(sheet.evidence, ["The same signature on all three"]);
     }

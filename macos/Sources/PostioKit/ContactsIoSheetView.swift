@@ -1,9 +1,6 @@
 import PostioFFI
 import SwiftUI
 
-/// The sheet after an import or an export (specs/011-focus-contacts S11): a
-/// card over a scrim with what happened, a line each, and Review (when the
-/// import left people to look at) and Done. Every word and key is Rust's.
 public struct ContactsIoSheetView: View {
     let sheet: ContactsIoSheetFfi
     let model: ContactsIoModel

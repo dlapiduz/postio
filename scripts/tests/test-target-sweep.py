@@ -50,15 +50,9 @@ def app_manifest(features: str) -> str:
 def fixture(root: Path) -> Path:
     ws = root / "ws"
     write(ws / "Cargo.toml", '[workspace]\nresolver = "2"\nmembers = ["app"]\n')
-    # The repository's own compiler, not whatever rustup defaults to: where
-    # cargo puts its artifacts is the compiler's choice (1.100 moved every
-    # unit from deps/ to build/<package>/<hash>/), and a sweep tested
-    # against another cargo's layout is not tested at all.
     write(ws / "rust-toolchain.toml", (HERE.parent / "rust-toolchain.toml").read_text())
     write(ws / "app" / "Cargo.toml", app_manifest('"f"'))
     write(ws / "app" / "build.rs", "fn main() { dep::hello(); }\n")
-    # A binary and an example: cargo reports them by their uplifted,
-    # unhashed copies, which is what a first draft of the sweep missed.
     write(ws / "app" / "src" / "main.rs", "fn main() { app::go() }\n")
     write(ws / "app" / "examples" / "ex.rs", "fn main() { app::go() }\n")
     write(ws / "app" / "src" / "lib.rs",

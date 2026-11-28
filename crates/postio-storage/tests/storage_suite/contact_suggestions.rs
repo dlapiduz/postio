@@ -1,10 +1,3 @@
-//! Who might be the same person (specs/005-contacts User Story 4, R11).
-//!
-//! Two live people whose names match, or an address that answered mail sent
-//! to another, are offered as a pair with the evidence; a pair the user
-//! dismissed is never offered again, whatever mail or joins come after; and
-//! nothing here ever joins anyone.
-
 use chrono::{DateTime, TimeZone, Utc};
 
 use postio_model::{Account, ContactView, EmailAddress, MailboxId, Message, SuggestionReason};
@@ -47,7 +40,6 @@ async fn from(
     }
 }
 
-/// Each suggestion as its two preferred addresses, sorted, and its reason.
 async fn offered(connection: &Connection) -> Vec<(Vec<String>, SuggestionReason)> {
     ContactRepository::new(connection)
         .suggestions(50)
@@ -193,7 +185,6 @@ async fn a_dismissed_pair_stays_dismissed_through_mail_and_joins() {
         "more mail changes nothing"
     );
 
-    // One side joins a third address; the dismissal still spans them.
     from(
         &connection,
         &account,
@@ -255,8 +246,6 @@ async fn the_suggestions_read_is_bounded_and_scans_nothing_it_does_not_need() {
         counts.statements
     );
     for sql in test_support::contact_suggestion_statements() {
-        // The reply candidates are the evidence and are read whole; every
-        // other step has to seek.
         let scanned: Vec<String> = scans(&connection, &sql)
             .await
             .into_iter()

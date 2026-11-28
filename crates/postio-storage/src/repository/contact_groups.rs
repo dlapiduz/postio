@@ -1,7 +1,5 @@
-//! Contact groups: a named set of people, expanded to their preferred
-//! addresses at compose time rather than referenced by a group address of
-//! their own (specs/005-contacts FR-041). Groups are shared across accounts,
-//! as people are.
+//! Contact groups: a named set of people, expanded to their preferred addresses at compose time,
+//! shared across accounts.
 
 use postio_model::{Contact, ContactGroup, ContactGroupId, ContactId};
 
@@ -13,7 +11,6 @@ use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
-/// Reads and writes [`ContactGroup`] rows and their membership.
 #[derive(Debug)]
 pub struct ContactGroupRepository<'a> {
     connection: &'a Connection,
@@ -22,12 +19,10 @@ pub struct ContactGroupRepository<'a> {
 const GROUP_COLUMNS: &str = "id, name, uid, created_at";
 
 impl<'a> ContactGroupRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Inserts a group, assigning its id.
     pub async fn create(&self, group: &mut ContactGroup) -> Result<ContactGroupId> {
         refuse_taken(self.connection, &group.name, None).await?;
         sql::execute(
@@ -41,7 +36,6 @@ impl<'a> ContactGroupRepository<'a> {
         Ok(id)
     }
 
-    /// One group.
     pub async fn get(&self, id: ContactGroupId) -> Result<Option<ContactGroup>> {
         sql::first(
             self.connection,
@@ -52,7 +46,6 @@ impl<'a> ContactGroupRepository<'a> {
         .await
     }
 
-    /// Every group, by name.
     pub async fn list(&self) -> Result<Vec<ContactGroup>> {
         sql::all(
             self.connection,
@@ -66,7 +59,6 @@ impl<'a> ContactGroupRepository<'a> {
         .await
     }
 
-    /// Renames a group.
     pub async fn set_name(&self, id: ContactGroupId, name: &str) -> Result<()> {
         refuse_taken(self.connection, name, Some(id)).await?;
         let changed = sql::execute(
@@ -84,11 +76,7 @@ impl<'a> ContactGroupRepository<'a> {
         Ok(())
     }
 
-    /// Deletes a group, returning whether there was one.
-    ///
-    /// Cascades to `contact_group_members` (the foreign key says so); never
-    /// to the contacts themselves -- a group is a way of naming people, not
-    /// a place they live.
+    /// Cascades to `contact_group_members`, never to the contacts.
     pub async fn delete(&self, id: ContactGroupId) -> Result<bool> {
         let deleted = sql::execute(
             self.connection,
@@ -99,7 +87,6 @@ impl<'a> ContactGroupRepository<'a> {
         Ok(deleted > 0)
     }
 
-    /// Deletes a group and hands back what [`restore`](Self::restore) needs.
     pub async fn remove(
         &self,
         id: ContactGroupId,
@@ -109,8 +96,7 @@ impl<'a> ContactGroupRepository<'a> {
             let Some(group) = groups.get(id).await? else {
                 return Ok(None);
             };
-            // Every member, the deleted ones too: restoring the group has to
-            // give a restored person their place back as well.
+            // Deleted members too: restoring the group gives a restored person their place back.
             let members = member_ids(&transaction, id).await?;
             groups.delete(id).await?;
             Ok(Some((group, members)))
@@ -118,7 +104,6 @@ impl<'a> ContactGroupRepository<'a> {
         .await
     }
 
-    /// Puts a deleted group back, same id, same members.
     pub async fn restore(&self, group: &ContactGroup, members: &[ContactId]) -> Result<()> {
         let group = group.clone();
         let members = members.to_vec();
@@ -143,7 +128,6 @@ impl<'a> ContactGroupRepository<'a> {
         .await
     }
 
-    /// Adds people, returning the ones who were not members already.
     pub async fn add_members(
         &self,
         group: ContactGroupId,
@@ -165,7 +149,6 @@ impl<'a> ContactGroupRepository<'a> {
         Ok(added)
     }
 
-    /// Removes people, returning the ones who were members.
     pub async fn remove_members(
         &self,
         group: ContactGroupId,
@@ -186,8 +169,6 @@ impl<'a> ContactGroupRepository<'a> {
         Ok(removed)
     }
 
-    /// What picking the group fills in: each live member's preferred
-    /// address, under their name (FR-041).
     pub async fn expand(&self, group: ContactGroupId) -> Result<Vec<postio_model::EmailAddress>> {
         Ok(self
             .members(group)
@@ -208,9 +189,7 @@ impl<'a> ContactGroupRepository<'a> {
             .collect())
     }
 
-    /// Adds a contact to a group. Adding one already a member is a no-op,
-    /// not an error -- the membership either exists afterwards or it does
-    /// not, and both calls asked for the same thing.
+    /// Adding an existing member is a no-op, not an error.
     pub async fn add_member(&self, group_id: ContactGroupId, contact_id: ContactId) -> Result<()> {
         sql::execute(
             self.connection,
@@ -222,8 +201,6 @@ impl<'a> ContactGroupRepository<'a> {
         Ok(())
     }
 
-    /// Removes a contact from a group. Removing one that was never a
-    /// member is a no-op for the same reason adding twice is.
     pub async fn remove_member(
         &self,
         group_id: ContactGroupId,
@@ -238,12 +215,8 @@ impl<'a> ContactGroupRepository<'a> {
         Ok(())
     }
 
-    /// The live people in a group, with their addresses — what a group
-    /// expands to at compose time.
-    ///
-    /// A deleted member keeps its membership, so restoring them returns it
-    /// (FR-023a), but is offered nowhere, and a group picked in the composer
-    /// is no exception.
+    /// Live people only; a deleted member keeps its membership so restoring returns it, but is
+    /// never offered.
     pub async fn members(&self, group_id: ContactGroupId) -> Result<Vec<Contact>> {
         self.members_where(group_id, "AND c.state = 'live'").await
     }
@@ -267,7 +240,6 @@ impl<'a> ContactGroupRepository<'a> {
     }
 }
 
-/// Every member of `group`, whatever their state.
 async fn member_ids(connection: &Connection, group: ContactGroupId) -> Result<Vec<ContactId>> {
     sql::all(
         connection,
@@ -279,8 +251,7 @@ async fn member_ids(connection: &Connection, group: ContactGroupId) -> Result<Ve
     .await
 }
 
-/// Refuses `name` when another group has it in any case, naming that group
-/// -- two groups a person cannot tell apart by name are one too many.
+/// Names are compared case-insensitively: two groups a person cannot tell apart are one too many.
 async fn refuse_taken(
     connection: &Connection,
     name: &str,

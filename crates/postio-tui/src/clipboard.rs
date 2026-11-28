@@ -1,19 +1,11 @@
-//! Reading an image off the clipboard, on the paste key and never otherwise
-//! (FR-026, research R7).
-//!
-//! A terminal's own paste carries text only, so an image has to be asked for.
-//! The sources are tried in order -- `arboard` (Wayland data-control, X11),
-//! then `wl-paste`, then `xclip` -- because a compositor without the
-//! data-control protocol answers only the command-line tools. The first that
-//! can reach a clipboard answers; one that reaches it and finds no image is an
-//! answer too, and ends the search.
+//! Reads an image off the clipboard, only on the paste key. Sources are tried in order (`arboard`,
+//! `wl-paste`, `xclip`) because a compositor without data-control answers only the tools; the
+//! first that reaches a clipboard answers, even with no image.
 
 use std::process::{Command, Stdio};
 
-/// What a clipboard source found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Found {
-    /// An image, as PNG bytes.
     Image(Vec<u8>),
     /// The clipboard was reached and holds no image.
     NoImage,
@@ -21,17 +13,13 @@ pub enum Found {
     Unreachable,
 }
 
-/// One way of reading the clipboard.
 pub trait Source {
-    /// Ask for an image.
     fn image(&mut self) -> Found;
 }
 
-/// What the chain says when nothing could reach a clipboard: over SSH, or
-/// with no tool installed. Drops and text pastes still work.
+/// Nothing could reach a clipboard (over SSH, or no tool installed).
 pub const UNAVAILABLE: &str = "Clipboard unavailable here";
 
-/// Ask each source in turn; the first that reaches a clipboard answers.
 pub fn read(sources: &mut [Box<dyn Source>]) -> Result<Option<Vec<u8>>, String> {
     for source in sources {
         match source.image() {
@@ -43,7 +31,6 @@ pub fn read(sources: &mut [Box<dyn Source>]) -> Result<Option<Vec<u8>>, String> 
     Err(UNAVAILABLE.to_owned())
 }
 
-/// The sources this machine has, in order.
 pub fn system() -> Vec<Box<dyn Source>> {
     vec![
         Box::new(Arboard),
@@ -58,7 +45,6 @@ pub fn system() -> Vec<Box<dyn Source>> {
     ]
 }
 
-/// `arboard`: the data-control protocol on Wayland, the selection on X11.
 struct Arboard;
 
 impl Source for Arboard {
@@ -77,7 +63,6 @@ impl Source for Arboard {
     }
 }
 
-/// RGBA pixels as a PNG file.
 fn png_of(width: usize, height: usize, rgba: &[u8]) -> Option<Vec<u8>> {
     let pixels = image::RgbaImage::from_raw(
         u32::try_from(width).ok()?,
@@ -89,7 +74,6 @@ fn png_of(width: usize, height: usize, rgba: &[u8]) -> Option<Vec<u8>> {
     Some(png.into_inner())
 }
 
-/// A command-line tool that writes the clipboard's PNG to its output.
 struct Tool {
     program: &'static str,
     arguments: &'static [&'static str],
@@ -103,7 +87,6 @@ impl Source for Tool {
             .stderr(Stdio::null())
             .output();
         match output {
-            // Not installed, or no display to talk to.
             Err(_) => Found::Unreachable,
             Ok(output) if output.status.success() && output.stdout.starts_with(PNG) => {
                 Found::Image(output.stdout)
@@ -117,7 +100,6 @@ impl Source for Tool {
 }
 
 impl Tool {
-    /// Whether this tool has a clipboard to talk to at all.
     fn reaches_a_clipboard(&self) -> bool {
         match self.program {
             "wl-paste" => std::env::var_os("WAYLAND_DISPLAY").is_some(),
@@ -126,7 +108,6 @@ impl Tool {
     }
 }
 
-/// A PNG file's first bytes.
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 #[cfg(test)]
@@ -142,7 +123,6 @@ mod tests {
         }
     }
 
-    /// How many times a fake source was asked.
     type Asked = std::rc::Rc<std::cell::Cell<u32>>;
 
     fn chain(found: &[Found]) -> (Vec<Box<dyn Source>>, Vec<Asked>) {

@@ -1,16 +1,6 @@
 import PostioFFI
 import SwiftUI
 
-/// The digest-this-sender sheet (specs/009-focus-macos T115, screen 24):
-/// Cancel, the heading and Create along the top; the sender pre-filled (or
-/// the query field, once "Match a list or a search instead…" is chosen);
-/// daily, weekly or monthly with the day and the time; a preview of what
-/// the rule would have caught; and the note that marked mail still comes
-/// to the inbox.
-///
-/// Every word but "on", "at" and "Cancel" is the controller's
-/// (`FocusOpenRule`/`FocusRule`); every change goes back through
-/// `RuleSheetModel`, and the sheet shows what the next view says.
 public struct DigestRuleSheet: View {
     let model: RuleSheetModel
     let backCap: String?
@@ -21,7 +11,6 @@ public struct DigestRuleSheet: View {
         self.backCap = backCap
     }
 
-    /// The sheet's width, as screen 24 draws it.
     public static let width: CGFloat = 620
 
     public var body: some View {
@@ -121,8 +110,6 @@ public struct DigestRuleSheet: View {
             }
             .labelsHidden()
             .fixedSize()
-            // Weekly names a weekday; monthly a day of the month; daily
-            // neither -- the controller's cadences are in that order.
             if schedule.cadence == 1 {
                 Text("on").foregroundStyle(.secondary)
                 Picker("", selection: Binding(

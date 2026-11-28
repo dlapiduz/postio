@@ -3,17 +3,6 @@ import Testing
 
 @testable import PostioKit
 
-/// Two keyboard layers, both always on (canvas screen 26).
-///
-/// Every command in the canvas' table carries a `⌘` chord so it can live in
-/// the menu bar, which is what a Mac user expects, **and** keeps its
-/// single-key mnemonic, which is the application's identity. They are two
-/// bindings on one command rather than a mode, so nothing has to be switched
-/// and neither can shadow the other.
-///
-/// Held against the registry, because that is the one table of defaults: a
-/// chord dropped in Rust fails here rather than quietly leaving a menu with
-/// no accelerator.
 @Suite struct KeyboardLayersTests {
     private func spec(_ id: String) -> CommandSpecFfi? {
         PostioRegistry.commands.first { $0.id == id }
@@ -25,25 +14,18 @@ import Testing
             .map { $0.replacingOccurrences(of: "mod+", with: "cmd+") }
     }
 
-    /// The canvas' own table: command, chord, mnemonic.
     private let canvas: [(command: String, chord: String, mnemonic: String)] = [
-        // Gmail's mnemonics since the maintainer's 2026-10-14 decision
-        // (docs/PRODUCT.md §8), the canvas' chords unchanged.
         ("reply", "⌘R", "r"),
         ("reply_all", "⇧⌘R", "a"),
         ("forward", "⇧⌘F", "f"),
         ("archive", "⇧⌘A", "e"),
         ("compose", "⌘N", "c"),
         ("search", "⌥⌘F", "/"),
-        // `]` and `[` (spec 013), `n` and `p` beside them; `J`/`K` extend the
-        // list's selection.
         ("next_in_thread", "⌥↓", "]"),
         ("prev_in_thread", "⌥↑", "["),
         ("next_message", "↓", "j"),
         ("prev_message", "↑", "k"),
         ("expand_all", "⇧⌘E", ";"),
-        // Gmail's `z`, beside `⌘Z`, the undo every other application has
-        // taught.
         ("undo", "⌘Z", "z"),
         ("settings", "⌘,", ""),
     ]
@@ -65,14 +47,9 @@ import Testing
     }
 
     @Test func everySurfaceThatNamesAKeyNamesTheSameOne() {
-        // The bug this closes: the conversation pane asked for the *primary*
-        // binding and drew `E` beside Reply while the Message menu drew `⌘R`.
-        // Both are live, both are correct, and a window showing each in a
-        // different place teaches neither.
+        // The conversation pane drew `E` beside Reply while the Message menu drew `⌘R`; one rule
+        // must give every surface the same key.
         for row in canvas where !row.chord.isEmpty && !row.mnemonic.isEmpty {
-            // What the rule draws, against what asking for the primary
-            // binding alone would have drawn. They must differ, and the first
-            // is the one every surface gets.
             let drawn = MenuPlan.accelerator(among: bindings(row.command))
             let fromThePrimaryAlone = MenuPlan.accelerator(from: row.mnemonic)
 
@@ -85,9 +62,7 @@ import Testing
     }
 
     @Test func aCommandWithNoChordDrawsItsMnemonicRatherThanNothing() {
-        // Mute is `m` and nothing else — the canvas has no chord for it. A
-        // menu item with no accelerator at all is worse than one naming the
-        // key that does work.
+        // A menu item with no accelerator is worse than one naming the key that works.
         #expect(MenuPlan.accelerator(among: bindings("mute_thread")) == "M")
     }
 }

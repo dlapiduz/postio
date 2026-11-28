@@ -1,19 +1,13 @@
-//! Agent access across the boundary (ADR 0010 Q6, #1832): who may read what,
-//! what the agents did, and taking it back.
-//!
-//! The decisions are `postio_ui::agent_access`'s and the file edits are
-//! `postio_config`'s; this carries finished values. Swift parses no TOML and
-//! no log line (ADR 0031).
+//! Agent access across the boundary: finished values, so Swift parses no TOML and no log line (ADR
+//! 0031).
 
 use postio_config::Config;
 use postio_ui::agent_access as words;
 
 use crate::settings::SettingsError;
 
-/// One account an agent may read.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct SharedAgentAccountFfi {
-    /// The address, and what revoking names.
     pub address: String,
     /// Which folders: `All folders`, `INBOX, Receipts`, `No folders`.
     pub folders: String,
@@ -21,18 +15,15 @@ pub struct SharedAgentAccountFfi {
     pub abilities: String,
 }
 
-/// One recent call, already a sentence.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AgentCallFfi {
     /// `5 min ago`.
     pub when: String,
     /// `Read 1 message "Receipt" in INBOX · ada@example.com`.
     pub line: String,
-    /// Whether the call was turned away or failed, for the row's emphasis.
     pub refused: bool,
 }
 
-/// The activity list.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AgentActivityFfi {
     /// `12 calls · last 5 min ago`, or that nothing has happened.
@@ -41,26 +32,17 @@ pub struct AgentActivityFfi {
     pub calls: Vec<AgentCallFfi>,
 }
 
-/// The pane's fixed words.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct AgentWordsFfi {
-    /// Heading over the shared accounts.
     pub shared_heading: String,
-    /// Said when nothing is shared.
     pub nothing_shared: String,
-    /// Heading over the activity.
     pub activity_heading: String,
-    /// What revoking does and does not do.
     pub revoke_note: String,
-    /// Heading over the path to launch.
     pub entry_heading: String,
-    /// The per-account button.
     pub revoke_one: String,
-    /// The revoke-everything button.
     pub revoke_all: String,
 }
 
-/// The pane's fixed words.
 #[uniffi::export]
 pub fn settings_agent_words() -> AgentWordsFfi {
     AgentWordsFfi {
@@ -100,7 +82,6 @@ pub fn settings_patch_revoke_agent(text: String, address: String) -> Result<Stri
     })
 }
 
-/// `text` with nothing shared.
 #[uniffi::export]
 pub fn settings_patch_revoke_all_agents(text: String) -> Result<String, SettingsError> {
     postio_config::revoke_all_mcp(&text).map_err(|err| SettingsError::Invalid {
@@ -108,7 +89,6 @@ pub fn settings_patch_revoke_all_agents(text: String) -> Result<String, Settings
     })
 }
 
-/// The activity list across the boundary.
 pub(crate) fn from_activity(shown: words::Activity) -> AgentActivityFfi {
     AgentActivityFfi {
         summary: shown.summary,

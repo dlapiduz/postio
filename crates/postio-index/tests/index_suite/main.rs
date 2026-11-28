@@ -1,20 +1,6 @@
-//! One binary for `postio-index`'s integration tests.
-//!
-//! Each file in `tests/` gets its own executable from cargo, and each links
-//! this workspace's dependency stack whether it uses it or not. That is where
-//! the test time goes: 125 integration targets across 18 crates (#1128).
-//! The app suites were consolidated first; this is the same
-//! pass over the leaves.
-//!
-//! Nothing here needs a display, so unlike a GTK suite this
-//! keeps libtest's ordinary harness and its thread pool. The cases already ran
-//! in parallel within each old binary and now do so across all of them, which
-//! is the same guarantee and one link.
-//!
-//! **A case that needs its own process does not belong here.** None of these
-//! set a process-global -- no `set_var`, no crate attributes -- and that was
-//! checked rather than assumed. A test that grows one has to move back out, or
-//! it will change what its neighbours see.
+//! One binary for `postio-index`'s integration tests: each file in `tests/` links the whole
+//! dependency stack, so cases share one link (#1128).
+//! A case that needs its own process (sets a process-global) does not belong here.
 
 mod account_scope;
 mod attachment_text;
@@ -26,6 +12,7 @@ mod content_membership;
 mod conversations;
 mod digest_matcher;
 mod driven_join_plan;
+mod event_search;
 mod exact_copies;
 mod executor;
 mod facets_one_pass;

@@ -2,42 +2,23 @@ import Observation
 import PostioFFI
 import SwiftUI
 
-/// What the no-results page tells the engine (specs/010-focus-search
-/// T106).
-///
-/// `PostioSession` is the one real answer; the protocol is what lets a test
-/// drive `NoResultsModel` without a store.
 public protocol NoResultsEngine: AnyObject {
-    /// A registry command, as a key press would send it.
     func invoke(_ id: String)
 }
 
 extension PostioSession: NoResultsEngine {}
 
-/// The page a search that found nothing shows in the rows' place, as the
-/// controller's last `FocusRelaxations` drew it (design §3.10, screen 13).
-///
-/// The controller decides everything: the title, the ways out and their
-/// order, which one is focused, when the counts have landed, and when the
-/// page goes (a new query, a way out run, `None`). A click on a way out
-/// runs it exactly as its number key would. Leaving the results takes the
-/// page with them.
-///
-/// No AppKit (#1264): `NoResultsView` draws it.
+/// The controller decides everything; a click on a way out runs it as its number key would. No
+/// AppKit (#1264).
 @MainActor
 @Observable
 public final class NoResultsModel {
-    /// What one applied event changed.
     public enum Change: Equatable {
-        /// The page is up, in the rows' place.
         case open
-        /// The page was drawn again: the counts landed, the focus moved.
         case redraw
-        /// The page is gone.
         case close
     }
 
-    /// What it draws; `nil` while the results found something.
     public private(set) var view: NoResultsViewFfi?
 
     @ObservationIgnored private let engine: NoResultsEngine
@@ -46,11 +27,8 @@ public final class NoResultsModel {
         self.engine = engine
     }
 
-    /// Whether the page is up.
     public var isOpen: Bool { view != nil }
 
-    /// Apply `event` if it is the page's, and say what it changed; `nil`
-    /// for every other event.
     @discardableResult
     public func apply(_ event: UiEvent) -> Change? {
         switch event {
@@ -72,20 +50,12 @@ public final class NoResultsModel {
         }
     }
 
-    /// A click on way out `number` (from 1): run, as its key runs it.
     public func pick(_ number: UInt32) {
         guard let view, view.relaxations.contains(where: { $0.number == number }) else { return }
         engine.invoke(NoResultsView.command(number))
     }
 }
 
-/// The no-results page (design §3.10, screen 13): centred, 560 wide, 70
-/// below the filter bar. "Nothing matches all four filters" 20 bold; the
-/// sentence 14 secondary; the ways out in a rounded box, each row 50 tall
-/// with its number's cap, what it changes over the query in SF Mono, and
-/// its count bold on the right, the focused one on the accent's tint with
-/// its ring; then how much was searched, 12.5 tertiary. Every word is the
-/// controller's (`NoResultsViewFfi`).
 public struct NoResultsView: View {
     @Environment(\.colorScheme) private var scheme
     let model: NoResultsModel
@@ -97,10 +67,8 @@ public struct NoResultsView: View {
     public static let width: CGFloat = 560
     public static let top: CGFloat = 70
 
-    /// The registry command a way out's number runs.
     public static func command(_ number: UInt32) -> String { "pick_relaxation_\(number)" }
 
-    /// A way out's cap: its key as the keymap spells it, else its number.
     public static func cap(for way: RelaxationFfi) -> String {
         KeyCapSpelling.cap(way.key) ?? String(way.number)
     }
@@ -165,12 +133,9 @@ public struct NoResultsView: View {
                     Text(way.query)
                         .font(.system(size: 11.5, design: .monospaced))
                         .foregroundStyle(.tertiary)
-                        // One line, so every way out is the same 50 tall
-                        // (screen 13). A query with whole addresses
-                        // outgrows it beside its count: it tightens first,
-                        // then gives up its middle -- the first term and
-                        // the last stay -- and the whole query is the
-                        // row's tooltip and what a screen reader hears.
+                        // One line so every way out is 50 tall; a long query tightens, then gives
+                        // up its middle, and the whole query is the tooltip and what a screen
+                        // reader hears.
                         .lineLimit(1)
                         .minimumScaleFactor(0.85)
                         .allowsTightening(true)

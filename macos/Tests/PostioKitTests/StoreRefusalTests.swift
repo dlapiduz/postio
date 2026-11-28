@@ -4,19 +4,12 @@ import Testing
 
 @testable import PostioKit
 
-/// What a start over answers in these tests.
 private let startedOver = StartedOverFfi(setAside: "/stores/set-aside/when", accounts: 2)
 
-/// The page a store that will not open shows on launch, and "Start a fresh
-/// store" (specs/009-focus-macos T100). The words are GTK's, read across the
-/// boundary (`store_refusal_words`); the remedy is the boundary's too -- a
-/// store from another build is `StoreFromAnotherBuild`, which trying again
-/// can never get past, and everything else is worth opening again.
 @MainActor
 @Suite struct StoreRefusalTests {
     let words = storeRefusalWords()
 
-    /// A start over that can be held part way, and counts its calls.
     final class Gate: @unchecked Sendable {
         let held = DispatchSemaphore(value: 0)
         private let lock = NSLock()
@@ -24,8 +17,6 @@ private let startedOver = StartedOverFfi(setAside: "/stores/set-aside/when", acc
         var count: Int { lock.withLock { calls } }
         func call() { lock.withLock { calls += 1 } }
     }
-
-    // MARK: what the page says
 
     @Test func aStoreFromAnotherBuildOffersAFreshStoreInGTKsWords() {
         let refusal = StoreRefusal(
@@ -37,9 +28,8 @@ private let startedOver = StartedOverFfi(setAside: "/stores/set-aside/when", acc
     }
 
     @Test func aStoreUnderAnotherKeyOffersAFreshStoreInGTKsWords() {
-        // #1598: the key does not change between attempts, so trying again
-        // can never get past it; and nothing in it decrypts, so the page
-        // promises no accounts.
+        // #1598: the key does not change between attempts, so trying again cannot get past it;
+        // nothing in it decrypts, so the page promises no accounts.
         let refusal = StoreRefusal(
             SessionError.StoreUnderAnotherKey(message: "Another installation's store."),
             words: words)
@@ -59,8 +49,7 @@ private let startedOver = StartedOverFfi(setAside: "/stores/set-aside/when", acc
     }
 
     @Test func aLockedKeychainIsTriedAgainNotStartedOver() {
-        // ADR 0014: a locked keyring is "unlock this and retry", never a
-        // reason to set somebody's mail aside.
+        // ADR 0014: a locked keyring is "unlock and retry", never a reason to set mail aside.
         let refusal = StoreRefusal(
             SessionError.KeyringLocked(message: "Unlock the login keychain."), words: words)
         #expect(refusal.remedy == .tryAgain)
@@ -73,8 +62,6 @@ private let startedOver = StartedOverFfi(setAside: "/stores/set-aside/when", acc
         #expect(refusal.sentence == "No threads.")
         #expect(!refusal.sentence.contains("RuntimeUnavailable"))
     }
-
-    // MARK: what the button does
 
     @Test func startingOverSetsTheStoreAsideThenOpensTheFreshOne() async {
         var reopened: [StartedOverFfi?] = []
@@ -128,8 +115,6 @@ private let startedOver = StartedOverFfi(setAside: "/stores/set-aside/when", acc
         #expect(model.refusal.heading == words.cantOpen)
         #expect(model.refusal.sentence == "Another Postio has this store open.")
         #expect(model.button == words.tryAgain)
-        // Trying again opens the store again -- which, if it is still the
-        // old one, offers the start over again, as GTK's page does.
         await model.act()
         #expect(reopened == [nil])
         #expect(gate.count == 1, "the failed start over is not run again by Try again")

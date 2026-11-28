@@ -1,7 +1,3 @@
-//! Who runs a key while a surface is over the list (specs/009-focus-macos
-//! T054, T055): the table a frontend that keeps the widgets of some
-//! surfaces itself reads, over the surface stack.
-
 use crate::search_support::shown;
 use postio_config::paths::Platform;
 use postio_core::CommandId;

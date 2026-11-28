@@ -68,7 +68,6 @@ def scope(jobs: list[dict], failed: str | None = None) -> dict[str, str]:
             tests.write_text(failed, encoding="utf-8")
             args += ["--failed-tests", str(tests)]
         out = subprocess.run(args, check=True, capture_output=True, text=True).stdout
-    # Read it back the way the runner does: `key=value`, or a heredoc.
     result: dict[str, str] = {}
     lines = iter(out.splitlines())
     for line in lines:
@@ -127,7 +126,6 @@ def plan(command: str, specs: str) -> list[str]:
 
 
 def main() -> int:
-    # ── one job red: re-run that job and nothing else ────────────────
     out = scope(with_red(job("Docs", "failure", "cargo doc")))
     case(
         "a red Docs job re-runs Docs alone (5 of 7 red nightlies measured)",
@@ -137,7 +135,6 @@ def main() -> int:
     out = scope(with_red(job("Coverage floors", "failure", "cargo llvm-cov (gated crates)")))
     case("a red coverage job re-runs coverage alone", out.get("only") == "coverage", f"{out}")
 
-    # ── a red suite: the tests that failed, under the profile that ran them
     out = scope(with_red(job("Full suite", "failure", SUITE_STEP)), failed=SPEC + "\n")
     case(
         "a red suite with its failures known re-runs only those tests",
@@ -159,7 +156,6 @@ def main() -> int:
         f"{out}",
     )
 
-    # ── a red suite whose failures are unknown: the fallback ─────────
     for label, failed in (("no artifact", None), ("an empty artifact", "")):
         out = scope(with_red(job("Full suite", "failure", SUITE_STEP)), failed=failed)
         case(
@@ -185,7 +181,6 @@ def main() -> int:
         f"{out}",
     )
 
-    # ── two jobs red: both ───────────────────────────────────────────
     out = scope(
         with_red(job("Docs", "failure", "cargo doc"), job("Full suite", "failure", SUITE_STEP)),
         failed=SPEC,
@@ -196,7 +191,6 @@ def main() -> int:
         f"{out}",
     )
 
-    # ── nothing to narrow to: everything ─────────────────────────────
     everything = "coverage doc tests doctests"
     out = scope(with_red(job("Anything to test", "failure", "Compare against the last run")))
     case(
@@ -214,7 +208,6 @@ def main() -> int:
     )
     case("and the fallback never names tests", out.get("tests") == "", f"{out}")
 
-    # ── building only what the failures live in ─────────────────────
     specs = "\n".join(
         [
             "postio-gtk::focus_suite row_menu::a",

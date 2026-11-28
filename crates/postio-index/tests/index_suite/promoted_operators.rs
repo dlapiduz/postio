@@ -1,7 +1,3 @@
-//! `is:bulk` and `is:automated` (spec 007, research R8): the operators of
-//! the three promoted headers, answered from `messages.unsubscribe_offered`
-//! and `messages.automation`, over the `.eml` corpus.
-
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, TimeZone, Utc};
@@ -18,7 +14,6 @@ fn now() -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 26, 16, 9, 0).unwrap()
 }
 
-/// Every fixture, parsed as sync would parse it, stored in one inbox.
 async fn corpus(connection: &Connection) -> (AccountId, Vec<(&'static str, Message)>) {
     ensure_schema(connection).await.expect("schema");
     let (account, inbox) = test_support::account_with_inbox(connection).await;
@@ -83,8 +78,6 @@ async fn is_bulk_and_is_automated_find_what_the_corpus_s_headers_say() {
         "list-thread-05-reply-no-references",
         "list-thread-06-reply-subject-only",
         "list-thread-07-subject-change",
-        // Spec 013's threading fixtures: list and newsletter mail by its
-        // List-Id, which is also why the subject never groups them.
         "thread-list-1-root",
         "thread-list-2-reply",
         "thread-list-3-reply",
@@ -112,8 +105,6 @@ async fn is_bulk_and_is_automated_find_what_the_corpus_s_headers_say() {
         "is:automated"
     );
 
-    // Negated, each is the rest of the corpus: a message that says none of
-    // the three is known to say none.
     let everything = found(&connection, account, "").await.len();
     let not_bulk = found(&connection, account, "-is:bulk").await.len();
     assert_eq!(not_bulk + expected_bulk.len(), everything, "-is:bulk");
@@ -130,7 +121,6 @@ async fn mail_a_first_sync_filed_answers_once_its_body_s_headers_arrive() {
         .find(|fixture| fixture.name() == "html-newsletter")
         .expect("the newsletter fixture");
     let parsed = fixture.parse();
-    // As a first sync files it: what the three headers say is not known.
     let mut message = fixture.parse();
     message.account_id = account.id;
     message.mailbox_id = inbox;
@@ -146,7 +136,6 @@ async fn mail_a_first_sync_filed_answers_once_its_body_s_headers_arrive() {
         "not known is not bulk"
     );
 
-    // The body arrives, and its headers are indexed.
     index_headers(&connection, id.get(), &parsed.headers)
         .await
         .expect("indexed");

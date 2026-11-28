@@ -5,26 +5,8 @@ import Testing
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// Scrolling a ten-thousand-conversation inbox, counted rather than timed
-/// (specs/009-focus-macos T035, constitution V).
-///
-/// A shared runner cannot defend 16 ms, so what is held is the cause of the
-/// budget: the table makes a screenful of row views and cells however far it
-/// scrolls, and a frame asks the engine for the rows it draws and a page's
-/// worth of read-ahead -- never for the list. Each number below is the same
-/// on any machine, and each fails the way the regression would: a table that
-/// stopped reusing makes ten thousand views, and one that asked for every
-/// row it laid out would ask ten thousand times.
-///
-/// The source stands in for the session as `focusRow(at:)` answers it:
-/// synchronous, `nil` until a page has landed, and a miss is the ask. The
-/// engine's own half -- that a miss asks for one page, once, and that the
-/// window keeps a bounded number of rows -- is `ffi_suite`'s
-/// `focus_scroll.rs`, over a real seeded store.
 @MainActor
 struct FocusListScrollTests {
-    /// Ten thousand rows of which a page is resident only once it has
-    /// landed, counting every question the table puts.
     final class TenThousand: FocusRowSource {
         static let total: UInt32 = 10_000
         private let pageSize: UInt32
@@ -65,7 +47,6 @@ struct FocusListScrollTests {
                 writes: false, threadRow: nil, child: nil)
         }
 
-        /// The pages missed since the last call have arrived; say which.
         func landMissedPages() -> [UInt32] {
             let arrived = pagesMissed.subtracting(landed).sorted()
             landed.formUnion(arrived)
@@ -79,13 +60,9 @@ struct FocusListScrollTests {
         }
     }
 
-    /// One frame of scrolling: move to `y`, lay out, and let the pages the
-    /// frame missed land the way `FocusPageReady` brings them.
     struct Frame {
         let visible: Int
-        /// Rows asked for while laying the frame out.
         let asked: Int
-        /// Rows asked for while the pages it missed landed and redrew.
         let askedOnLanding: Int
         let pagesMissed: Int
     }
@@ -121,8 +98,6 @@ struct FocusListScrollTests {
         let (table, source) = Self.tenThousand()
         let page = table.scrollView.contentView.bounds.height
         var frames: [Frame] = []
-        // Down the first stretch a screen at a time, then to the middle, the
-        // end, and back to the top: every kind of move a person makes.
         var y: CGFloat = 0
         for _ in 0..<60 {
             frames.append(Self.scroll(table, source, to: y))
@@ -135,8 +110,6 @@ struct FocusListScrollTests {
 
         let widest = frames.map(\.visible).max() ?? 0
         #expect(widest > 0, "nothing was laid out, so this proves nothing")
-        // Reuse: views made are the most that were ever on screen, plus the
-        // pair AppKit keeps ready, not one per row scrolled past.
         #expect(
             table.rowViewsCreated <= widest + 8,
             "\(table.rowViewsCreated) row views for at most \(widest) on screen")
@@ -156,28 +129,19 @@ struct FocusListScrollTests {
         for _ in 0..<60 {
             let frame = Self.scroll(table, source, to: y)
             y += page
-            // Laying a frame out asks for the rows on screen and the one
-            // before the first (whose day decides its heading): the visible
-            // rows plus, at most, a page of read-ahead.
             #expect(
                 frame.asked <= frame.visible + pageSize,
                 "\(frame.asked) rows asked to lay out \(frame.visible) on screen")
-            // A page landing is read once, whole, and the rows of it on
-            // screen are drawn again: a page plus two screenfuls, not the
-            // list.
             #expect(
                 frame.askedOnLanding <= pageSize + 2 * frame.visible,
                 "\(frame.askedOnLanding) rows asked as \(frame.pagesMissed) page(s) landed")
-            // And the pages missed are the ones under the frame -- its own
-            // and a neighbour -- not a sweep of the list.
             #expect(frame.pagesMissed <= 2, "\(frame.pagesMissed) pages missed in one frame")
         }
     }
 
     @Test func layingOutTenThousandRowsAsksForNone() {
-        // Heights come from what the model already knows, so building the
-        // table over the whole inbox must not fetch a page of it
-        // (`FocusListTable.tableView(_:heightOfRow:)`).
+        // Heights come from what the model knows: building the table over the whole inbox must not
+        // fetch a page.
         let source = TenThousand(pageSize: FocusListModel.pageSize)
         let model = FocusListModel(source: source) { _ in nil }
         let table = FocusListTable(model: model)

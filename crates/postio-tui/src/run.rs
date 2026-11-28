@@ -1,14 +1,6 @@
-//! The binary's life: open the store, enter the terminal, loop, leave.
-//!
-//! Everything that decides is [`crate::app::update`]; this only carries
-//! inputs to it and does the effects it asks for -- the terminal, the host,
-//! a timer. Nothing here is tested with a real terminal: what is tested is
-//! what it hands `update`, and what `update` hands back.
-//!
-//! The terminal opens the store itself, in this process, as the desktop app
-//! does: one Postio at a time has it, and whichever starts second is told to
-//! close the other (docs/archive/specs/005-tui-frontend). Everything the terminal reads or
-//! writes still goes through a [`Client`] of a [`Host`] in this process.
+//! The binary's life: open the store, enter the terminal, loop, leave. Everything that decides is
+//! `crate::app::update`; this carries inputs to it and does the effects it asks for. The terminal
+//! opens the store itself, so one Postio at a time has it.
 
 use std::io;
 use std::process::ExitCode;
@@ -20,8 +12,7 @@ use postio_client::Client;
 use postio_client::protocol::ClientKind;
 use postio_host::Host;
 use postio_model::ListScope;
-use postio_model::listing::{MailStore, PageRequest};
-use postio_ui::paging::Fetch;
+use postio_model::listing::MailStore;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
@@ -31,18 +22,13 @@ use crate::input::Keys;
 use crate::term::{Mode, Session, Stdout};
 use crate::theme::Theme;
 
-/// How long after the store opens its upkeep starts -- the body index, the
-/// header repair, the disk reclaim: the desktop app's delay after its first
-/// frame, so the first pages have the runtime to themselves.
+/// Upkeep (body index, header repair, disk reclaim) starts this long after the store opens, so
+/// the first pages have the runtime to themselves.
 const IDLE_PASSES_AFTER_OPENING: std::time::Duration = std::time::Duration::from_millis(750);
 
-/// Open the store with the key `secrets` holds and start its host here,
-/// saying on stderr what it waits on, one line per change: a keyring prompt
-/// can hold it for half a minute.
-///
-/// `Err` is the line to print before exiting: among them, when the desktop
-/// app or another terminal already has the store, the sentence saying to
-/// close it.
+/// Says on stderr what it waits on (a keyring prompt can hold it for half a minute).
+/// `Err` is the line to print before exiting, such as the sentence saying another Postio has the
+/// store.
 pub fn open(
     config_path: Option<&std::path::Path>,
     secrets: Arc<dyn postio_account::secret::SecretStore>,
@@ -51,7 +37,6 @@ pub fn open(
     Host::open(config_path, secrets, &say_so).map_err(|refusal| refused(&refusal))
 }
 
-/// What the terminal prints when the store will not open.
 fn refused(refusal: &postio_session::Refusal) -> String {
     use postio_session::{Remedy, Unreadable};
     match refusal.remedy {
@@ -63,8 +48,7 @@ fn refused(refusal: &postio_session::Refusal) -> String {
             "postio-tui: {refusal}\npostio-tui: `postio-store reset` sets it aside and \
              starts a fresh store, keeping your accounts and config.toml"
         ),
-        // And the same key (#1598). Nothing in it decrypts, so no account
-        // comes across: the fresh store asks for them again.
+        // The same key (#1598): nothing in it decrypts, so no account comes across.
         Remedy::StartOver {
             because: Unreadable::AnotherKey,
             ..
@@ -76,12 +60,8 @@ fn refused(refusal: &postio_session::Refusal) -> String {
     }
 }
 
-/// Switch Focus mode on in `host`, as `config`'s `[focus]` says (FR-186).
-///
-/// The terminal is Focus in character cells (C29), so it runs Focus's engine
-/// while it holds the store: after the store opens and before the first
-/// sync, so the filing pass is in every engine before its first pass. The
-/// setup is the one `postio-gtk` builds.
+/// Switches Focus mode on as `[focus]` says, after the store opens and before the first sync, so
+/// the filing pass is in every engine before its first pass.
 pub fn engage_focus(
     host: &Host,
     config: &postio_config::Config,
@@ -93,9 +73,8 @@ pub fn engage_focus(
     )
 }
 
-/// Apply `[focus]` to `host` again whenever the file at `path` changes it.
-/// `None` when the file cannot be watched: edits then wait for a restart.
-/// Dropping the watcher stops it; it holds the host no longer than it lives.
+/// `None` when the file cannot be watched: edits then wait for a restart. Dropping the watcher
+/// stops it.
 pub fn follow_focus_config(
     host: &Arc<Host>,
     path: &std::path::Path,
@@ -120,8 +99,7 @@ pub fn follow_focus_config(
     .ok()
 }
 
-/// Say each wait to `write` as a line, unless it reads the same as the one
-/// before: the keyring and the store are two waits with one sentence.
+/// Skips a wait that reads the same as the last: the keyring and the store share one sentence.
 fn saying(write: impl Fn(&str)) -> impl Fn(postio_ui::list_state::Waiting) {
     let last = std::cell::RefCell::new(String::new());
     move |waiting| {
@@ -134,12 +112,10 @@ fn saying(write: impl Fn(&str)) -> impl Fn(postio_ui::list_state::Waiting) {
     }
 }
 
-/// The whole program.
 pub fn run() -> ExitCode {
     let config_path = postio_config::paths::config_path().ok();
-    // The journal and never stderr, which is the screen this draws on; the
-    // file is watched, so `[logging]` retunes a running terminal as it does
-    // the desktop app.
+    // The journal, never stderr, which is the screen; the file is watched, so `[logging]` retunes
+    // live.
     let logging = postio_session::logging::init_to(
         &config_path
             .as_deref()
@@ -164,13 +140,11 @@ pub fn run() -> ExitCode {
         eprintln!("postio-tui: {problem}");
     }
 
-    // What the host aims this frontend's commands with. The app mirrors its
-    // selection into it before each command; the client snapshots it.
+    // The app mirrors its selection into it before each command; the client snapshots it.
     let state = postio_core::SharedState::default();
 
-    // Before the alternate screen: a store that will not open -- another
-    // Postio has it, the keyring said no -- is a sentence left on the
-    // terminal the person typed into, and a non-zero exit.
+    // Before the alternate screen, so a store that will not open leaves a sentence on the terminal
+    // and a non-zero exit.
     let host = match open(
         config_path.as_deref(),
         Arc::new(postio_account::secret::KeyringSecretStore::default()),
@@ -181,11 +155,9 @@ pub fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    // Focus's engine before anything could sync (FR-186).
     let _focus = engage_focus(&host, &config, config_path.as_deref());
     let host = Arc::new(host);
-    // While this terminal has the store, it answers agents' calls (ADR
-    // 0041, amended 2026-10-14).
+    // While this terminal has the store, it answers agents' calls (ADR 0041).
     let _agents = postio_mcp::socket::listen_installed(host.connector(), config_path.clone())
         .inspect_err(|error| {
             tracing::warn!(%error, "agents will not be answered by this terminal: {error}");
@@ -295,9 +267,8 @@ async fn main_loop(
         session,
     )
     .await;
-    // What was written is saved before leaving: quitting mid-sentence leaves
-    // the draft in Drafts (US3 scenario 5). Bounded, so a store that has
-    // stopped answering cannot hold the terminal hostage.
+    // Saves what was written before leaving, so quitting mid-sentence leaves the draft. Bounded, so
+    // a stalled store cannot hold the terminal.
     drop(senders);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(3), writer).await;
     outcome
@@ -313,8 +284,6 @@ fn copy_to_clipboard(text: &str) {
     let _ = out.flush();
 }
 
-/// Standard Base64, padded: all OSC 52 asks for, too small to be a
-/// dependency.
 fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -339,7 +308,6 @@ fn base64(bytes: &[u8]) -> String {
 /// cannot keep the screen from moving at all.
 const BATCH: usize = 64;
 
-/// What a terminal event asks of the app; `None` for one it does not use.
 fn terminal_input(event: TerminalEvent, hits: &crate::view::hit::Hits) -> Option<Input> {
     match event {
         TerminalEvent::Key(key) => Some(Input::Key(key)),
@@ -350,8 +318,6 @@ fn terminal_input(event: TerminalEvent, hits: &crate::view::hit::Hits) -> Option
     }
 }
 
-/// An input already waiting -- a host event, or an answer to something
-/// asked -- taken without waiting for one.
 fn next_ready(
     host: &async_channel::Receiver<postio_core::EventEnvelope>,
     arriving: &async_channel::Receiver<Input>,
@@ -362,7 +328,6 @@ fn next_ready(
         .or_else(|| arriving.try_recv().ok())
 }
 
-/// A mouse event as the app hears it: what it landed on in the last frame.
 pub(crate) fn pointer(
     mouse: &crossterm::event::MouseEvent,
     hits: &crate::view::hit::Hits,
@@ -381,9 +346,8 @@ pub(crate) fn pointer(
     }
 }
 
-/// Draft writes, sent one at a time in the order they were made. A save
-/// spawned on a task of its own could reach the host after the one made
-/// after it; the host keeps order among what arrives, not what was meant.
+/// Draft writes, sent one at a time in order: a save spawned on its own task could reach the host
+/// after a later one.
 async fn write_drafts(
     client: Client,
     jobs: async_channel::Receiver<Effect>,
@@ -391,12 +355,22 @@ async fn write_drafts(
 ) {
     while let Ok(job) = jobs.recv().await {
         match job {
-            Effect::SaveDraft { generation, draft } => {
+            Effect::SaveDraft {
+                generation,
+                composition,
+                draft,
+            } => {
                 let saved = client
                     .save_draft(generation, *draft)
                     .await
                     .map_err(|error| error.message().to_owned());
-                let _ = inputs.send(Input::DraftSaved { generation, saved }).await;
+                let _ = inputs
+                    .send(Input::DraftSaved {
+                        generation,
+                        composition,
+                        saved,
+                    })
+                    .await;
             }
             Effect::DiscardDraft { generation, known } => {
                 let _ = client.discard_draft(generation, known).await;
@@ -409,7 +383,7 @@ async fn write_drafts(
                 let queued = client
                     .queue_send(generation, *draft, at)
                     .await
-                    .map(|_| ())
+                    .map(|queued| queued.draft)
                     .map_err(|error| error.message().to_owned());
                 let _ = inputs.send(Input::Queued { at, queued }).await;
             }
@@ -418,10 +392,8 @@ async fn write_drafts(
     }
 }
 
-/// The local draft behind a row, taken back from the Outbox if it was
-/// queued, as the desktop does on opening one (#433).
-async fn resume(client: &Client, message: postio_model::MessageId) -> Input {
-    let Some(draft) = client.draft_behind(message).await.ok().flatten() else {
+async fn resume(client: &Client, found: Option<postio_model::Draft>) -> Input {
+    let Some(draft) = found else {
         return Input::Resumed {
             found: None,
             failure: None,
@@ -435,8 +407,7 @@ async fn resume(client: &Client, message: postio_model::MessageId) -> Input {
     } else {
         client.cancel_send(draft.id).await.ok().flatten()
     };
-    // A failed send names what went wrong, where the person has come back to
-    // do something about it -- the desktop's rule (FR-066, #1487).
+    // A failed send names what went wrong where the person returns to act on it (#1487).
     let failure = match &draft {
         Some(draft) if draft.state == postio_model::DraftState::Failed => {
             client.send_failure(draft.id).await.ok().flatten()
@@ -449,22 +420,16 @@ async fn resume(client: &Client, message: postio_model::MessageId) -> Input {
     }
 }
 
-/// Where the loop's work reports back: inputs for `update`, and draft
-/// writes for `write_drafts`.
 struct Senders<'a> {
     inputs: async_channel::Sender<Input>,
     drafts: async_channel::Sender<Effect>,
-    /// What `config.toml` said at startup, for the places.
     config: crate::config_file::Read,
-    /// The store's host, which decides whether new mail is worth saying.
     host: &'a Host,
     /// What the person is looking at, so mail arriving in the folder
     /// already on screen is not announced.
     attention: std::sync::Mutex<postio_ui::notify::Attention>,
 }
 
-/// Ask whether `messages` arriving in `mailbox` is worth telling the person
-/// about, off the loop, and answer with [`Input::Notified`] if it is.
 fn tell(
     senders: &Senders<'_>,
     mailbox: postio_model::MailboxId,
@@ -480,32 +445,18 @@ fn tell(
     });
 }
 
-/// What the loop does after performing a batch of effects.
 enum Flow {
-    /// Wait for the next input.
     Go,
-    /// Leave.
     Quit,
-    /// Hand the terminal to the person's editor on `config.toml`, at a
-    /// section, then read the file again.
     EditConfig(Option<postio_ui::settings::Section>),
-    /// Hand the terminal to the editor on a signature's text, then save
-    /// what it wrote.
     EditSignature {
-        /// Whose.
         account: postio_model::AccountId,
-        /// Which, or a new one.
         signature: Option<postio_model::SignatureId>,
-        /// What it is called.
         name: String,
-        /// Its text before the edit.
         text: String,
     },
-    /// Hand the terminal to the external editor, then carry on.
     Edit {
-        /// Which composition.
         generation: u64,
-        /// The body to edit.
         markdown: String,
     },
 }
@@ -530,14 +481,11 @@ async fn drive(
             .with_contacts(senders.host.wiring().focus.config()),
     )
     .await;
-    // The first list is opened by what the places say: Focus's inbox, once
-    // there is an account to show.
     let effects = update(app, Input::Places(contents));
     let mut paint = false;
     if let Flow::Quit = perform(client, senders, effects, &mut paint)? {
         return Ok(());
     }
-    // What is where on the screen, as last drawn: what a click lands on.
     let mut hits = draw(terminal, app, theme)?;
 
     loop {
@@ -561,10 +509,8 @@ async fn drive(
                 Err(_) => return Ok(()),
             },
         };
-        // Everything already waiting is handled before the frame is painted:
-        // a burst of keys, or of a sync's events, is one frame rather than
-        // one each, which over SSH is the difference between a list that
-        // moves and one that flickers on its way.
+        // Everything already waiting is handled before the frame is painted, so a burst of keys or
+        // sync events is one frame, not one each (SSH flicker).
         let mut paint = false;
         let mut flow = Flow::Go;
         let mut next = Some(first);
@@ -582,10 +528,8 @@ async fn drive(
             if !matches!(flow, Flow::Go) || handled >= BATCH {
                 break;
             }
-            // A key already typed, asked inside this task so the stream keeps
-            // this task's waker: polled from anywhere else (`now_or_never`'s
-            // do-nothing waker), the next key would wake nothing and wait
-            // for some other event to be noticed.
+            // Asked inside this task so the stream keeps this task's waker: polled from elsewhere,
+            // the next key would wake nothing.
             next = tokio::select! {
                 biased;
                 event = terminal_events.next() => match event {
@@ -613,7 +557,6 @@ async fn drive(
                     continue;
                 };
                 let text = crate::config_file::text(&path);
-                // Lines count from one for an editor.
                 let line = section
                     .and_then(|section| postio_ui::settings::find_section(&text, section))
                     .map(|line| line + 1);
@@ -626,7 +569,6 @@ async fn drive(
                 session.publish();
                 terminal_events = EventStream::new();
                 terminal.clear()?;
-                // New bindings take effect now, as the desktop's do.
                 if let Ok(config) =
                     postio_config::Config::from_toml_str(&crate::config_file::text(&path))
                 {
@@ -638,10 +580,8 @@ async fn drive(
                 generation,
                 markdown,
             } => {
-                // The event stream reads the terminal on a thread of its own;
-                // left running, it would take the editor's keystrokes. So it
-                // goes, the screen is handed back to what it was, the editor
-                // runs, and both come back.
+                // The event stream reads the terminal on its own thread and would take the editor's
+                // keystrokes, so it is dropped while the editor runs.
                 drop(terminal_events);
                 let edited = session
                     .suspended(&mut Stdout, || {
@@ -654,7 +594,6 @@ async fn drive(
                     .map_err(|error| error.to_string());
                 session.publish();
                 terminal_events = EventStream::new();
-                // Whatever the editor drew is on the real screen now.
                 terminal.clear()?;
                 let _ = senders
                     .inputs
@@ -666,8 +605,6 @@ async fn drive(
                 name,
                 text,
             } => {
-                // As for a draft: the terminal's reader stops while the
-                // editor has the screen.
                 drop(terminal_events);
                 let edited = session
                     .suspended(&mut Stdout, || {
@@ -698,8 +635,6 @@ async fn drive(
     }
 }
 
-/// What the places hold: every account, its folders, and the counts its
-/// views draw.
 async fn places_contents(
     client: &Client,
     config: crate::config_file::Read,
@@ -731,50 +666,6 @@ async fn places_contents(
     }
 }
 
-/// What Focus's inbox surfaces among its conversations, as the host has it.
-async fn read_surfaced(client: &Client, inputs: &async_channel::Sender<Input>) {
-    match client.surfaced().await {
-        Ok(rows) => {
-            let _ = inputs.send(Input::Surfaced(rows)).await;
-        }
-        Err(error) => {
-            tracing::warn!(%error, "could not read Focus's surfaced rows: {error}");
-        }
-    }
-}
-
-/// One page of a list, as rows: what the store holds for the positions
-/// asked, with the page's labels read in one round trip, and Focus's
-/// surfaced rows put where `placement` says they sit.
-async fn read_page(
-    client: &Client,
-    request: postio_ui::paging::PageRequest,
-    placement: Option<crate::app::Placement>,
-) -> Result<postio_ui::paging::Page<crate::row::Row>, String> {
-    let (offset, limit) = crate::row::store_range(&request, placement.as_ref());
-    let answer = client
-        .list_page(PageRequest {
-            scope: request.scope,
-            offset,
-            limit,
-        })
-        .await
-        .map_err(|error| error.message().to_owned())?;
-    let labelled = match &answer {
-        postio_model::listing::ListPage::Threads(page) => client
-            .thread_labels(postio_ui::focus_list::label_threads(&page.rows))
-            .await
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "could not read a page's labels: {error}");
-                Vec::new()
-            }),
-        postio_model::listing::ListPage::Messages(_) => Vec::new(),
-    };
-    Ok(crate::row::page_of(&request, answer, labelled, placement))
-}
-
-/// Where saved parts go: `$XDG_DOWNLOAD_DIR`, else `~/Downloads`, else the
-/// home directory, else here.
 fn downloads() -> std::path::PathBuf {
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     std::env::var_os("XDG_DOWNLOAD_DIR")
@@ -791,19 +682,14 @@ fn downloads() -> std::path::PathBuf {
 
 type Screen = Terminal<CrosstermBackend<io::BufWriter<io::Stdout>>>;
 
-/// Room for a whole frame: a full screen of styled cells is tens of
-/// kilobytes at most.
 const FRAME_BUFFER: usize = 1 << 16;
 
-/// A backend that sends a frame in one write when it is flushed, not a
-/// kilobyte at a time as standard output's own buffer would. Over SSH every
-/// write is a packet the far terminal may paint before the next arrives.
+/// Sends a frame in one write when flushed: over SSH every write is a packet the far terminal may
+/// paint before the next arrives.
 fn backend<W: io::Write>(out: W) -> CrosstermBackend<io::BufWriter<W>> {
     CrosstermBackend::new(io::BufWriter::with_capacity(FRAME_BUFFER, out))
 }
 
-/// Do what `update` asked, note in `paint` whether the screen changed, and
-/// say what the loop does next.
 fn perform(
     client: &Client,
     senders: &Senders<'_>,
@@ -929,17 +815,6 @@ fn perform(
                         .await;
                 });
             }
-            Effect::ReadParts(message) => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let parts = client
-                        .parts(message)
-                        .await
-                        .map_err(|error| error.message().to_owned());
-                    let _ = inputs.send(Input::Parts { message, parts }).await;
-                });
-            }
             Effect::SavePart {
                 message,
                 attachment,
@@ -1030,9 +905,9 @@ fn perform(
                     .stderr(std::process::Stdio::null())
                     .spawn();
                 if opened.is_err() {
-                    // No opener here -- a server over SSH. The link goes to
-                    // the terminal's clipboard instead, which reaches the
-                    // person's own machine (research R7, OSC 52).
+                    // No opener (a server over SSH): the link goes to the terminal's clipboard,
+                    // which
+                    // reaches the person's machine (OSC 52).
                     copy_to_clipboard(&target);
                     let _ = inputs.try_send(Input::Host(postio_core::Event::Error {
                         message: format!("No opener here; {target} is on the clipboard"),
@@ -1041,9 +916,6 @@ fn perform(
                 }
             }
             Effect::Launch(path) => {
-                // The system's opener, detached, its output away from the
-                // terminal. Where there is none -- a server over SSH -- the
-                // notice has already said where the file is.
                 // POSTIO-CONSENT: asked for only by the parts' Open command on
                 // one part the person chose, already written to disk; the
                 // opener is their own choice of application.
@@ -1061,6 +933,10 @@ fn perform(
                 if let Err(error) = list.save() {
                     tracing::warn!(%error, "could not save the remote-image allow list: {error}");
                 }
+            }
+            Effect::SaveSearch(save) => {
+                let saved = postio_focus::save_search(crate::config_file::path().as_deref(), &save);
+                let _ = inputs.try_send(Input::SearchSaved(saved));
             }
             Effect::SetReading(reading) => {
                 if let Err(error) = crate::config_file::path()
@@ -1111,14 +987,6 @@ fn perform(
                     let _ = inputs.send(Input::NoticeDue { generation }).await;
                 });
             }
-            Effect::Autosave { generation, edit } => {
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(crate::app::AUTOSAVE).await;
-                    let _ = inputs.send(Input::AutosaveDue { generation, edit }).await;
-                });
-            }
-            // One writer, in order: see `write_drafts`.
             effect @ (Effect::SaveDraft { .. }
             | Effect::DiscardDraft { .. }
             | Effect::QueueSend { .. }) => {
@@ -1139,6 +1007,33 @@ fn perform(
                     let _ = inputs.send(Input::InlineStored(stored)).await;
                 });
             }
+            // POSTIO-CONSENT: on a Download and attach press alone; the
+            // host's handler makes the one request (spec 014 FR-031).
+            Effect::AttachRemoteImage {
+                generation,
+                draft,
+                href,
+            } => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let outcome = client
+                        .attach_remote_image(draft, href.clone())
+                        .await
+                        .unwrap_or_else(|_| {
+                            Err(postio_ui::compose::RemoteRefusal::Unreachable(
+                                "Postio could not ask for it".to_owned(),
+                            ))
+                        });
+                    let _ = inputs
+                        .send(Input::RemoteImage {
+                            generation,
+                            href,
+                            outcome,
+                        })
+                        .await;
+                });
+            }
             Effect::Attach(path) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
@@ -1147,112 +1042,6 @@ fn perform(
                     let _ = inputs.send(Input::Attached { path, attached }).await;
                 });
             }
-            Effect::BarSearch(ask) => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let sequence = ask.sequence;
-                    let found = client
-                        .search_hits(
-                            postio_model::AccountScope::Unified,
-                            ask.query,
-                            postio_search::facets::Scope::AllMail,
-                            ask.order,
-                            0,
-                        )
-                        .await
-                        .map(|found| found.map(postio_client::protocol::Hits))
-                        .map_err(|error| error.message().to_owned());
-                    // Held mail says where it waits, not the folder it is
-                    // filed in.
-                    let held = match &found {
-                        Ok(Some(postio_client::protocol::Hits(results))) if ask.digesting => {
-                            let ids = results
-                                .hits
-                                .iter()
-                                .take(postio_ui::command_bar::HITS * 4)
-                                .map(|hit| hit.message_id)
-                                .collect();
-                            client.held(ids).await.unwrap_or_default()
-                        }
-                        _ => Vec::new(),
-                    };
-                    let _ = inputs
-                        .send(Input::BarFound {
-                            sequence,
-                            found,
-                            held,
-                        })
-                        .await;
-                });
-            }
-            Effect::BarFolder { sequence, mailbox } => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let scope = ListScope::Mailbox(mailbox);
-                    let count = client.list_count(scope).await.unwrap_or(0);
-                    let page = client
-                        .list_page(PageRequest {
-                            scope,
-                            offset: 0,
-                            limit: postio_ui::command_bar::FOLDER_ROWS,
-                        })
-                        .await;
-                    let rows = match page {
-                        Ok(postio_model::listing::ListPage::Threads(page)) => page
-                            .rows
-                            .iter()
-                            .map(crate::bar::ResultRow::of_thread)
-                            .collect(),
-                        Ok(postio_model::listing::ListPage::Messages(page)) => page
-                            .rows
-                            .iter()
-                            .map(crate::bar::ResultRow::of_message)
-                            .collect(),
-                        Err(error) => {
-                            tracing::warn!(%error, "the bar could not list a folder: {error}");
-                            Vec::new()
-                        }
-                    };
-                    let _ = inputs
-                        .send(Input::BarFolder {
-                            sequence,
-                            count,
-                            rows,
-                        })
-                        .await;
-                });
-            }
-            Effect::ReadPlaceDetails => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let mut details = crate::places::PlaceDetails::default();
-                    for account in client.accounts().await.unwrap_or_default() {
-                        if !account.enabled {
-                            continue;
-                        }
-                        details
-                            .labels
-                            .extend(client.labels(account.id).await.unwrap_or_default());
-                        details
-                            .label_counts
-                            .extend(client.label_counts(account.id).await.unwrap_or_default());
-                        details
-                            .correspondents
-                            .extend(client.correspondents(account.id).await.unwrap_or_default());
-                        let waiting = client
-                            .list_count(ListScope::Outbox(account.id))
-                            .await
-                            .unwrap_or(0);
-                        details.outbox.push((account.id, waiting));
-                    }
-                    let _ = inputs.send(Input::PlaceDetails(details)).await;
-                });
-            }
-            // The desktop's own notification service, where the session has
-            // one; over SSH there is none, and the status line has said it.
             // POSTIO-CONSENT: a local notification of mail that arrived,
             // chosen under `[sync]`'s notify rules; nothing
             // leaves this machine.
@@ -1265,75 +1054,6 @@ fn perform(
                         .stderr(std::process::Stdio::null())
                         .spawn();
                 }
-            }
-            // Nothing to offer is what a store that cannot be read offers:
-            // the finder says "no label matches" either way.
-            Effect::ReadLabelPicker {
-                message,
-                account,
-                threads,
-            } => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    // The row's own account: a label is an account's, and a
-                    // message can carry only its account's.
-                    let account = client
-                        .account_of(message)
-                        .await
-                        .ok()
-                        .flatten()
-                        .unwrap_or(account);
-                    let labels = client.labels(account).await.unwrap_or_default();
-                    let counts = client.label_counts(account).await.unwrap_or_default();
-                    let carried = if threads.is_empty() {
-                        Vec::new()
-                    } else {
-                        client
-                            .thread_labels(threads.clone())
-                            .await
-                            .unwrap_or_default()
-                    };
-                    let applied = postio_ui::pickers::applied_labels(carried, &threads)
-                        .into_iter()
-                        .collect();
-                    let _ = inputs
-                        .send(Input::LabelPicker {
-                            account,
-                            labels,
-                            counts,
-                            applied,
-                        })
-                        .await;
-                });
-            }
-            Effect::CreateLabel {
-                account,
-                name,
-                close,
-            } => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let label = client.create_label(account, name).await.ok().flatten();
-                    let _ = inputs.send(Input::LabelMade { label, close }).await;
-                });
-            }
-            Effect::ReadRecentMoves => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let recent = client.move_recent().await.unwrap_or_default();
-                    let _ = inputs.send(Input::RecentMoves(recent)).await;
-                });
-            }
-            Effect::NoteMove(mailbox) => {
-                let client = client.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = client.note_move(mailbox).await {
-                        tracing::warn!(%error, "could not keep a recent move: {error}");
-                    }
-                });
             }
             Effect::Recipients { account, prefix } => {
                 let client = client.clone();
@@ -1350,18 +1070,25 @@ fn perform(
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let _ = inputs.send(resume(&client, message).await).await;
+                    let found = client.draft_behind(message).await.ok().flatten();
+                    let _ = inputs.send(resume(&client, found).await).await;
                 });
             }
-            Effect::ReadConversation(thread) => {
+            Effect::ResumeDraft(draft) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let members = client
-                        .conversation(thread)
-                        .await
-                        .map_err(|error| error.message().to_owned());
-                    let _ = inputs.send(Input::Conversation { thread, members }).await;
+                    let found = client.draft_by_id(draft).await.ok().flatten();
+                    let _ = inputs.send(resume(&client, found).await).await;
+                });
+            }
+            Effect::ReadNewer(messages) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    use postio_model::listing::MailStore as _;
+                    let rows = client.message_rows(messages).await.unwrap_or_default();
+                    let _ = inputs.send(Input::Newer(rows)).await;
                 });
             }
             Effect::ReadBody(message) => {
@@ -1381,8 +1108,7 @@ fn perform(
                                 let _ = inputs
                                     .send(Input::Addressed {
                                         message,
-                                        to: row.to,
-                                        cc: row.cc,
+                                        row,
                                         warning: reading.sender_warning,
                                     })
                                     .await;
@@ -1395,58 +1121,12 @@ fn perform(
                     let _ = inputs.send(Input::Body { message, answer }).await;
                 });
             }
-            Effect::Open(scope) => {
-                // What the person is looking at, so mail arriving in the
-                // folder already on screen is not announced.
-                *attention.lock().expect("never poisoned") = postio_ui::notify::Attention {
-                    showing: match scope {
-                        ListScope::Mailbox(mailbox) => Some(mailbox),
-                        _ => None,
-                    },
-                    active: true,
-                };
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    let total = client.list_count(scope).await.unwrap_or(0);
-                    // Read before the list opens, so its first page is placed
-                    // among them.
-                    if scope == ListScope::Focus(postio_model::FocusScope::Inbox) {
-                        read_surfaced(&client, &inputs).await;
-                    }
-                    let _ = inputs.send(Input::Opened { scope, total }).await;
-                });
-            }
             Effect::Ask(ask) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
                     let answer = ask.perform(&client).await;
                     let _ = inputs.send(Input::Answer(answer)).await;
-                });
-            }
-            Effect::SaveSearch(query) => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                let focus = senders.host.wiring().focus.config();
-                tokio::spawn(async move {
-                    let saved = tokio::task::spawn_blocking(move || {
-                        crate::config_file::path()
-                            .ok_or_else(|| "There is no config.toml here".to_owned())
-                            .and_then(|path| crate::config_file::save_search(&path, &query))
-                    })
-                    .await
-                    .unwrap_or_else(|error| Err(error.to_string()));
-                    match saved {
-                        Ok(read) => {
-                            let contents =
-                                places_contents(&client, read.with_contacts(focus)).await;
-                            let _ = inputs.send(Input::Places(contents)).await;
-                        }
-                        Err(reason) => {
-                            tracing::warn!(%reason, "could not save the search");
-                        }
-                    }
                 });
             }
             Effect::ReadPrivacy => {
@@ -1479,34 +1159,6 @@ fn perform(
                     let _ = inputs.send(Input::Places(contents)).await;
                 });
             }
-            Effect::ReadSurfaced => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move { read_surfaced(&client, &inputs).await });
-            }
-            Effect::ReadFocusCounts => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    match client.focus_counts().await {
-                        Ok(counts) => {
-                            let _ = inputs.send(Input::FocusCounts(counts)).await;
-                        }
-                        Err(error) => {
-                            tracing::warn!(%error, "could not read Focus's counts: {error}");
-                        }
-                    }
-                });
-            }
-            Effect::Recount(scope) => {
-                let client = client.clone();
-                let inputs = inputs.clone();
-                tokio::spawn(async move {
-                    if let Ok(total) = client.list_count(scope).await {
-                        let _ = inputs.send(Input::Recounted { scope, total }).await;
-                    }
-                });
-            }
             Effect::Send(command) => {
                 let client = client.clone();
                 tokio::spawn(async move {
@@ -1515,24 +1167,35 @@ fn perform(
                     }
                 });
             }
-            Effect::Fetch {
-                generation,
-                page,
-                fetch,
-                placement,
-            } => {
+            Effect::Focus { ticket, request } => {
+                let request = match postio_focus::perform_now(client, request) {
+                    Ok(reply) => {
+                        let _ = inputs.try_send(Input::FocusReply(ticket, reply));
+                        continue;
+                    }
+                    Err(request) => request,
+                };
+                if let postio_focus::Request::OpenScope { scope, .. } = &request {
+                    *attention.lock().expect("never poisoned") = postio_ui::notify::Attention {
+                        showing: match scope {
+                            ListScope::Mailbox(mailbox) => Some(*mailbox),
+                            _ => None,
+                        },
+                        active: true,
+                    };
+                }
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let Fetch::Scope(request) = fetch;
-                    let rows = read_page(&client, request, placement).await;
-                    let _ = inputs
-                        .send(Input::Page {
-                            generation,
-                            page,
-                            rows,
-                        })
-                        .await;
+                    let reply = postio_focus::perform(&client, request).await;
+                    let _ = inputs.send(Input::FocusReply(ticket, reply)).await;
+                });
+            }
+            Effect::FocusTimer { token, after } => {
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(after).await;
+                    let _ = inputs.send(Input::FocusTimer(token)).await;
                 });
             }
         }
@@ -1541,9 +1204,7 @@ fn perform(
     Ok(flow)
 }
 
-/// Paint a frame inside a synchronized update, so a terminal that keeps
-/// them shows the frame whole rather than half written over the last one;
-/// one that does not ignores the two sequences.
+/// Painted inside a synchronized update, so a terminal that keeps them shows the frame whole.
 fn draw<W: io::Write>(
     terminal: &mut Terminal<CrosstermBackend<W>>,
     app: &App,
@@ -1579,7 +1240,6 @@ mod tests {
         assert!(!said.contains("keeping your accounts"), "{said}");
     }
 
-    /// The writes the terminal is sent, one entry each, kept to read back.
     #[derive(Clone, Default)]
     struct Writes(std::rc::Rc<std::cell::RefCell<Vec<Vec<u8>>>>);
     impl io::Write for Writes {
@@ -1640,7 +1300,6 @@ mod tests {
 
     #[test]
     fn a_frame_is_written_whole_inside_a_synchronized_update() {
-        /// What the terminal is sent, kept to read back.
         #[derive(Clone, Default)]
         struct Tap(std::rc::Rc<std::cell::RefCell<Vec<u8>>>);
         impl io::Write for Tap {
@@ -1697,8 +1356,6 @@ mod waits {
 
     #[test]
     fn a_wait_that_reads_the_same_as_the_last_is_not_said_again() {
-        // The keyring and the store are two waits with one sentence; the
-        // person sees one line for them, not the same line twice.
         let said = std::cell::RefCell::new(Vec::new());
         let say = super::saying(|line: &str| said.borrow_mut().push(line.to_owned()));
         say(Waiting::Keyring);

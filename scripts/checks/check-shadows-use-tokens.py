@@ -32,8 +32,6 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# The crates whose `data/` holds stylesheets: the desktop app, and the crate
-# holding the widget rules it draws with (ADR 0043; specs/007-postio-focus R1).
 CRATES = ("postio-widgets", "postio-gtk")
 
 COMMENT = re.compile(r"/\*.*?\*/", re.S)

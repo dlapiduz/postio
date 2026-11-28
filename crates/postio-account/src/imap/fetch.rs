@@ -1,32 +1,8 @@
-//! `UID FETCH` of `ENVELOPE`, `BODYSTRUCTURE`, flags, size and internal
-//! date — everything an initial sync needs before a single body byte exists
-//! locally.
-//!
-//! # Bounded memory is the caller's job, by design
-//!
-//! [`fetch_headers`] issues exactly one `UID FETCH` for whatever [`UidSet`] it
-//! is given and returns everything that command reported. It does not chunk
-//! internally: `backend::mod`'s rule 3 puts batching on the caller, via
-//! [`UidSet::chunks`], so a ten-thousand-message initial sync is many calls
-//! into this function rather than one call that buffers ten thousand
-//! messages. Passing an already-chunked set is what keeps this off the heap.
-//!
-//! # `References` is not part of `ENVELOPE`
-//!
-//! JWZ threading needs the `References` header, but RFC 3501's `ENVELOPE`
-//! carries only `In-Reply-To` and `Message-ID`. So every fetch also asks for
-//! `BODY.PEEK[HEADER.FIELDS (REFERENCES)]` alongside `ENVELOPE` — one extra
-//! item on the same command, not a second round trip — and `.PEEK` so reading
-//! headers never sets `\Seen`.
-//!
-//! # `BODYSTRUCTURE` is flattened, not kept as a tree
-//!
-//! `imap_types::body::BodyStructure` is a recursive `Single`/`Multi` enum.
-//! [`flatten`] walks it into the flat [`PartNode`] list `BodyStructure` wants,
-//! assigning RFC 3501 §6.4.5 section numbers as it goes: a non-multipart
-//! message is section `1`; a multipart's children are `1`, `2`, …; and a
-//! part of type `MESSAGE/RFC822` numbers its own encapsulated content one
-//! level deeper (`3.1`, `3.2`, …), exactly as a nested multipart would.
+//! One `UID FETCH` per call for the given `UidSet`; batching is the caller's (`UidSet::chunks`).
+//! Every fetch also asks `BODY.PEEK[HEADER.FIELDS (REFERENCES)]`, since `ENVELOPE` lacks it and JWZ
+//! threading needs it; `.PEEK` so reading headers never sets `\Seen`.
+//! `BODYSTRUCTURE` is flattened with RFC 3501 §6.4.5 section numbers; `MESSAGE/RFC822` content
+//! numbers one level deeper.
 
 use std::num::NonZeroU64;
 
@@ -55,12 +31,8 @@ use crate::cancel::CancelToken;
 
 use super::{ConnectionPool, ImapSession, Priority, undecoded, whole_messages};
 
-/// Fetches metadata for `uids` in `mailbox` — no body bytes.
-///
-/// See the [module docs](self) for why this does not chunk `uids` itself.
-/// `changed_since` requires the server to speak `CONDSTORE`
-/// ([`BackendError::Unsupported`] otherwise) and selects the mailbox with
-/// `(CONDSTORE)` so `CHANGEDSINCE` is legal on it (RFC 7162 §3.3.1).
+/// `changed_since` requires CONDSTORE (`Unsupported` otherwise) and selects with `(CONDSTORE)` so
+/// `CHANGEDSINCE` is legal (RFC 7162 §3.3.1).
 pub async fn fetch_headers(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -81,16 +53,8 @@ pub async fn fetch_headers(
     .await
 }
 
-/// [`fetch_headers`], and what `List-Unsubscribe`, `Precedence` and
-/// `Auto-Submitted` say (spec 007, research R8): what an incremental pass
-/// files new mail with.
-///
-/// One more `BODY.PEEK[HEADER.FIELDS (...)]` item on the same command, so
-/// still one round trip, and only here: a first sync's [`fetch_headers`]
-/// asks for none of the three, because every message it enumerates would
-/// pay for them -- ADR 0025's objection to a header allowlist at sync time,
-/// which promotion answers by charging only the incremental passes that
-/// file new mail.
+/// Adds the three promoted headers to the same command; a first sync's `fetch_headers` does not,
+/// since every enumerated message would pay for them (ADR 0025).
 pub async fn fetch_headers_for_filing(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -111,7 +75,6 @@ pub async fn fetch_headers_for_filing(
     .await
 }
 
-/// Whether a fetch asks for the promoted headers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Promoted {
     NotAsked,
@@ -159,13 +122,8 @@ async fn fetch(
     .await
 }
 
-/// Issues one `UID FETCH` and maps the response.
-///
-/// When `changed_since` is set this is an incremental resync's fetch, and a
-/// response io-imap could not wholly decode fails it: completing `Ok` with a
-/// line or an item missing is exactly the case a plain result cannot tell
-/// apart from a genuinely complete pull. See the [module docs](self) and
-/// [`crate::backend::BackendError::ResyncIntegrityLost`].
+/// With `changed_since`, a response io-imap could not wholly decode fails with
+/// `ResyncIntegrityLost`: an `Ok` with a line missing is indistinguishable from a complete pull.
 async fn fetch_batch(
     session: &mut ImapSession,
     mailbox: &str,
@@ -187,8 +145,6 @@ async fn fetch_batch(
     Ok(messages)
 }
 
-/// The messages one `UID FETCH` decoded whole, and how many of the
-/// response's lines it could not ([`undecoded`]).
 async fn fetch_batch_inner(
     session: &mut ImapSession,
     uid_validity: UidValidity,
@@ -247,19 +203,9 @@ async fn fetch_batch_inner(
     Ok((messages, skipped))
 }
 
-/// Every message's flags in `mailbox`: `UID FETCH 1:* (UID FLAGS)`, and
-/// nothing else on the wire. See
-/// [`MailBackend::fetch_flags`](crate::backend::MailBackend::fetch_flags).
-///
-/// Checked for what did not decode ([`undecoded`]) like the `CHANGEDSINCE`
-/// fetch, for the same reason: `io-imap` completes the command `Ok` after
-/// dropping an untagged line it could not decode, and a sweep whose answer silently lost
-/// a message's flags is the very fault the sweep exists to find. The failure
-/// is [`BackendError::ResyncIntegrityLost`], which sends the caller to a full
-/// re-enumeration rather than trusting a short list.
-///
-/// The mailbox is selected without `(CONDSTORE)`: nothing here asks about
-/// modification sequences, and a plain `FETCH` is legal on any selection.
+/// Checked for undecoded lines like the `CHANGEDSINCE` fetch: a sweep that silently lost a
+/// message's flags defeats its purpose; fails with `ResyncIntegrityLost`.
+/// Selected without `(CONDSTORE)`: nothing here asks about modification sequences.
 pub async fn fetch_flags(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -309,8 +255,6 @@ pub async fn fetch_flags(
     .await
 }
 
-/// The UID and flags one `FETCH` entry carries, or `None` for an entry with
-/// no UID (which says nothing about any message we can name).
 fn flags_of(items: impl Iterator<Item = MessageDataItem<'static>>) -> Option<(Uid, FlagSet)> {
     let mut uid = None;
     let mut flags = FlagSet::new();
@@ -326,16 +270,8 @@ fn flags_of(items: impl Iterator<Item = MessageDataItem<'static>>) -> Option<(Ui
     uid.map(|uid| (uid, flags))
 }
 
-/// Whether a `UID SEARCH ALL` answer is too short to be an answer.
-///
-/// Its own function so the rule can be stated and tested without a server:
-/// the shape it guards against was measured, not imagined, and the boundary
-/// cases are where a careless version does damage.
-///
-/// Only the short direction counts. A listing *longer* than `EXISTS` is the
-/// ordinary race — mail delivered between the `SELECT` and the `SEARCH`, or a
-/// count that went stale in the selection cache — and refusing on it would
-/// discard healthy connections on a busy mailbox.
+/// Only the short direction counts: a listing longer than `EXISTS` is the ordinary race with new
+/// mail, and refusing on it would discard healthy connections.
 fn listing_was_misread(listed: usize, exists: u32) -> bool {
     (listed as u64) < u64::from(exists)
 }
@@ -352,7 +288,6 @@ fn non_zero_mod_seq(mod_seq: ModSeq) -> BackendResult<NonZeroU64> {
     })
 }
 
-/// `BODY.PEEK[HEADER.FIELDS (REFERENCES)]` — see the [module docs](self).
 fn references_item() -> MessageDataItemName<'static> {
     MessageDataItemName::BodyExt {
         section: Some(references_section()),
@@ -368,14 +303,8 @@ fn references_section() -> Section<'static> {
     )
 }
 
-/// `BODY.PEEK[HEADER.FIELDS (LIST-ID)]`, alongside `ENVELOPE` for the same
-/// reason `references_item` is: RFC 3501's `ENVELOPE` has no field for it,
-/// but it is what lets a mailing list be detected without the user naming
-/// it anywhere (#9). A field of its own rather than folded into the same
-/// `HEADER.FIELDS` request as `REFERENCES`: the server may return the
-/// requested headers in either order in one raw block, and
-/// `references_from_header`'s own parsing assumes the block holds exactly
-/// one header. Two items in one `FETCH` command is still one round trip.
+/// A separate item from `REFERENCES`: the server may return the headers in either order, and
+/// `references_from_header` assumes the block holds exactly one header (#9).
 fn list_id_item() -> MessageDataItemName<'static> {
     MessageDataItemName::BodyExt {
         section: Some(list_id_section()),
@@ -391,12 +320,8 @@ fn list_id_section() -> Section<'static> {
     )
 }
 
-/// `BODY.PEEK[HEADER.FIELDS (LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)]`:
-/// the headers Focus promotes (spec 007, research R8), asked for by a filing
-/// fetch only. An item of its own rather than folded into `LIST-ID`'s,
-/// because `list_id_from_header` and `references_from_header` each read a
-/// block holding exactly one field; this block is read as a whole, by the
-/// same parser a stored header block goes through.
+/// A separate item, since the single-field parsers assume a one-header block; this block is read
+/// whole (spec 007, R8).
 fn promoted_item() -> MessageDataItemName<'static> {
     MessageDataItemName::BodyExt {
         section: Some(promoted_section()),
@@ -414,27 +339,13 @@ fn promoted_section() -> Section<'static> {
         .collect();
     Section::HeaderFields(
         None,
-        Vec1::try_from(names).expect("three field names are not an empty list"),
+        Vec1::try_from(names).expect("the promoted fields are not an empty list"),
     )
 }
 
-// ---------------------------------------------------------------------------
-// Response mapping
-// ---------------------------------------------------------------------------
-
-/// One message out of a `FETCH` reply, or `None` for an entry that is not
-/// one of the messages asked for.
-///
-/// RFC 3501 §7.4.2 lets a server report a flag change on any message at any
-/// moment, and it rides in the same reply: another client marks something
-/// read while this fetch is on the wire, and an entry arrives carrying `UID`
-/// and `FLAGS` and nothing else. That is not a requested message missing its
-/// date -- treating it as one failed a real archive's whole first sync -- so
-/// an entry with neither `INTERNALDATE` nor `ENVELOPE` is passed over. The
-/// flag change itself is not lost: the next incremental pass reads it.
-///
-/// An entry that carries some metadata but not the date is still an error,
-/// because that is a server answering the question badly.
+/// A flag change on another message can ride in the same reply (RFC 3501 §7.4.2): an entry with
+/// neither `INTERNALDATE` nor `ENVELOPE` is passed over, not an error. Treating it as one failed a
+/// real archive's whole first sync; the next incremental pass reads the flag.
 fn build_fetched_message(
     items: Vec1<MessageDataItem<'static>>,
     uid_validity: UidValidity,
@@ -468,8 +379,7 @@ fn build_fetched_message(
             {
                 list_id = list_id_from_header(nstring_to_string(data).as_deref());
             }
-            // Asked for, so known: a block with none of the three is a
-            // message that says none of them, not one nobody looked at.
+            // Asked for, so known: a block with none of the three is a message that says none.
             MessageDataItem::BodyExt { section, data, .. }
                 if section == Some(promoted_section()) =>
             {
@@ -523,13 +433,8 @@ fn nstring_to_string(value: NString<'static>) -> Option<String> {
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// As [`nstring_to_string`], for a field that carries prose rather than a
-/// structured token — the subject, or a display name — and so can carry an
-/// RFC 2047 encoded word: a sender's client folds non-ASCII into the
-/// envelope this way, and the ENVELOPE response hands it over undecoded.
-/// `mailbox`, `host`, message ids and the date stay on
-/// [`nstring_to_string`]; none of them is header prose an encoder ever
-/// touches.
+/// For prose fields (subject, display name) that can carry an RFC 2047 encoded word; ids and the
+/// date stay on `nstring_to_string`.
 fn nstring_to_header_text(value: NString<'static>) -> Option<String> {
     value
         .into_option()
@@ -540,8 +445,6 @@ fn istring_to_string(value: &IString<'static>) -> String {
     String::from_utf8_lossy(&value.clone().into_inner()).into_owned()
 }
 
-/// Pulls `Message-ID`-shaped tokens out of a raw, possibly folded
-/// `References:` header line.
 fn references_from_header(raw: Option<&str>) -> Vec<RfcMessageId> {
     let Some(raw) = raw else {
         return Vec::new();
@@ -556,10 +459,8 @@ fn references_from_header(raw: Option<&str>) -> Vec<RfcMessageId> {
         .collect()
 }
 
-/// Pulls the bracketed identifier out of a raw `List-Id:` header line — the
-/// same reduction [`postio_model::mime::list_id_from_text`] does for a full
-/// message parse, so a row shows the same list whether it arrived through
-/// `ENVELOPE`'s companion fetch or through a fully parsed body.
+/// The same reduction `postio_model::mime::list_id_from_text` does for a full parse, so a row shows
+/// the same list either way.
 fn list_id_from_header(raw: Option<&str>) -> Option<String> {
     let (_, value) = raw?.split_once(':')?;
     postio_model::mime::list_id_from_text(value)
@@ -608,23 +509,14 @@ fn address_from_wire(address: WireAddress<'static>) -> Option<EmailAddress> {
     Some(EmailAddress::new(name, format!("{mailbox}@{host}")))
 }
 
-// ---------------------------------------------------------------------------
-// BODYSTRUCTURE flattening
-// ---------------------------------------------------------------------------
-
 fn body_structure_from_wire(wire: &WireBodyStructure<'static>) -> BodyStructure {
     let mut parts = Vec::new();
     flatten(wire, &[], &mut parts);
     BodyStructure::from_parts(root_content_type(wire), parts)
 }
 
-/// The message's own content type — `BODYSTRUCTURE`'s root, not any one
-/// part's.
-///
-/// `Multi`'s own `subtype` (`mixed`, `alternative`, `related`, …) is exactly
-/// this and nothing else carries it: [`flatten`] only ever numbers and
-/// records the *children*, so a multipart message's own type has no other
-/// way out of the wire structure.
+/// `Multi`'s own `subtype` is the only carrier of a multipart's type; `flatten` records only
+/// children.
 fn root_content_type(wire: &WireBodyStructure<'static>) -> String {
     match wire {
         WireBodyStructure::Multi { subtype, .. } => {
@@ -637,11 +529,6 @@ fn root_content_type(wire: &WireBodyStructure<'static>) -> String {
     }
 }
 
-/// Walks one body structure, assigning RFC 3501 §6.4.5 section numbers.
-///
-/// `path` is the section number of the closest enclosing part, as path
-/// components — `[]` at the top of the message, `[3]` for the third child of
-/// a top-level multipart, and so on. See the [module docs](self).
 fn flatten(structure: &WireBodyStructure<'static>, path: &[u32], out: &mut Vec<PartNode>) {
     match structure {
         WireBodyStructure::Multi { bodies, .. } => {
@@ -665,9 +552,7 @@ fn flatten(structure: &WireBodyStructure<'static>, path: &[u32], out: &mut Vec<P
     }
 }
 
-/// A `MESSAGE/RFC822` part's own body is numbered one level deeper than the
-/// part that encloses it — `3.1`, `3.2`, … for `3` — never reusing `3`
-/// itself, which the wrapper already claimed.
+/// Numbered one level deeper than the enclosing part (`3.1`, `3.2`), never reusing `3`.
 fn flatten_encapsulated(
     structure: &WireBodyStructure<'static>,
     path: &[u32],
@@ -757,9 +642,6 @@ fn parameter(list: &[(IString<'static>, IString<'static>)], key: &str) -> Option
         .map(|(_, value)| istring_to_string(value))
 }
 
-/// A parameter that can carry prose — a filename — decoded from whichever
-/// spelling the sender used: plain, RFC 2231 (`filename*`, continuations),
-/// or an RFC 2047 encoded word. See [`postio_model::mime::parameter_value`].
 fn decoded_parameter(list: &[(IString<'static>, IString<'static>)], key: &str) -> Option<String> {
     let pairs: Vec<(String, String)> = list
         .iter()
@@ -776,19 +658,8 @@ fn disposition_from(kind: &str) -> Disposition {
     }
 }
 
-/// Every UID that exists in `mailbox`, via `UID SEARCH ALL`.
-///
-/// The cheap answer to "what is actually here", and what stops a first sync
-/// walking a UID space that is mostly gaps. See
-/// [`MailBackend::existing_uids`](crate::backend::MailBackend::existing_uids)
-/// for why that matters and #727 for what it cost.
-///
-/// `SEARCH` is in RFC 3501 — it is not an extension and there is no
-/// capability to check — but a server may still refuse a given one, and the
-/// caller treats any failure as "walk instead" rather than as a failed sync.
-/// Returning `Ok(None)` is therefore reserved for a server that answered and
-/// said nothing useful; a refusal comes back as `Err` and is downgraded one
-/// layer up, where the decision to fall back belongs.
+/// A server may refuse a given `SEARCH`; the caller treats any failure as "walk instead".
+/// `Ok(None)` is reserved for a server that answered with nothing useful (#727).
 pub async fn existing_uids(
     pool: &ConnectionPool,
     mailbox: &str,
@@ -809,13 +680,9 @@ pub async fn existing_uids(
         if cancel.is_cancelled() {
             return Err(BackendError::Cancelled);
         }
-        // Checked for what did not decode for the same reason `fetch_batch`
-        // is. `io-imap` drops an untagged response it cannot decode and
-        // completes the command `Ok` — so a `* SEARCH` line it could not
-        // parse does not fail the SEARCH, it silently removes every UID that
-        // line carried. An empty result is indistinguishable from an empty
-        // mailbox, which is how a 60,934 message Archive listed nothing at
-        // all and was believed.
+        // Checked for undecoded lines: io-imap drops an unparseable `* SEARCH` line and completes
+        // `Ok`, silently removing its UIDs; an empty result looks like an empty mailbox (a 60,934
+        // message Archive listed nothing).
         let found = session
             .search(
                 Vec1::from(SearchKey::All),
@@ -836,30 +703,11 @@ pub async fn existing_uids(
             });
         }
 
-        // **A listing short of `EXISTS` is a misread, not an answer.**
-        //
-        // Measured against iCloud: `UID SEARCH ALL` on a 60,934-message
-        // Archive came back with *nothing*, and on a 20,324-message Sent
-        // Messages likewise. Those mailboxes are not empty and the server did
-        // not say they were — the response was not read.
-        //
-        // Refusing rather than returning it is the point, and the reason is
-        // the connection rather than the data. `ImapSession` keeps one
-        // `Fragmentizer` for its whole life, so bytes a command leaves
-        // unconsumed stay there for the next command to parse as its own. A
-        // response this size that went unread leaves a great deal behind, and
-        // every later command on the connection reads it: `SELECT` answers
-        // carrying no `UIDVALIDITY`, or a `UIDVALIDITY` of 5 — which is not a
-        // generation any server issues, it is a leftover UID from this very
-        // listing. That is the shape #1538 recorded as "a server contradicting
-        // itself under load". The server is consistent; the stream is
-        // desynchronised.
-        //
-        // So this returns a transient error, which `ConnectionPool::execute`
-        // answers by discarding the connection — the desync dies with it. And
-        // `initial::existing_uids` already treats a refusal as the downgrade
-        // it is: walk the UID space, exactly as for a server with no usable
-        // `SEARCH`.
+        // A listing short of `EXISTS` is a misread, not an answer (iCloud returned nothing for a
+        // 60,934-message Archive). Refused as a transient error so `ConnectionPool::execute`
+        // discards the connection: `ImapSession` keeps one `Fragmentizer`, so unread bytes
+        // desynchronise every later command (#1538).
+        // `initial::existing_uids` treats the refusal as a downgrade and walks the UID space.
         if let Some(exists) = session.selected_exists(&mailbox)
             && listing_was_misread(found.len(), exists)
         {
@@ -977,11 +825,8 @@ mod tests {
 
     #[test]
     fn a_multipart_message_s_own_content_type_carries_the_wire_subtype() {
-        // The bug this covers: `flatten` used to discard `Multi`'s own
-        // `subtype` (`WireBodyStructure::Multi { bodies, .. }`), so every
-        // multipart message read back as `multipart/mixed` regardless of
-        // what the server actually sent -- wrong for `multipart/related`
-        // (inline images) and `multipart/alternative` alike.
+        // `flatten` used to discard `Multi`'s `subtype`, so every multipart read back as
+        // `multipart/mixed`.
         let alternative = WireBodyStructure::Multi {
             bodies: Vec1::try_from(vec![text_part(10), attachment_part("report.pdf", 20)])
                 .expect("at least one child"),
@@ -1040,9 +885,6 @@ mod tests {
         assert_eq!(structure.parts()[0].filename(), Some("ignored.pdf"));
     }
 
-    /// `attachment_part`, with its disposition parameters and `name`
-    /// replaced by `disposition` and `name` verbatim, as a server hands
-    /// them over: undecoded.
     fn part_named(disposition: &[(&str, &str)], name: Option<&str>) -> WireBodyStructure<'static> {
         let mut part = attachment_part("placeholder.pdf", 10);
         if let WireBodyStructure::Single {
@@ -1080,9 +922,8 @@ mod tests {
 
     #[test]
     fn an_rfc_2231_filename_is_decoded_rather_than_lost() {
-        // #1686: `filename*` is how a non-ASCII name travels, BODYSTRUCTURE
-        // hands it over undecoded, and looking only for `filename` left the
-        // part nameless -- so a refusal about it could only say "attachment".
+        // `filename*` is how a non-ASCII name travels, undecoded; looking only for `filename` left
+        // the part nameless (#1686).
         let structure = body_structure_from_wire(&part_named(
             &[("filename*", "UTF-8''Rechnung%20M%C3%A4rz.pdf")],
             None,
@@ -1108,8 +949,7 @@ mod tests {
 
     #[test]
     fn an_encoded_word_name_is_decoded() {
-        // Not what RFC 2047 allows in a parameter, and what a great many
-        // clients send anyway.
+        // Not what RFC 2047 allows in a parameter, but many clients send it.
         let structure = body_structure_from_wire(&part_named(
             &[],
             Some("=?UTF-8?B?UHLDpHNlbnRhdGlvbi5wZGY=?="),
@@ -1194,8 +1034,6 @@ mod tests {
 
     #[test]
     fn an_encoded_word_display_name_decodes_rather_than_reaching_the_row_raw() {
-        // Base64 UTF-8 for "Café" — a display name a sender's client folded
-        // into RFC 2047 rather than sending as raw UTF-8.
         let address = WireAddress {
             name: NString::try_from("=?UTF-8?B?Q2Fmw6k=?=").unwrap(),
             adl: NString::NIL,
@@ -1254,20 +1092,13 @@ mod tests {
     }
 }
 
-/// What a `UID SEARCH ALL` answer has to look like to be believed.
 #[cfg(test)]
 mod a_short_listing_is_a_misread {
     use super::listing_was_misread;
 
-    /// The measurement this exists for.
-    ///
-    /// iCloud answered `UID SEARCH ALL` with nothing at all for an Archive of
-    /// 60,934 messages and a Sent Messages of 20,324. Believing it made the
-    /// mailboxes look empty; worse, the unread response stayed in the
-    /// session's `Fragmentizer` and the next command on that connection
-    /// parsed it — which is where `SELECT` answers carrying no `UIDVALIDITY`,
-    /// and a `UIDVALIDITY` of 5, came from. Five is not a generation any
-    /// server issues. It is a UID from the listing that was never read.
+    /// iCloud answered `UID SEARCH ALL` with nothing for a 60,934-message Archive; the unread
+    /// response then corrupted later commands on the connection (`SELECT` with a `UIDVALIDITY` of
+    /// 5).
     #[test]
     fn a_listing_short_of_exists_is_refused() {
         assert!(listing_was_misread(0, 60_934), "the Archive, as measured");
@@ -1277,13 +1108,8 @@ mod a_short_listing_is_a_misread {
         assert!(listing_was_misread(172, 173), "one short is still short");
     }
 
-    /// The control, and the half that keeps this from being harmful.
-    ///
-    /// Refusing costs the connection, so a rule that fired on a healthy
-    /// answer would churn connections on every busy mailbox. An exact count
-    /// is the ordinary case; a longer one is mail that arrived between the
-    /// `SELECT` and the `SEARCH`, or a selection cache whose count went
-    /// stale — neither is evidence of anything.
+    /// The control: refusing costs the connection, so a rule firing on a healthy answer would churn
+    /// connections.
     #[test]
     fn a_listing_that_covers_exists_is_believed() {
         assert!(!listing_was_misread(173, 173), "exactly right");

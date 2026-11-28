@@ -1,25 +1,18 @@
 #!/usr/bin/env bash
-# Run tests on a display of their own, so GTK stops throwing windows at you.
-#
-# The GTK suites present real windows, and on a live GNOME session every one
-# of them flashes onto your desktop, steals focus mid-keystroke, and leaves
-# you unable to use the machine while the suite runs.
-#
-# The fix is a second compositor, not a second machine. mutter --headless is
-# already installed here (it is GNOME's own), so this costs no new dependency
-# and -- unlike Xvfb, which would run the app under XWayland -- the tests keep
-# running on Wayland against the same compositor the application targets. A
-# test that passes here passes for the same reasons it passes in production.
+# Run tests on a display of their own, so GTK stops throwing windows at you: a second compositor
+# (`mutter --headless`, already installed), on Wayland like production, unlike Xvfb.
 #
 # Usage:
 #   scripts/test-headless.sh cargo test -p postio-widgets
 #   scripts/test-headless.sh cargo test --workspace --no-fail-fast
 #   scripts/test-headless.sh --stop        # shut the compositor down
 #   scripts/test-headless.sh --status
+#   scripts/test-headless.sh --own <command...>   # a compositor that ends with <command>
+#   scripts/test-headless.sh --sweep       # stop the own compositors whose runner is gone
 #
-# The compositor is started on demand and left running, because starting one
-# costs about a second and every later invocation reuses it. --stop when you
-# are done for the day; nothing breaks if you never do.
+# The shared compositor is started on demand and left running; --stop when done. An own one, for a
+# runner named by its pid (storyboards.sh, the determinism case), ends with it: each leaked one holds
+# an inotify instance, and enough of them fail every file-watching test with EMFILE (#2248).
 set -euo pipefail
 
 DISPLAY_NAME="${POSTIO_TEST_DISPLAY:-postio-headless}"
@@ -29,62 +22,81 @@ GEOMETRY="${POSTIO_TEST_GEOMETRY:-1280x800}"
 
 running() { [ -S "$SOCKET" ]; }
 
+# Only `postio-storyboard-<pid>[-<n>]` and `postio-determinism-<pid>[-<n>]` on this runtime dir whose
+# <pid> is gone: `postio-headless*` belongs to the suites. Asked of mutter's own argv and environment,
+# not `pkill -f`, which also matches any shell that mentions the name.
+sweep() {
+    local pid arg name owner
+    for pid in $(pgrep -u "$(id -u)" -x mutter || true); do
+        tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null \
+            | grep -qxF "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR" || continue
+        for arg in $(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null); do
+            [[ "$arg" =~ ^--wayland-display=(postio-(storyboard|determinism)-([0-9]+)(-[0-9]+)?)$ ]] \
+                || continue
+            owner="${BASH_REMATCH[3]}"
+            [ -d "/proc/$owner" ] || kill -TERM "$pid" 2>/dev/null || true
+        done
+    done
+    for name in "$XDG_RUNTIME_DIR"/postio-storyboard-* "$XDG_RUNTIME_DIR"/postio-determinism-*; do
+        [[ "$(basename "$name")" =~ ^postio-(storyboard|determinism)-([0-9]+) ]] || continue
+        [ -d "/proc/${BASH_REMATCH[2]}" ] || rm -f "$name"
+    done
+}
+
+OWN=0
 case "${1:-}" in
     --stop)
         pkill -f "mutter --headless --wayland-display=$DISPLAY_NAME" 2>/dev/null \
             && echo "stopped the headless compositor" \
             || echo "no headless compositor was running"
-        # And each nextest slot's own (#2027): the pattern above matches them
-        # by prefix, and their sockets would otherwise outlive them.
         rm -f "$SOCKET" "$SOCKET"-[0-9]*
-        # And the runner's "do not bother trying" marker. --stop is what
-        # someone reaches for when the compositor is wedged, so it is the one
-        # command that must leave nothing behind telling the next run to skip
-        # starting a new one.
+        # And the runner's "do not bother trying" marker: --stop is what someone runs when the
+        # compositor is wedged, so it must leave nothing telling the next run to skip.
         rm -f "$XDG_RUNTIME_DIR/$DISPLAY_NAME.unavailable" \
             "$XDG_RUNTIME_DIR/$DISPLAY_NAME"-[0-9]*.unavailable
         exit 0 ;;
     --status)
         running && echo "up: $SOCKET" || echo "down"
         exit 0 ;;
-    "") echo "usage: scripts/test-headless.sh <command...>" >&2; exit 2 ;;
+    --sweep) sweep; exit 0 ;;
+    --own) OWN=1; shift ;;
 esac
+[ $# -gt 0 ] || { echo "usage: scripts/test-headless.sh [--own] <command...>" >&2; exit 2; }
 
 if ! running; then
     command -v mutter >/dev/null || {
         echo "mutter is not installed; it normally ships with GNOME." >&2
         echo "  sudo dnf install mutter" >&2
-        # Not Xvfb. Postio is a Wayland application and X11 is not a
-        # supported configuration (maintainer, 2026-09-02), so a suite that
-        # passes under XWayland has proved something we do not ship. See
-        # docs/archive/engineering-notes.md.
+        # Not Xvfb: X11 is not a supported configuration, so a suite passing under XWayland proves
+        # something we do not ship.
         exit 1
     }
-    # setsid so the compositor is not in this shell's process group and
-    # survives the Ctrl-C that interrupts a test run.
-    # --no-x11: as headless-runner.sh, no Xwayland to run out of X
-    # display lock files for.
-    setsid mutter --headless --no-x11 --wayland-display="$DISPLAY_NAME" \
-        --virtual-monitor "$GEOMETRY" >"$LOG" 2>&1 < /dev/null &
+    if [ "$OWN" = 1 ]; then
+        sweep
+        # Its parent is this shell, which execs into <command> below, so the kernel signals it when
+        # <command> ends however it ends, SIGKILL included; a trap cannot see that.
+        setpriv --pdeathsig TERM mutter --headless --no-x11 --wayland-display="$DISPLAY_NAME" \
+            --virtual-monitor "$GEOMETRY" >"$LOG" 2>&1 < /dev/null &
+    else
+        # setsid so the compositor survives the Ctrl-C that interrupts a test run; --no-x11 as in
+        # headless-runner.sh.
+        setsid mutter --headless --no-x11 --wayland-display="$DISPLAY_NAME" \
+            --virtual-monitor "$GEOMETRY" >"$LOG" 2>&1 < /dev/null &
+    fi
     for _ in $(seq 1 40); do running && break; sleep 0.25; done
     running || { echo "the headless compositor did not come up; see $LOG" >&2; exit 1; }
     echo "started a headless compositor on wayland-display '$DISPLAY_NAME' ($GEOMETRY)"
 fi
 
-# GDK_BACKEND pins Wayland so a stray DISPLAY cannot pull the tests back onto
-# the real session through XWayland -- which would put every window back on
-# your desktop while looking like it had worked.
+# GDK_BACKEND pins Wayland so a stray DISPLAY cannot pull the tests back onto the real session
+# through XWayland.
 export WAYLAND_DISPLAY="$DISPLAY_NAME"
 export GDK_BACKEND=wayland
 unset DISPLAY
 export GTK_A11Y="${GTK_A11Y:-none}"    # quiets an at-spi warning with no bus
 
-# rust-toolchain.toml pins the compiler; RUSTUP_TOOLCHAIN in the environment
-# beats it (this workstation's mise config sets it). A warning in a gate log
-# is weaker than the pin was supposed to give, and this wrapper fronts every
-# `cargo test` invocation a session runs, so it is where the guarantee lives:
-# whatever the shell exports, what runs here is what rust-toolchain.toml
-# names. See docs/archive/engineering-notes.md and issue #112.
+# RUSTUP_TOOLCHAIN in the environment beats rust-toolchain.toml; this wrapper fronts every `cargo
+# test` a session runs, so the guarantee lives here (#112).
 unset RUSTUP_TOOLCHAIN
 
 exec "$@"

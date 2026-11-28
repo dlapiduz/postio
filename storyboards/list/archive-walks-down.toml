@@ -34,4 +34,4 @@ expect  = "A second archive works on the row that took the first one's place."
 [[step]]
 command = "undo"
 check   = { keyboard.region = "list", cursor.index = { same_as = "second" }, notice.undo = false }
-expect  = "The archived rows come back in their place, the cursor is on the first of them, and the list has not scrolled. The toast says it was undone and offers nothing more to undo."
+expect  = "Only the last archive comes back, in its place under the cursor, and the list has not scrolled. The first archive stays archived. The toast says it was undone and offers nothing more to undo."

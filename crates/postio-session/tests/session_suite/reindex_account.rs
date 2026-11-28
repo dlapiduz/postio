@@ -1,12 +1,3 @@
-//! The account-detail "Rebuild search index" action (#981).
-//!
-//! The maintainer's own decision on #981 names three properties an
-//! implementation has to keep: it is a pure local rebuild, reachable
-//! per-account, and it reports progress as it goes rather than running
-//! silently. These are the pass's own promises; `postio-index`'s tests
-//! already hold the row-level ones (a cleared index is a candidate again,
-//! and only for the account that was cleared).
-
 use postio_model::{BodyState, Message};
 use postio_search::facets::Scope;
 use postio_storage::Connection;
@@ -59,10 +50,6 @@ async fn a_rebuild_makes_mail_findable_again_and_reports_progress_as_it_goes() {
     let mut message = Message::new(account.id, inbox, chrono::Utc::now());
     message.subject = Some("Quarterly engine notes".to_string());
     messages.create(&mut message).await.expect("create");
-    // A real stored body -- not just a role played by `index_body_of` --
-    // because `reindex_account`'s own body pass reads it back the ordinary
-    // way (`MessageRepository::body`) to write it again, and a message
-    // with no stored body re-indexes to nothing.
     messages
         .set_body(
             message.id,

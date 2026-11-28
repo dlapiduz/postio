@@ -1,11 +1,3 @@
-//! Hostile mail in the reader (#1770): what the header and the notice band
-//! show for a message built to look like something it is not.
-//!
-//! Both halves read the message the way every frontend does, through the
-//! model's parser, and assert on the strings the reader draws, because the
-//! defect lived between the layers: the parser reported a subject with a
-//! line break in it, and each frontend set it in a wrapping label.
-
 use chrono::{Local, TimeZone, Utc};
 use postio_model::mime::{self, ParsedMessage};
 use postio_model::promoted::PromotedHeaders;
@@ -74,8 +66,6 @@ fn hostile_mail_that_is_not_list_mail_is_offered_no_unsubscribe_band() {
              mail least worth trusting"
         );
     }
-    // The positive control: the same rule does offer the band on real list
-    // mail, so the `None` above is the rule speaking, not a broken fixture.
     let list = parse("html-newsletter");
     let offered = PromotedHeaders::from_headers(&list.headers).unsubscribe_offered;
     assert!(

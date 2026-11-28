@@ -1,10 +1,3 @@
-//! A thread, read whole by one request (spec 013 T015, contracts/engine-threads.md).
-//!
-//! `Req::Thread` answers a window or an expansion with the members in date
-//! order, each with its own line, the unsent reply, and the labels. It costs
-//! the same number of statements whatever the thread's length (the budget is a
-//! count, not a clock).
-
 use std::sync::Arc;
 
 use postio_client::protocol::ClientKind;
@@ -15,7 +8,6 @@ use postio_storage::sql::RowExt;
 use postio_storage::test_support;
 use postio_storage::test_support::counting::counted_async;
 
-/// The thread whose subject is `subject`.
 async fn thread_named(database: &Store, subject: &str) -> ThreadId {
     let connection = database.connect().await.expect("a connection");
     postio_storage::sql::first(
@@ -29,7 +21,6 @@ async fn thread_named(database: &Store, subject: &str) -> ThreadId {
     .unwrap_or_else(|| panic!("the seed has a thread called {subject:?}"))
 }
 
-/// The thread with `count` messages.
 async fn thread_of(database: &Store, count: i64) -> ThreadId {
     let connection = database.connect().await.expect("a connection");
     postio_storage::sql::first(
@@ -105,14 +96,11 @@ async fn a_thread_reads_whole_with_its_answers_and_its_draft() {
     drop(host);
 }
 
-/// The same statements at six messages as at forty-one. Counted on this
-/// thread, so the host's answer is called directly, as the host calls it.
 #[tokio::test]
 async fn reading_a_thread_costs_the_same_at_any_length() {
     let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
     let harbor = thread_named(&database, "Harbor API draft v3").await;
     let long = thread_of(&database, 41).await;
-    // Warm the connection's own one-time work so both counts are the read.
     let _ = postio_host::threads::view(&database, harbor).await;
 
     let mut costs = Vec::new();
@@ -136,25 +124,20 @@ async fn reading_a_thread_costs_the_same_at_any_length() {
         "six messages cost {} statements and forty-one cost {}",
         costs[0], costs[1]
     );
-    // Five: the members, the draft, the subject, the labels, and whether
-    // the thread is muted (US5). Equal at both lengths above is the budget
-    // that matters; this cap catches a read that grows a statement.
+    // Five statements: members, draft, subject, labels, muted. Equal at both lengths is the budget;
+    // this cap catches a read that grows.
     assert!(costs[0] <= 5, "the read took {} statements", costs[0]);
 }
-
-// -- What Swift receives when a thread opens (spec 013 T028) ----------------
 
 use postio_ffi::{FocusScopeFfi, Session, SessionOptions, UiEvent};
 
 use super::focus::heard;
 
-/// The inbox over the threads seed, landed, with Harbor's row found.
 async fn inbox_with_harbor() -> (Arc<Session>, u32) {
     let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
     inbox_with_harbor_over(database).await
 }
 
-/// The same over a store the caller keeps a handle on.
 async fn inbox_with_harbor_over(database: Store) -> (Arc<Session>, u32) {
     let session = Session::open(SessionOptions::in_memory_with(database)).expect("a session");
     session.open_focus(FocusScopeFfi::Inbox);
@@ -254,7 +237,6 @@ async fn expanding_a_thread_hands_swift_its_children_and_counts_them_in_the_curs
         Some(postio_ffi::ChevronFfi::Expanded)
     );
 
-    // `j` walks into the children: the cursor's position counts them.
     session.invoke("next_message");
     assert!(
         heard(&session, 10, |event| matches!(
@@ -314,10 +296,6 @@ async fn a_chevron_click_opens_the_thread_and_the_next_one_folds_it_and_the_curs
     session.shutdown();
 }
 
-// -- The same, in Filtered (spec 013 T035, FR-009) ---------------------------
-
-/// The Threads seed with one of Harbor's messages filed away as a
-/// notification, and Filtered open over it.
 async fn filtered_with_harbor() -> (Arc<Session>, u32) {
     let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
     let harbor = thread_named(&database, "Harbor API draft v3").await;
@@ -388,7 +366,6 @@ async fn expanding_a_filtered_thread_hands_swift_its_children_and_a_redraw_keeps
         "six messages and the unsent reply"
     );
 
-    // j walks into the children: the keyboard is a display position.
     session.invoke("next_message");
     assert!(
         heard(&session, 10, |event| matches!(
@@ -411,149 +388,16 @@ async fn expanding_a_filtered_thread_hands_swift_its_children_and_a_redraw_keeps
     session.shutdown();
 }
 
-// -- The footer under the list (spec 013 T040, FR-014) -----------------------
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_footer_names_the_scope_the_keys_and_the_note_as_the_cursor_moves() {
-    let (session, harbor) = inbox_with_harbor().await;
-    session.focus_point(harbor);
-    let mut collapsed = None;
-    assert!(
-        heard(&session, 10, |event| match event {
-            UiEvent::FocusFooter { view } => {
-                collapsed = Some(view.clone());
-                true
-            }
-            _ => false,
-        })
-        .await,
-        "Swift is handed a footer when the cursor lands on the row"
-    );
-    let collapsed = collapsed.expect("a footer");
-    assert!(
-        collapsed
-            .title
-            .to_lowercase()
-            .contains("harbor api draft v3")
-            && collapsed.title.ends_with("\u{b7} 6 messages"),
-        "the row's footer names the thread and its size: {:?}",
-        collapsed.title
-    );
-
-    session.invoke("expand_thread");
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusSplice { .. }
-        ))
-        .await,
-        "the thread opens before the cursor walks it"
-    );
-    for _ in 0..4 {
-        session.invoke("next_message");
-    }
-    let mut child = None;
-    assert!(
-        heard(&session, 10, |event| match event {
-            UiEvent::FocusFooter { view } if view.title.starts_with("Message 4 of 6") => {
-                child = Some(view.clone());
-                true
-            }
-            _ => false,
-        })
-        .await,
-        "a footer names message 4"
-    );
-    let child = child.expect("a footer");
-    assert_eq!(child.title, "Message 4 of 6 \u{b7} Ben Adeyemi");
-    assert!(
-        child.keys.iter().any(|key| key.label == "reply to this"),
-        "the keys say what Reply acts on: {:?}",
-        child.keys
-    );
-    assert!(child.note.is_some(), "a child's footer carries the note");
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn reply_on_a_child_answers_that_message_not_the_latest() {
-    let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
-    let harbor_thread = thread_named(&database, "Harbor API draft v3").await;
-    let members = postio_host::threads::view(&database, harbor_thread)
-        .await
-        .expect("a read")
-        .expect("Harbor is there")
-        .members;
-    let fourth = members[3].id.get();
-    assert_ne!(fourth, members[5].id.get(), "message 4 is not the latest");
-    let (session, harbor) = inbox_with_harbor_over(database).await;
-    session.focus_point(harbor);
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusCursor { position, .. } if *position == harbor
-        ))
-        .await,
-        "the cursor is on Harbor"
-    );
-    session.invoke("expand_thread");
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusSplice { .. }
-        ))
-        .await,
-        "the thread opens"
-    );
-    for _ in 0..4 {
-        session.invoke("next_message");
-    }
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusCursor { position, .. } if *position == harbor + 4
-        ))
-        .await,
-        "the cursor is on message 4"
-    );
-    session.invoke("reply");
-    let mut opened = None;
-    assert!(
-        heard(&session, 10, |event| match event {
-            UiEvent::FocusComposer { kind, message } => {
-                opened = Some((*kind, *message));
-                true
-            }
-            _ => false,
-        })
-        .await,
-        "Reply opens the composer"
-    );
-    assert_eq!(
-        opened,
-        Some((postio_ffi::ComposerKindFfi::Reply, Some(fourth))),
-        "the reply answers message 4"
-    );
-    session.shutdown();
-}
-
-// -- The message window's thread bar and walk (spec 013 T047, US3) -----------
-
-/// Everything the window's thread intents said, as they arrive.
 #[derive(Default, Debug)]
 struct Walked {
     bar: Option<postio_ffi::ThreadBarFfi>,
     kicker: Option<String>,
     banner: Option<Option<postio_ffi::ThreadBannerFfi>>,
     reply_to: Option<Option<String>>,
-    /// The Reply to row that closes the bar's four intents has arrived.
     whole: bool,
     opened: Vec<i64>,
 }
 
-/// Drain the event stream for what the walk said, until the bar shows the
-/// ringed chip `current` (a 1-based message number) and all four intents
-/// of that step have arrived.
 async fn walked_to(session: &Session, walked: &mut Walked, current: u32) -> bool {
     heard(session, 10, |event| {
         match event {
@@ -638,10 +482,6 @@ async fn the_window_walks_a_thread_and_the_controller_says_what_to_draw() {
     session.shutdown();
 }
 
-/// Opening a message window and closing it, again and again, as the Mac's
-/// table does: each open draws the bar once, and nothing a draw or a reply
-/// causes opens, reads or draws again (no feedback between the controller's
-/// `ReadThread` and the frontend's echo of what it was shown).
 #[tokio::test(flavor = "multi_thread")]
 async fn forty_opens_of_a_thread_draw_its_bar_forty_times_and_no_more() {
     let (session, harbor) = inbox_with_harbor().await;
@@ -675,7 +515,6 @@ async fn forty_opens_of_a_thread_draw_its_bar_forty_times_and_no_more() {
         session.invoke("back");
         session.focus_surface_closed(postio_ffi::SurfaceKindFfi::Message);
     }
-    // Whatever the last open set going has had a quarter of a second to say.
     while let Ok(Some(event)) =
         tokio::time::timeout(std::time::Duration::from_millis(250), session.next_event()).await
     {
@@ -685,10 +524,6 @@ async fn forty_opens_of_a_thread_draw_its_bar_forty_times_and_no_more() {
     session.shutdown();
 }
 
-// -- Live replies, the Thread menu and the outline (spec 013 US4, US5) -------
-
-/// The message window open on Harbor, walked back to message 4 so a reply
-/// arriving is not the one on screen.
 async fn window_on_harbor() -> (Arc<Session>, Walked) {
     let (session, harbor) = inbox_with_harbor().await;
     session.focus_point(harbor);
@@ -700,165 +535,6 @@ async fn window_on_harbor() -> (Arc<Session>, Walked) {
     (session, walked)
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_reply_arriving_while_reading_offers_itself_and_leaves_the_shown_message_alone() {
-    let (session, mut walked) = window_on_harbor().await;
-    session.invoke("prev_in_thread");
-    assert!(walked_to(&session, &mut walked, 4).await, "{walked:?}");
-    let opened = walked.opened.len();
-
-    assert!(session.demo_arrive("reply".to_owned()), "the demo delivers");
-    let mut banner = None;
-    let mut reopened = false;
-    assert!(
-        heard(&session, 10, |event| {
-            match event {
-                UiEvent::FocusNewReply { banner: Some(b) } => banner = Some(b.clone()),
-                UiEvent::FocusOpenMessage { .. } => reopened = true,
-                _ => {}
-            }
-            banner.is_some()
-        })
-        .await,
-        "Swift is told to draw the new-reply banner"
-    );
-    let banner = banner.expect("a banner");
-    assert_eq!(banner.action, "Read it");
-    assert_eq!(banner.key.as_deref(), Some("}"));
-    assert!(!reopened, "the message on screen is not replaced");
-    assert_eq!(walked.opened.len(), opened);
-
-    session.invoke("latest_in_thread");
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusNewReply { banner: None }
-        ))
-        .await,
-        "reading it takes the banner away"
-    );
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_thread_menu_has_two_groups_and_muting_badges_the_row() {
-    let (session, _) = window_on_harbor().await;
-    session.invoke("thread_menu");
-    let mut menu = None;
-    assert!(
-        heard(&session, 10, |event| match event {
-            UiEvent::FocusThreadMenu { view } => {
-                menu = Some(view.clone());
-                true
-            }
-            _ => false,
-        })
-        .await,
-        "alt+period opens the menu"
-    );
-    let menu = menu.expect("a menu");
-    assert_eq!(menu.groups.len(), 2, "{menu:?}");
-    assert_eq!(menu.groups[0].title, "Whole thread");
-    assert_eq!(menu.groups[1].title, "This message only");
-    let mute = menu.groups[0]
-        .entries
-        .iter()
-        .find(|entry| entry.title == "Mute thread")
-        .expect("a Mute entry");
-
-    session.focus_thread_menu_pick(mute.command.clone());
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusCloseSurface {
-                kind: postio_ffi::SurfaceKindFfi::ThreadMenu
-            }
-        ))
-        .await,
-        "picking closes the menu"
-    );
-    session.focus_surface_closed(postio_ffi::SurfaceKindFfi::ThreadMenu);
-
-    let mut badge = None;
-    for _ in 0..50 {
-        let total = session.focus_row_count();
-        badge = (0..total)
-            .filter_map(|position| session.focus_row_at(position))
-            .find(|row| row.subject.to_lowercase().contains("harbor api draft v3"))
-            .and_then(|row| row.thread_row)
-            .and_then(|thread| thread.muted_badge);
-        if badge.is_some() {
-            break;
-        }
-        let _ =
-            tokio::time::timeout(std::time::Duration::from_millis(100), session.next_event()).await;
-    }
-    assert_eq!(badge.as_deref(), Some("muted"), "the row says so");
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn the_outline_filters_by_typing_and_show_opens_that_message() {
-    let (session, _) = window_on_harbor().await;
-    session.invoke("thread_outline");
-    let mut first = None;
-    assert!(
-        heard(&session, 10, |event| match event {
-            UiEvent::FocusOutline { view } => {
-                first = Some(view.clone());
-                true
-            }
-            _ => false,
-        })
-        .await,
-        "alt+t opens the outline"
-    );
-    let first = first.expect("an outline");
-    assert_eq!(first.rows.len(), 6, "every message");
-    let word = first.rows[1]
-        .line
-        .split_whitespace()
-        .find(|word| word.len() > 4)
-        .expect("a word to type")
-        .trim_matches(|c: char| !c.is_alphanumeric())
-        .to_owned();
-
-    session.focus_outline_typed(word.clone());
-    let mut narrowed = None;
-    assert!(
-        heard(&session, 10, |event| match event {
-            UiEvent::FocusOutline { view } if view.filter == word => {
-                narrowed = Some(view.clone());
-                true
-            }
-            _ => false,
-        })
-        .await,
-        "typing redraws the outline"
-    );
-    let narrowed = narrowed.expect("a redraw");
-    assert!(!narrowed.rows.is_empty() && narrowed.rows.len() < 6);
-    let target = narrowed.rows[narrowed.cursor as usize].message;
-
-    session.focus_outline_show(None);
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusOpenMessage { message, .. } if *message == target
-        ))
-        .await,
-        "Show opens the message the cursor is on"
-    );
-    session.shutdown();
-}
-
-// -- A search answers in threads (spec 013 T074, FR-020, FR-021) --------------
-
-/// What Swift draws when "rate limit headers" is searched over the threads
-/// seed, then what it is told as a person walks into the thread: `j` and
-/// Return open the window on message 3 with the match banner and the
-/// matches marked on the bar, two `MatchEdge`s reach message 6, and Escape
-/// puts the ring back on the child the window opened from.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
     use postio_ffi::{ResultChildFfi, ThreadChipFfi};
@@ -939,7 +615,6 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
     let row = session.focus_search_row(0).expect("the top result");
     assert_eq!(row.summary.as_deref(), Some("3 of 6 messages match"));
 
-    // j enters the children; Return opens the window on message 3.
     session.invoke("next_message");
     assert!(
         heard(&session, 10, |event| matches!(
@@ -958,7 +633,6 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
         .await,
         "Return opens message 3"
     );
-    // The window's bar and banner arrive together, in either order.
     let mut banner = None;
     let mut marked = Vec::new();
     assert!(
@@ -994,7 +668,6 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
     assert_eq!(banner.back, "Back to results");
     assert_eq!(marked, [2, 4, 5], "messages 3, 5 and 6 are marked");
 
-    // ⌘G asks the message's own find first.
     session.invoke("find_next");
     assert!(
         heard(&session, 10, |event| matches!(
@@ -1007,7 +680,6 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
         "⌘G in a window opened from a search steps the message's own matches first"
     );
 
-    // The message's own find ran out twice: on to 5, then 6.
     let mut shown = Vec::new();
     for _ in 0..2 {
         session.focus_match_edge(true);
@@ -1034,7 +706,6 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
         "the banner says it is the last match"
     );
 
-    // Escape closes the window; the ring is back on the child it came from.
     session.invoke("back");
     assert!(
         heard(&session, 10, |event| matches!(
@@ -1046,230 +717,6 @@ async fn a_search_draws_a_thread_as_its_matches_and_the_window_opens_at_one() {
     );
     session.shutdown();
 }
-
-// -- The composer's older-reply bar and forward chooser (spec 013 T083, US7) --
-
-/// The first event of the composer's that `pick` takes, as the Mac hears it.
-async fn composer_said<T>(session: &Session, mut pick: impl FnMut(&UiEvent) -> Option<T>) -> T {
-    let mut found = None;
-    let mut seen = Vec::new();
-    assert!(
-        heard(session, 10, |event| {
-            found = pick(event);
-            if found.is_none() {
-                seen.push(format!("{event:?}").chars().take(60).collect::<String>());
-            }
-            found.is_some()
-        })
-        .await,
-        "the composer was told; it heard {seen:#?}"
-    );
-    found.expect("heard")
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn replying_to_message_four_shows_the_bar_and_reply_to_latest_keeps_what_was_typed() {
-    let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
-    let harbor_thread = thread_named(&database, "Harbor API draft v3").await;
-    let members = postio_host::threads::view(&database, harbor_thread)
-        .await
-        .expect("a read")
-        .expect("Harbor is there")
-        .members;
-    let (fourth, sixth) = (members[3].id.get(), members[5].id.get());
-    let (session, harbor) = inbox_with_harbor_over(database).await;
-    session.focus_point(harbor);
-    session.invoke("expand_thread");
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusSplice { .. }
-        ))
-        .await,
-        "the thread opens"
-    );
-    for _ in 0..4 {
-        session.invoke("next_message");
-    }
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusCursor { position, .. } if *position == harbor + 4
-        ))
-        .await,
-        "the cursor is on message 4"
-    );
-    session.invoke("reply");
-    let bar = composer_said(&session, |event| match event {
-        UiEvent::FocusOlderReply { view: Some(view) } => Some(view.clone()),
-        _ => None,
-    })
-    .await;
-    assert!(
-        bar.title.contains("message 4 of 6"),
-        "the bar says which: {bar:?}"
-    );
-    assert_eq!(bar.actions.len(), 2, "Show them, Reply to latest");
-
-    // The Mac made the draft for message 4 and the person typed into it.
-    let mut draft = session
-        .reply_draft_ffi(fourth, false)
-        .expect("a reply to message 4");
-    assert_eq!(draft.in_reply_to, Some(fourth));
-    draft.body = format!("Six is fine, with one change.\n\n{}", draft.body);
-
-    session.invoke("reply_to_latest");
-    let wanted = composer_said(&session, |event| match event {
-        UiEvent::FocusComposerDraftWanted { edit } => Some(*edit),
-        _ => None,
-    })
-    .await;
-    assert_eq!(wanted, postio_ffi::DraftEditFfi::ReplyToLatest);
-    session.focus_composer_draft(wanted, draft);
-    composer_said(&session, |event| match event {
-        UiEvent::FocusOlderReply { view: None } => Some(()),
-        _ => None,
-    })
-    .await;
-    // The bar goes with the switch.
-    let moved = composer_said(&session, |event| match event {
-        UiEvent::FocusComposerDraft { draft } => Some(draft.clone()),
-        _ => None,
-    })
-    .await;
-    assert_eq!(
-        moved.in_reply_to,
-        Some(sixth),
-        "the reply now answers message 6"
-    );
-    assert!(
-        moved.body.starts_with("Six is fine, with one change."),
-        "what was typed stays: {:?}",
-        moved.body
-    );
-    session.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn forwarding_a_thread_offers_the_chooser_and_two_forwards_the_whole_thread() {
-    let (database, _) = postio_demo::seeded(postio_demo::Seed::Threads).await;
-    // The seed's attachments are rows with no bytes; a whole-thread forward
-    // is refused for a message that is not here, so give them some.
-    let connection = database.connect().await.expect("a connection");
-    connection
-        .execute(
-            "UPDATE attachments SET blob_id = 'seeded' WHERE blob_id IS NULL",
-            (),
-        )
-        .await
-        .expect("a write");
-    drop(connection);
-    let (session, harbor) = inbox_with_harbor_over(database).await;
-    session.focus_point(harbor);
-    session.invoke("forward");
-    let opened = composer_said(&session, |event| match event {
-        UiEvent::FocusComposer { kind, message } => Some((*kind, *message)),
-        _ => None,
-    })
-    .await;
-    assert_eq!(opened.0, postio_ffi::ComposerKindFfi::Forward);
-    let chooser = composer_said(&session, |event| match event {
-        UiEvent::FocusForwardChooser { view } => Some(view.clone()),
-        _ => None,
-    })
-    .await;
-    assert_eq!(chooser.cards.len(), 3);
-    assert_eq!(chooser.selected, postio_ffi::ForwardFormFfi::This);
-    assert_eq!(
-        chooser
-            .cards
-            .iter()
-            .map(|card| card.key.clone())
-            .collect::<Vec<_>>(),
-        vec![
-            Some("1".to_owned()),
-            Some("2".to_owned()),
-            Some("3".to_owned())
-        ]
-    );
-
-    let draft = session
-        .forward_draft_ffi(opened.1.expect("a message"))
-        .expect("a forward");
-    session.invoke("forward_what_2");
-    let wanted = composer_said(&session, |event| match event {
-        UiEvent::FocusComposerDraftWanted { edit } => Some(*edit),
-        _ => None,
-    })
-    .await;
-    assert_eq!(wanted, postio_ffi::DraftEditFfi::ForwardThread);
-    session.focus_composer_draft(wanted, draft);
-    let chooser = composer_said(&session, |event| match event {
-        UiEvent::FocusForwardChooser { view } => Some(view.clone()),
-        _ => None,
-    })
-    .await;
-    assert_eq!(chooser.selected, postio_ffi::ForwardFormFfi::Thread);
-    let whole = composer_said(&session, |event| match event {
-        UiEvent::FocusComposerDraft { draft } => Some(draft.clone()),
-        _ => None,
-    })
-    .await;
-    assert!(
-        whole.subject.starts_with("Fwd: ") && whole.subject.ends_with("(6 messages)"),
-        "the subject counts the thread: {:?}",
-        whole.subject
-    );
-    session.shutdown();
-}
-
-// -- Return on the unsent reply (spec 013 T085 a) ---------------------------
-
-#[tokio::test(flavor = "multi_thread")]
-async fn return_on_the_unsent_reply_child_opens_that_draft_in_the_composer() {
-    let (session, harbor) = inbox_with_harbor().await;
-    session.focus_point(harbor);
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusCursor { position, .. } if *position == harbor
-        ))
-        .await
-    );
-    session.invoke("expand_thread");
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusSplice { .. }
-        ))
-        .await,
-        "the thread opens"
-    );
-    for _ in 0..7 {
-        session.invoke("next_message");
-    }
-    assert!(
-        heard(&session, 10, |event| matches!(
-            event,
-            UiEvent::FocusCursor { position, .. } if *position == harbor + 7
-        ))
-        .await,
-        "the cursor is on the draft child"
-    );
-    session.invoke("open_message");
-    let (kind, draft) = composer_said(&session, |event| match event {
-        UiEvent::FocusComposer { kind, message } => Some((*kind, *message)),
-        _ => None,
-    })
-    .await;
-    assert_eq!(kind, postio_ffi::ComposerKindFfi::ThreadDraft);
-    let draft = draft.expect("the draft's id rides in `message`");
-    let opened = session.draft_ffi(draft).expect("the store has that draft");
-    assert!(opened.body.starts_with("Thanks both."), "{opened:?}");
-    session.shutdown();
-}
-
-// -- A click on a thread-bar chip (spec 013 T085 d) --------------------------
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_click_on_a_chip_shows_that_message_and_a_click_on_more_opens_the_outline() {

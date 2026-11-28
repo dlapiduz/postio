@@ -1,15 +1,7 @@
-//! The message window's thread bar and its older-message banner (spec 013
-//! US3; `Design/focus-macos-threads` screen 03).
-//!
-//! The bar is 60 tall, under the action row: a label column ("Thread", and
-//! "6 · 2 new" under it), one 72 by 46 chip per message (an avatar over
-//! "Name · time", the current one ringed, an unread one dotted, a match
-//! marked), "... N more" for the ones that did not fit, and a Thread button
-//! at the right that opens the menu once the menu exists (spec 013 US5).
-//!
-//! The words are `postio_ui::thread_bar`'s, composed once for both apps; this
-//! draws them. The accent is reserved (FR-091), so the current chip is the
-//! selection's neutral ring and an unread one is dotted in the ink.
+//! The message window's thread bar and its older-message banner. The words are
+//! `postio_ui::thread_bar`'s; this draws them.
+//! The accent is reserved, so the current chip is the selection's neutral ring and an unread one is
+//! dotted in the ink.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,40 +12,28 @@ use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space;
 use postio_widgets::widgets::{Kind, Size};
 
-/// A chip's width and its gap to the next, in pixels: what a bar's room is
-/// counted in.
 const CHIP_WIDTH: i32 = 72;
 const CHIP_GAP: i32 = 8;
-/// What the label column, the Thread button and the padding take from the
-/// bar's width.
 const FIXED: i32 = 66 + 100 + 48;
 
-/// Told how many chips the bar has room for, whenever that changes.
 type RoomHandler = Rc<dyn Fn(u32)>;
 
-/// What a click on a chip asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChipClick {
-    /// The chip for this member, from zero.
     Message(u32),
-    /// The "... N more" chip, which stands for the members from this one.
     More(u32),
 }
 
 type ChipHandler = Rc<RefCell<Option<Rc<dyn Fn(ChipClick)>>>>;
 
-/// The bar.
 pub struct ThreadBar {
     root: gtk::Box,
     title: gtk::Label,
     count: gtk::Label,
     chips: gtk::Box,
     menu: gtk::Button,
-    /// The chip on screen, from zero.
     current: Cell<Option<u32>>,
-    /// How many chips are drawn.
     drawn: Cell<usize>,
-    /// Which chips a search matched, from zero.
     matched: RefCell<Vec<u32>>,
     room: Cell<u32>,
     on_room: RefCell<Option<RoomHandler>>,
@@ -62,10 +42,12 @@ pub struct ThreadBar {
 }
 
 impl ThreadBar {
-    /// An empty bar, drawn once a thread says it has chips.
     pub fn new() -> Rc<Self> {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         root.add_css_class("focus-thread-bar");
+        // Never the column's spare height: a child that expands (the "… N more" chip's words) would
+        // make the bar share it with the message, a tall band at a narrow window (#2202).
+        root.set_vexpand(false);
         root.set_visible(false);
         let title = gtk::Label::new(None);
         title.add_css_class("focus-thread-bar-title");
@@ -112,7 +94,6 @@ impl ThreadBar {
                 }
             }
         });
-        // Say how many chips fit when the bar's width changes.
         let weak = Rc::downgrade(&bar);
         bar.root.add_tick_callback(move |root, _| {
             if let Some(bar) = weak.upgrade() {
@@ -123,28 +104,22 @@ impl ThreadBar {
         bar
     }
 
-    /// The bar, to place under the action row.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// The Thread button: what the thread menu hangs from.
     pub fn menu_button(&self) -> &gtk::Button {
         &self.menu
     }
 
-    /// Run `handler` when the Thread button is pressed.
     pub fn connect_menu(&self, handler: impl Fn() + 'static) {
         self.on_menu.replace(Some(Rc::new(handler)));
     }
 
-    /// Run `handler` when a chip is clicked.
     pub fn connect_chip(&self, handler: impl Fn(ChipClick) + 'static) {
         self.on_chip.replace(Some(Rc::new(handler)));
     }
 
-    /// Run `handler` with how many chips fit, once the bar has a width and
-    /// whenever it changes.
     pub fn connect_room(&self, handler: impl Fn(u32) + 'static) {
         self.on_room.replace(Some(Rc::new(handler)));
         self.room.set(0);
@@ -164,7 +139,6 @@ impl ThreadBar {
         }
     }
 
-    /// Draw `view`; a thread of one message has no chips, so no bar.
     pub fn set(&self, view: &ThreadBarView) {
         self.title.set_text(&view.title);
         self.count.set_text(&view.count_line);
@@ -184,7 +158,6 @@ impl ThreadBar {
         self.root.set_visible(!view.chips.is_empty());
     }
 
-    /// No bar: nothing is shown, or a message of no thread.
     pub fn clear(&self) {
         self.set(&ThreadBarView {
             title: String::new(),
@@ -194,17 +167,14 @@ impl ThreadBar {
         });
     }
 
-    /// The chip on screen, from zero.
     pub fn current(&self) -> Option<u32> {
         self.current.get()
     }
 
-    /// The chips a search matched (the yellow square), from zero.
     pub fn matched(&self) -> Vec<u32> {
         self.matched.borrow().clone()
     }
 
-    /// How many chips are drawn.
     pub fn chip_count(&self) -> usize {
         self.drawn.get()
     }
@@ -257,7 +227,6 @@ impl ThreadBar {
                 }
                 if *matched {
                     self.matched.borrow_mut().push(*index);
-                    // The find highlight's yellow, as the design draws a match.
                     let mark = gtk::Label::new(None);
                     mark.set_markup(&format!(
                         "<span foreground=\"{}\">\u{25a0}</span>",
@@ -288,7 +257,6 @@ impl ThreadBar {
     }
 }
 
-/// The quiet banner on a message that is not the latest.
 pub struct OlderBanner {
     root: gtk::Box,
     text: gtk::Label,
@@ -297,12 +265,10 @@ pub struct OlderBanner {
 }
 
 impl OlderBanner {
-    /// A banner, hidden until there is something to say.
     pub fn new() -> Rc<Self> {
         Self::with_class("focus-older-banner")
     }
 
-    /// A banner of its own kind, styled by `class`.
     pub fn with_class(class: &str) -> Rc<Self> {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         root.add_css_class("focus-banner-bar");
@@ -336,17 +302,14 @@ impl OlderBanner {
         banner
     }
 
-    /// The banner, to place above the kicker.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Run `handler` when its button is pressed: show the latest message.
     pub fn connect_press(&self, handler: impl Fn() + 'static) {
         self.on_press.replace(Some(Rc::new(handler)));
     }
 
-    /// Draw `view`, or take the banner away.
     pub fn set(&self, view: Option<&BannerView>) {
         let Some(view) = view else {
             self.root.set_visible(false);
@@ -359,14 +322,11 @@ impl OlderBanner {
         self.root.set_visible(true);
     }
 
-    /// What it says, while it is up.
     pub fn said(&self) -> Option<String> {
         self.root.is_visible().then(|| self.text.text().to_string())
     }
 }
 
-/// The banner of a window opened from a search: which match of how many in
-/// the thread, and the two ways on (spec 013 US6).
 pub struct MatchBanner {
     root: gtk::Box,
     text: gtk::Label,
@@ -377,7 +337,6 @@ pub struct MatchBanner {
 }
 
 impl MatchBanner {
-    /// A banner, hidden until a search opened the window.
     pub fn new() -> Rc<Self> {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         root.add_css_class("focus-banner-bar");
@@ -424,18 +383,15 @@ impl MatchBanner {
         banner
     }
 
-    /// The banner, to place above the kicker.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Run `next` or `back` when its button is pressed.
     pub fn connect(&self, next: impl Fn() + 'static, back: impl Fn() + 'static) {
         self.on_next.replace(Some(Rc::new(next)));
         self.on_back.replace(Some(Rc::new(back)));
     }
 
-    /// Draw `view`, or take the banner away.
     pub fn set(&self, view: Option<&postio_ui::thread_bar::MatchBannerView>) {
         let Some(view) = view else {
             self.root.set_visible(false);
@@ -454,7 +410,6 @@ impl MatchBanner {
         self.root.set_visible(true);
     }
 
-    /// What it says, while it is up.
     pub fn said(&self) -> Option<String> {
         self.root.is_visible().then(|| self.text.text().to_string())
     }

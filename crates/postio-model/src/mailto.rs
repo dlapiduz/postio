@@ -1,52 +1,34 @@
-//! A `mailto:` URI, read into the fields of a draft (RFC 6068).
-//!
-//! The desktop entry registers Postio for `x-scheme-handler/mailto`, so a
-//! link in a browser or a "share by email" from another application arrives
-//! as one of these. The grammar is small and the encoding is the whole of
-//! the difficulty: the address list and every header value are
-//! percent-encoded, a `+` is a literal plus (this is not a form), and header
-//! names are matched case-insensitively. Only the headers a draft has fields
-//! for are read — `to`, `cc`, `bcc`, `subject`, `body`; anything else in the
-//! URI is ignored rather than smuggled into a message (RFC 6068 §6 says as
-//! much: a client must not add arbitrary headers a URI names).
+//! A `mailto:` URI read into draft fields (RFC 6068): percent-encoded, `+` is a literal plus,
+//! header names case-insensitive.
+//! Only `to`, `cc`, `bcc`, `subject`, `body` are read; other headers are ignored, not smuggled into
+//! a message (RFC 6068 §6).
 
 use crate::address::{EmailAddress, parse_list};
 use crate::draft::Draft;
 use crate::ids::AccountId;
 use crate::message::MessageBody;
 
-/// What a `mailto:` URI asked for.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Mailto {
-    /// The addresses in the path, plus any `to=` in the query.
     pub to: Vec<EmailAddress>,
-    /// `cc=`, as many as the query named.
     pub cc: Vec<EmailAddress>,
-    /// `bcc=`, likewise.
     pub bcc: Vec<EmailAddress>,
-    /// `subject=`, decoded; `None` when the link named none.
     pub subject: Option<String>,
-    /// `body=`, decoded, as the plain-text body; `None` when the link named
-    /// none. A link cannot ask for HTML.
+    /// `None` when the link named none; a link cannot ask for HTML.
     pub body: Option<String>,
 }
 
 impl Mailto {
-    /// Reads `uri`, or `None` when it is not a `mailto:` URI at all.
-    ///
-    /// A `mailto:` with nothing in it (`mailto:`) is still `Some`: the link
-    /// asked for a new message and an empty composer is the right answer.
+    /// `None` when `uri` is not a `mailto:` URI at all; a bare `mailto:` is still `Some`, since an
+    /// empty composer is the right answer.
     pub fn parse(uri: &str) -> Option<Self> {
         let rest = uri
             .trim()
             .get(..7)
             .filter(|scheme| scheme.eq_ignore_ascii_case("mailto:"))
             .and_then(|_| uri.trim().get(7..))?;
-        // RFC 6068 has no authority, but GIO gives every URI one:
-        // `g_file_new_for_uri("mailto:ada@example.com")` reads back as
-        // `mailto:///ada@example.com`, and that is the form the desktop hands
-        // an application for a clicked link. `mailto://` is the same thing
-        // typed by hand. Neither slash is part of an address.
+        // RFC 6068 has no authority, but GIO gives every URI one (`mailto:///ada@example.com`),
+        // which is what the desktop hands over for a clicked link; `mailto://` is the same by hand.
         let rest = rest.trim_start_matches('/');
         let (path, query) = match rest.split_once('?') {
             Some((path, query)) => (path, Some(query)),
@@ -71,7 +53,6 @@ impl Mailto {
         Some(mailto)
     }
 
-    /// A new draft for `account` with these fields filled in.
     pub fn into_draft(self, account: AccountId) -> Draft {
         let mut draft = Draft::new(account);
         draft.to = self.to;
@@ -86,9 +67,8 @@ impl Mailto {
     }
 }
 
-/// Percent-decoding as RFC 3986 spells it: `%XX` is a byte, everything else
-/// is itself. A `+` stays a `+` (RFC 6068 §5). Bytes that do not form UTF-8
-/// are replaced rather than refused: a mangled subject is still a subject.
+/// `+` stays `+` (RFC 6068 §5); non-UTF-8 bytes are replaced, not refused: a mangled subject is
+/// still a subject.
 fn decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -151,7 +131,6 @@ mod tests {
 
     #[test]
     fn a_header_a_draft_has_no_field_for_is_ignored() {
-        // RFC 6068 §6: a client must not let a URI set arbitrary headers.
         let mailto = Mailto::parse("mailto:ada@example.com?In-Reply-To=%3Cx%40y%3E&subject=hi")
             .expect("a mailto uri");
         assert_eq!(mailto.subject.as_deref(), Some("hi"));
@@ -160,12 +139,8 @@ mod tests {
 
     #[test]
     fn the_slashes_gio_puts_after_the_scheme_are_not_part_of_the_address() {
-        // `g_file_new_for_uri("mailto:ada@example.com").get_uri()` answers
-        // `mailto:///ada@example.com`: GIO normalises a scheme with no
-        // authority by inserting one. That is exactly the form the desktop
-        // hands an application for a clicked link, so it has to read as the
-        // link, not as an address that starts with three slashes. The
-        // `mailto://` spelling seen in the wild is the same fix.
+        // GIO normalises a scheme with no authority to `mailto:///...`, the form the desktop hands
+        // over; `mailto://` is the same fix.
         for uri in [
             "mailto:///ada@example.com?subject=Lunch",
             "mailto://ada@example.com?subject=Lunch",

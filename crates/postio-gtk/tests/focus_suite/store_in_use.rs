@@ -1,14 +1,6 @@
-//! One store, either desktop app (US11 scenario 1, T063): Focus opening a
-//! store another Postio has open says so, offers Try again, and leaves the
-//! store byte for byte as it was.
-//!
-//! As in `postio-tui`'s `store_in_use.rs`, both Postios are this suite run
-//! again over a scratch store (`POSTIO_STORE`): one with [`HOLD`] set, which
-//! keeps the store open, and one with [`TRY`] set, which opens Focus's
-//! window over it and says what the window shows. Two processes because the
-//! engine's lock on the store is a POSIX record lock, which a process never
-//! conflicts with itself on; and the store's path is read from the
-//! environment, which this process may not set on itself.
+//! Both Postios are this suite run again over a scratch store (`POSTIO_STORE`), as two processes:
+//! the engine's lock is a POSIX record lock, which a process never conflicts with itself on, and
+//! the store's path comes from the environment, which this process may not set.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
@@ -21,15 +13,12 @@ use postio_account::secret::{AccountKey, MemorySecretStore, Password, SecretStor
 
 use crate::support;
 
-/// Set in the child that holds the store open: the store key, in hex.
 const HOLD: &str = "POSTIO_FOCUS_TEST_HOLD_STORE_KEY";
-/// Set in the child that opens Focus over it: the store key, in hex.
 const TRY: &str = "POSTIO_FOCUS_TEST_TRY_STORE_KEY";
 
 const NAME: &str =
     "store_in_use::a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone";
 
-/// A keyring holding `hex` as the store key.
 fn keyring(hex: &str) -> Arc<dyn SecretStore> {
     let secrets = MemorySecretStore::default();
     postio_session::blocking::now(secrets.store(
@@ -40,7 +29,6 @@ fn keyring(hex: &str) -> Arc<dyn SecretStore> {
     Arc::new(secrets)
 }
 
-/// This case, run again over the store at `store` with `role` set to `hex`.
 fn again(store: &Path, role: &str, hex: &str) -> Command {
     let mut command = Command::new(std::env::current_exe().expect("this suite"));
     command
@@ -50,8 +38,6 @@ fn again(store: &Path, role: &str, hex: &str) -> Command {
     command
 }
 
-/// What Focus's window says over the store at `store`: `answer:` and
-/// `retry:` lines from the child.
 fn try_to_open(store: &Path, hex: &str) -> (String, String) {
     let ran = again(store, TRY, hex).output().expect("the child runs");
     assert!(ran.status.success(), "{ran:?}");
@@ -64,7 +50,6 @@ fn try_to_open(store: &Path, hex: &str) -> (String, String) {
     (line("answer: "), line("retry: "))
 }
 
-/// Every file of the store at `store`, with its bytes.
 fn store_bytes(store: &Path) -> Vec<(String, Vec<u8>)> {
     let name = store
         .file_name()
@@ -86,8 +71,6 @@ fn store_bytes(store: &Path) -> Vec<(String, Vec<u8>)> {
     files
 }
 
-/// The child that opens Focus: open the store behind a window, the way
-/// `app::run` does, and say what the window shows.
 fn open_focus(hex: &str) {
     crate::gtk_case(async {
         if !support::display() {
@@ -144,16 +127,12 @@ pub fn a_store_another_postio_has_open_is_refused_with_try_again_and_left_alone(
             postio_host::Host::open(None, keyring(&hex), &|_| {}).expect("the holder opens it");
         println!("held");
         std::io::stdout().flush().expect("said");
-        // Held until the parent closes our stdin.
         let _ = std::io::stdin().read_to_end(&mut Vec::new());
         host.stop();
         return;
     }
     if let Ok(hex) = std::env::var(TRY) {
         open_focus(&hex);
-        return;
-    }
-    if !support::display() {
         return;
     }
 

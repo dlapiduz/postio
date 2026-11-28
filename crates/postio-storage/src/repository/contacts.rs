@@ -1,25 +1,8 @@
-//! Contacts: people, the addresses they own, and what the mail says about them.
-//!
-//! A contact is a **person** who owns one or more addresses
-//! (specs/005-contacts). Three places hold it, each for one reason:
-//!
-//! - `addresses.contact_id` says who owns an address. An address has at most
-//!   one owner because it is a column, not a rule to keep in step (R1).
-//! - `contact_sightings` is the mail's evidence, per `(address, account)`:
-//!   how often, how recently, the display name last seen, and how many times
-//!   the user wrote to it. It never moves when people are joined or split —
-//!   history travels with the address (R2).
-//! - `contacts` is the person: the name the user set, organisation, note,
-//!   provenance, a `live | deleted | merged` state, and aggregates over its
-//!   addresses' sightings so the list can order people without adding them up.
-//!
-//! **An address is suppressed exactly when its owner is not `live`** (R4).
-//! Deleting a person keeps it, with its addresses, so a later message from one
-//! of them counts toward someone hidden — which is what stops that message
-//! bringing them back — and restoring returns them whole.
-//!
-//! Every address seen in mail starts as a person of its own. Nothing here ever
-//! joins two addresses without being asked to.
+//! People, the addresses they own, and what the mail says about them (specs/005-contacts).
+//! `addresses.contact_id` is the single owner; `contact_sightings` is per-(address, account)
+//! evidence that never moves when people are joined or split.
+//! An address is suppressed exactly when its owner is not `live`, so a later message from a deleted
+//! person's address does not bring them back.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -39,84 +22,61 @@ use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
-/// Reads and writes people and the addresses they own.
 #[derive(Debug)]
 pub struct ContactRepository<'a> {
     connection: &'a Connection,
 }
 
-/// The person's columns, in the order [`read_person`] reads them.
 pub(super) const PERSON_COLUMNS: &str = "id, name, organization, note, source, state, \
      preferred_address, seen_name, times_seen, last_seen_at, written, kind, kind_source, \
      saved_at, given_name, family_name, show_as, title";
 
-/// [`PERSON_COLUMNS`], qualified by `c.` for a join.
 pub(super) const PERSON_COLUMNS_C: &str = "c.id, c.name, c.organization, c.note, c.source, \
      c.state, c.preferred_address, c.seen_name, c.times_seen, c.last_seen_at, c.written, \
      c.kind, c.kind_source, c.saved_at, c.given_name, c.family_name, c.show_as, c.title";
 
-/// How many columns [`PERSON_COLUMNS`] is, so a joined row can find what
-/// follows it.
 const PERSON_WIDTH: usize = 18;
 
-/// How many of a sender's newest messages their kind is decided from.
 pub const KIND_WINDOW: i64 = 50;
 
-/// The completion order: the address book above the mail, then recency, then
-/// frequency (the address-book decision's Q6, inherited by specs/005-contacts).
-///
-/// Spelled exactly as `idx_contacts_rank` declares it, because the planner
-/// only reads an expression index through the identical expression.
+/// Spelled exactly as `idx_contacts_rank` declares it: the planner reads an expression index only
+/// through the identical expression.
 pub(super) const RANK_ORDER: &str = "CASE WHEN source = 'mail' THEN 1 ELSE 0 END, \
      last_seen_at DESC, times_seen DESC, id";
 
-/// One owned address, summed over the accounts it was seen through, in the
-/// order [`read_address`] reads it. Needs `a` (addresses) and a `LEFT JOIN`ed
-/// `s` (contact_sightings), grouped by `a.id`.
+/// Needs `a` (addresses) and a `LEFT JOIN`ed `s` (contact_sightings), grouped by `a.id`.
 const ADDRESS_COLUMNS: &str = "a.id, a.address,
        (SELECT s2.last_name FROM contact_sightings s2
          WHERE s2.address_id = a.id AND s2.last_name IS NOT NULL
          ORDER BY s2.last_seen_at DESC LIMIT 1),
        coalesce(sum(s.times_seen), 0), max(s.last_seen_at), coalesce(sum(s.times_written), 0)";
 
-/// One address on a message, and whether the user wrote to it.
 struct Seen<'m> {
     address: &'m EmailAddress,
     written: bool,
-    /// Whether the address is among the message's senders: only mail from an
-    /// address counts as opened or not.
     sender: bool,
 }
 
-/// What recording one message knows beyond one address on it.
 struct Recording<'m> {
     account: i64,
     at: i64,
     own: &'m [String],
-    /// The message's id, or 0 for one never stored (which has no ring entry).
+    /// 0 for a message never stored (no ring entry).
     message: i64,
     read: bool,
 }
 
 impl<'a> ContactRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Records every correspondent on a message, in one transaction.
+    /// `own` addresses are never recorded, but decide "written to": when `From` is one of them,
+    /// every `To`/`Cc`/`Bcc` was written to by the user.
     ///
-    /// `own` is the account's own addresses — its primary address and every
-    /// identity. They are never recorded: the user is not their own contact.
-    /// They are what decides "written to", though: when the message's `From`
-    /// is one of them, every `To`/`Cc`/`Bcc` address was written to by the
-    /// user (research R3), whatever folder the message sits in.
-    ///
-    /// Returns how many distinct correspondents were recorded. Appearing twice
-    /// in one message — as a `To` and again as a `Cc`, or with two spellings —
-    /// is one sighting: the count is "how many messages", not "how many
-    /// headers". Callers record a message once, on first insert, which is what
-    /// keeps a re-enumeration from double counting.
+    /// Returns how many distinct correspondents were recorded; one appearing twice in a message is
+    /// one sighting. Call once per message, on first insert, so re-enumeration does not double
+    /// count.
     pub async fn record_message(&self, message: &Message, own: &[EmailAddress]) -> Result<usize> {
         let at = to_millis(message.best_date());
         let account = message.account_id.get();
@@ -171,7 +131,6 @@ impl<'a> ContactRepository<'a> {
         .await
     }
 
-    /// One person, with every address they own.
     pub async fn get(&self, id: ContactId) -> Result<Option<Contact>> {
         let person = sql::first(
             self.connection,
@@ -186,8 +145,6 @@ impl<'a> ContactRepository<'a> {
         }
     }
 
-    /// The person who owns an address, matched case-insensitively — whatever
-    /// their state.
     pub async fn by_address(&self, address: &str) -> Result<Option<Contact>> {
         let person = sql::first(
             self.connection,
@@ -206,23 +163,11 @@ impl<'a> ContactRepository<'a> {
         }
     }
 
-    /// Recipient completion: live people matching `prefix`, best first, each
-    /// with their addresses, preferred first.
+    /// Banded, never ranked across: a person the user made or imported outranks every person known
+    /// only from mail, since frequency is not evidence the user wants to write back. Within a band,
+    /// most recent leads, then frequency (#424, #476).
     ///
-    /// **Banded, then ranked within a band — never across.** A person the
-    /// user made or imported outranks every person known only from mail,
-    /// however often a mailing-list robot has written: frequency is not
-    /// evidence that the user wants to write back. Within a band, the person
-    /// seen most recently leads, and frequency settles a tie (#424, #476).
-    ///
-    /// The match is a prefix on any word of the person's name, organisation or
-    /// the name the mail gave them, and on each address — whole, local part,
-    /// or domain — through `contact_terms` (research R5). People are shared
-    /// across accounts, so completion in one account offers someone known
-    /// through another.
-    ///
-    /// This runs on the UI thread, so its cost is the 16 ms budget: two
-    /// statements, the people then their addresses, and neither a full scan.
+    /// Runs on the UI thread: two statements, neither a full scan.
     pub async fn complete(&self, prefix: &str, limit: u32) -> Result<Vec<Contact>> {
         let prefix = prefix.trim().to_lowercase();
         let people = if prefix.is_empty() {
@@ -255,12 +200,8 @@ impl<'a> ContactRepository<'a> {
         self.with_addresses(people).await
     }
 
-    /// Every live person, most familiar first, with their addresses — what
-    /// the `@` finder holds to search in memory.
-    ///
-    /// One statement, `limit` bounding the addresses it returns: the finder
-    /// scores in memory for the fuzzy matching it does, and the cap is what
-    /// keeps that memory bounded however large the address book grows.
+    /// One statement; `limit` caps the addresses so the `@` finder's in-memory scoring stays
+    /// bounded.
     pub async fn people(&self, limit: u32) -> Result<Vec<Contact>> {
         let rows = sql::all(
             self.connection,
@@ -297,14 +238,9 @@ impl<'a> ContactRepository<'a> {
         Ok(people)
     }
 
-    /// Creates a person the user made, owning `addresses`, whether or not any
-    /// mail involves them (specs/005-contacts FR-020).
-    ///
-    /// An address nobody owns, or one a *deleted* person owns, becomes this
-    /// person's — the latter keeps its sighting history and stops being
-    /// suppressed, because the user has said they want it (FR-024). An address
-    /// a live person owns is refused with [`Error::AddressOwned`]: taking it is
-    /// a decision the user makes, not a side effect (FR-015).
+    /// An address nobody owns, or a deleted person owns, becomes this person's and keeps its
+    /// sighting history; one a live person owns is refused with [`Error::AddressOwned`], since
+    /// taking it is the user's decision.
     pub async fn create(
         &self,
         name: Option<&str>,
@@ -364,14 +300,8 @@ impl<'a> ContactRepository<'a> {
         .await
     }
 
-    /// The person who owns `address`, made now from the mail if nobody does
-    /// yet (specs/011-focus-contacts plan 4.2).
-    ///
-    /// Mail that was stored before contacts existed has addresses and no
-    /// people; this is what `i` or a card on such a sender runs, so nothing
-    /// waits on the catch-up. What the person's sightings say is folded in
-    /// SQL, one row per account, so the cost does not follow the number of
-    /// messages. The user's own addresses are refused.
+    /// For mail stored before contacts existed. Sightings are folded in SQL per account, so cost
+    /// does not follow the message count. The user's own addresses are refused.
     pub async fn ensure_for_address(&self, address: AddressId) -> Result<ContactId> {
         sql::in_scope(self.connection, |transaction| async move {
             match adopt(&transaction, address.get()).await? {
@@ -385,10 +315,8 @@ impl<'a> ContactRepository<'a> {
         .await
     }
 
-    /// The person who owns `email`, made now if nobody does: what a setting
-    /// given to an address needs, whether or not mail from it was ever
-    /// stored. Never saved, so the setting does not put them in the
-    /// Contacts list. Refuses the user's own address.
+    /// Never saved, so the setting does not put them in the Contacts list. Refuses the user's own
+    /// address.
     pub async fn person_for_email(&self, email: &EmailAddress) -> Result<ContactId> {
         let email = email.clone();
         sql::in_scope(self.connection, |transaction| async move {
@@ -408,11 +336,8 @@ impl<'a> ContactRepository<'a> {
         .await
     }
 
-    /// What the mail says about `person`, summed over their addresses: the
-    /// tiles, the strip of months since `since_month` (a
-    /// [`postio_model::month_key`]), and the newest messages. Four reads at
-    /// most, by key over the person's addresses, so what it costs follows
-    /// their addresses and never their mail.
+    /// At most four reads, by key over the person's addresses: cost follows their addresses, never
+    /// their mail. `since_month` is a [`postio_model::month_key`].
     pub async fn stats(
         &self,
         person: ContactId,
@@ -470,9 +395,6 @@ impl<'a> ContactRepository<'a> {
         })
     }
 
-    /// The SQL [`Self::stats`] runs, in order, for a person with `addresses`
-    /// addresses: their ids, the sightings summed, the months (the last
-    /// placeholder is the first month wanted) and the ring.
     pub fn explain_stats(addresses: usize) -> [String; 4] {
         let ids = (1..=addresses.max(1))
             .map(|n| format!("?{n}"))
@@ -500,11 +422,8 @@ impl<'a> ContactRepository<'a> {
         ]
     }
 
-    /// What is open between the user and `person`, at most `limit` things,
-    /// the ones waiting on the user first: undismissed markers on their mail
-    /// and unsettled reminders on what was sent to them, both found through
-    /// the ring of each address's newest messages, so what it reads is
-    /// bounded by that and never by the person's mail.
+    /// Waiting-on-user items first. Found through each address's ring of newest messages, so the
+    /// read is bounded by that, not by the person's mail.
     pub async fn open_items(
         &self,
         person: ContactId,
@@ -560,10 +479,8 @@ impl<'a> ContactRepository<'a> {
         Ok(items)
     }
 
-    /// Where the default rules put `person`'s mail: what the engine did with
-    /// their newest inbound message, found through the address rings. Filtered
-    /// when it was filed away and not restored, Digest when a digest rule is
-    /// holding it, Inbox otherwise and for someone with no mail.
+    /// Filtered when filed away and not restored, Digest when a digest rule holds it, Inbox
+    /// otherwise or with no mail.
     pub async fn default_arrival(&self, person: ContactId) -> Result<postio_model::ContactArrival> {
         use postio_model::ContactArrival;
         let owned: Vec<i64> = sql::all(
@@ -590,8 +507,6 @@ impl<'a> ContactRepository<'a> {
             .unwrap_or(ContactArrival::Inbox))
     }
 
-    /// The SQL [`Self::default_arrival`] runs for a person with `addresses`
-    /// addresses.
     pub fn explain_default_arrival(addresses: usize) -> [String; 1] {
         let ids = (1..=addresses.max(1))
             .map(|n| format!("?{n}"))
@@ -609,8 +524,6 @@ impl<'a> ContactRepository<'a> {
         )]
     }
 
-    /// The SQL [`Self::open_items`] runs for a person with `addresses`
-    /// addresses: what waits on the user, then what the user waits on.
     pub fn explain_open_items(addresses: usize) -> [String; 2] {
         let ids = (1..=addresses.max(1))
             .map(|n| format!("?{n}"))
@@ -635,9 +548,7 @@ impl<'a> ContactRepository<'a> {
         ]
     }
 
-    /// How many live people of each kind there are and how many of those are
-    /// saved: the Contacts tabs' counts, read from a handful of rows the
-    /// triggers keep.
+    /// Read from a handful of rows the triggers keep.
     pub async fn kind_counts(&self) -> Result<Vec<(ContactKind, u32, u32)>> {
         let rows: Vec<(String, i64, i64)> = sql::all_unbounded(
             self.connection,
@@ -659,14 +570,9 @@ impl<'a> ContactRepository<'a> {
             .collect()
     }
 
-    /// One batch of the catch-up: up to `limit` addresses with mail and no
-    /// person, newest first and strictly below `before`, each made a person
-    /// in one transaction.
-    ///
-    /// The walk is one read whatever the store holds, so a pass with nothing
-    /// to do costs that one read. `last` is where the next batch starts;
-    /// `done` says this one reached the end. Safe to run beside live sync:
-    /// an address that already has a person is not in the walk.
+    /// Newest first, strictly below `before`. `last` is where the next batch starts; `done` says
+    /// this one reached the end. Safe beside live sync: an address with a person is not in the
+    /// walk.
     pub async fn catch_up_batch(&self, before: Option<AddressId>, limit: u32) -> Result<CatchUp> {
         let before = before.map_or(i64::MAX, AddressId::get);
         sql::in_scope(self.connection, |transaction| async move {
@@ -692,8 +598,6 @@ impl<'a> ContactRepository<'a> {
         .await
     }
 
-    /// How many addresses with mail still wait for a person: the "m" of
-    /// "Building contacts, n of m".
     pub async fn unowned_count(&self) -> Result<u64> {
         let count = sql::scalar(
             self.connection,
@@ -709,7 +613,6 @@ impl<'a> ContactRepository<'a> {
         Ok(count.max(0) as u64)
     }
 
-    /// The SQL [`Self::catch_up_batch`] walks.
     pub fn explain_unowned() -> &'static str {
         "SELECT a.id FROM addresses a
           WHERE a.contact_id IS NULL AND a.id < ?1
@@ -721,12 +624,8 @@ impl<'a> ContactRepository<'a> {
           LIMIT ?2"
     }
 
-    /// What the sender's mail says, for deciding their kind: counted over the
-    /// newest [`KIND_WINDOW`] messages their preferred address sent, so the
-    /// cost is the same for a sender of one message and of ten thousand.
-    /// `None` for someone who is not live.
-    ///
-    /// Three reads: the person, the window, and the people at their domain.
+    /// Counted over the newest [`KIND_WINDOW`] messages from their preferred address, so cost is
+    /// the same for one message or ten thousand. `None` for someone not live.
     pub async fn kind_signals(&self, person: ContactId) -> Result<Option<KindSignals>> {
         type Head = (Option<String>, Option<String>, Option<String>, i64, i64);
         let head: Option<Head> = sql::first(
@@ -797,9 +696,8 @@ impl<'a> ContactRepository<'a> {
         }))
     }
 
-    /// The SQL [`Self::kind_signals`] counts the window with. `?1` is the
-    /// address, `?2` the window's size. Walks the address's rows newest first
-    /// along `idx_recipients_address`, so it reads the window and no more.
+    /// `?1` is the address, `?2` the window size. Walks `idx_recipients_address` newest first, so
+    /// it reads the window and no more.
     pub fn explain_kind_window() -> &'static str {
         "SELECT count(*),
                 coalesce(sum(CASE WHEN m.list_id IS NOT NULL THEN 1 ELSE 0 END), 0),
@@ -815,13 +713,8 @@ impl<'a> ContactRepository<'a> {
            JOIN messages m ON m.id = w.message_id"
     }
 
-    /// Up to `limit` live people whose kind the detector decides and has not
-    /// decided at `version` yet: the kind pass's walk. A kind the user chose
-    /// is not in it.
-    ///
-    /// No cursor: deciding someone takes them out of the walk, so the next
-    /// call finds the next ones, and a start where everyone is decided is one
-    /// seek that finds nothing.
+    /// No cursor: deciding someone takes them out of the walk, and a start where everyone is
+    /// decided is one seek finding nothing. A kind the user chose is excluded.
     pub async fn pending_kinds(&self, version: u32, limit: u32) -> Result<Vec<ContactId>> {
         sql::all(
             self.connection,
@@ -832,15 +725,12 @@ impl<'a> ContactRepository<'a> {
         .await
     }
 
-    /// The SQL [`Self::pending_kinds`] runs, over `idx_contacts_kind_pending`.
     pub fn explain_pending_kinds() -> &'static str {
         "SELECT id FROM contacts
           WHERE state = 'live' AND kind_source = 'detected' AND kind_version < ?1
           LIMIT ?2"
     }
 
-    /// Records what the detector decided, at `version`. Does nothing for a
-    /// person whose kind the user chose.
     pub async fn set_detected_kind(
         &self,
         person: ContactId,
@@ -857,8 +747,7 @@ impl<'a> ContactRepository<'a> {
         Ok(())
     }
 
-    /// Fills in each person's addresses, preferred first. One statement
-    /// whatever the number of people.
+    /// One statement whatever the number of people.
     pub(super) async fn with_addresses(&self, mut people: Vec<Contact>) -> Result<Vec<Contact>> {
         if people.is_empty() {
             return Ok(people);
@@ -897,7 +786,6 @@ impl<'a> ContactRepository<'a> {
     }
 }
 
-/// The columns of a kind-tab page, and its seek: `idx_contacts_kind_list`.
 fn kind_first_sql() -> String {
     format!(
         "SELECT {LIST_COLUMNS} FROM contacts c
@@ -918,10 +806,8 @@ fn kind_next_sql() -> String {
 }
 
 impl ContactRepository<'_> {
-    /// One page of the people of `kinds`, by name, starting `skip` rows past
-    /// `after`. One seek over the kind index per kind, each at most
-    /// `skip + limit` rows, merged in name order, so a tab holding two kinds
-    /// costs two statements and a page of it is the same size as any other.
+    /// One seek over the kind index per kind, each at most `skip + limit` rows, merged in name
+    /// order.
     pub async fn page_kinds(
         &self,
         kinds: &[ContactKind],
@@ -962,9 +848,7 @@ impl ContactRepository<'_> {
             .collect())
     }
 
-    /// Where `person` is in the list of `kinds`: how many live people of
-    /// those kinds come before them by name. `None` for someone not in the
-    /// list (another kind, deleted, or no one). One seek per kind.
+    /// `None` for someone not in the list (another kind, deleted, or no one).
     pub async fn position_in(
         &self,
         kinds: &[ContactKind],
@@ -997,8 +881,6 @@ impl ContactRepository<'_> {
         Ok(Some(u32::try_from(before).unwrap_or(u32::MAX)))
     }
 
-    /// The people of `kinds` matching every word of `text`, by name, at most
-    /// `cap` of them: [`filtered`](Self::filtered) within a tab.
     pub async fn filtered_kinds(
         &self,
         kinds: &[ContactKind],
@@ -1009,13 +891,8 @@ impl ContactRepository<'_> {
             .await
     }
 
-    /// What the strip and the footer say: each tab's count and the totals
-    /// from `contact_counts`, the review queue, and how many addresses with
-    /// mail still wait for a person. A handful of rows and three capped
-    /// counts, whatever the number of people.
-    ///
-    /// With `look_for_duplicates` false the pairs are not counted at all
-    /// (Settings > Contacts, "Suggest merging duplicates").
+    /// A handful of rows and three capped counts. With `look_for_duplicates` false the pairs are
+    /// not counted.
     pub async fn overview(
         &self,
         look_for_duplicates: bool,
@@ -1087,17 +964,13 @@ impl ContactRepository<'_> {
         })
     }
 
-    /// The SQL the review counts run that are not the suggestion read.
     pub fn explain_review() -> [&'static str; 1] {
         ["SELECT count(*) FROM (SELECT 1 FROM contacts
            WHERE saved_at IS NULL AND kind = 'person' AND written >= 3
              AND ignored_at IS NULL AND state = 'live' LIMIT ?1)"]
     }
 
-    /// Everything a person's card shows, in a fixed number of statements over
-    /// their addresses: the person and their groups, the stats, what is open
-    /// between you, what they decided, and the files and issues of their
-    /// recent messages. `None` for someone who is not there.
+    /// A fixed number of statements over the person's addresses. `None` for someone not there.
     pub async fn card(
         &self,
         person: ContactId,
@@ -1156,8 +1029,6 @@ impl ContactRepository<'_> {
         }))
     }
 
-    /// The SQL the card's recent files and issues run for a person with
-    /// `addresses` addresses: both walk the ring's newest messages.
     pub fn explain_card_recent(addresses: usize) -> [String; 2] {
         let ids = (1..=addresses.max(1))
             .map(|n| format!("?{n}"))
@@ -1183,7 +1054,6 @@ impl ContactRepository<'_> {
     }
 }
 
-/// Where the next page of a Contacts view starts: just past this row.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContactCursor {
     sort_key: String,
@@ -1191,12 +1061,10 @@ pub struct ContactCursor {
 }
 
 impl ContactCursor {
-    /// The cursor just past the row with this sort key and id.
     pub fn from_parts(sort_key: String, id: ContactId) -> Self {
         Self { sort_key, id }
     }
 
-    /// The cursor just past `row`.
     pub fn after(row: &ContactListRow) -> Self {
         Self {
             sort_key: row.sort_key.clone(),
@@ -1206,13 +1074,9 @@ impl ContactCursor {
 }
 
 impl ContactRepository<'_> {
-    /// One page of a Contacts view, by name, starting just past `after`.
-    ///
-    /// Keyset, never `OFFSET`: the next page seeks past the last row's
-    /// `(sort_key, id)`, and the cursor carries a bare `sort_key >= ?` in
-    /// front of the tie-break because this engine seeks on that and only
-    /// filters on the row value (docs/notes, 2026-09-12). One statement a
-    /// page however deep, rows bounded by `limit`.
+    /// Keyset, never `OFFSET`: the cursor carries a bare `sort_key >= ?` ahead of the tie-break
+    /// because this engine seeks on that and only filters on the row value (docs/notes,
+    /// 2026-09-12).
     pub async fn page(
         &self,
         view: ContactView,
@@ -1222,12 +1086,8 @@ impl ContactRepository<'_> {
         self.page_from(view, after, 0, limit).await
     }
 
-    /// [`page`](Self::page), starting `skip` rows past `after`.
-    ///
-    /// For a jump into the list: the caller seeks to the nearest page
-    /// boundary it has already read -- the message list's marks, in
-    /// `postio-runtime` -- and skips only what is left, so sequential
-    /// scrolling skips nothing and a jump skips less than a page's worth.
+    /// For a jump: the caller seeks to the nearest page boundary it has read and skips only what is
+    /// left.
     pub async fn page_from(
         &self,
         view: ContactView,
@@ -1262,14 +1122,8 @@ impl ContactRepository<'_> {
         }
     }
 
-    /// What the detail view shows about one person: every address with its
-    /// evidence, the groups they are in, and how many distinct messages
-    /// involve any of their addresses (FR-006) -- a message to two of their
-    /// addresses is one message, which is why this is a `DISTINCT` over
-    /// recipients rather than a sum of per-address counts.
-    ///
-    /// Four statements whatever the person: them, their addresses, their
-    /// groups, the count.
+    /// A message to two of their addresses counts once, hence `DISTINCT` over recipients rather
+    /// than a sum of per-address counts.
     pub async fn detail(&self, id: ContactId) -> Result<Option<ContactDetail>> {
         let Some(person) = self.get(id).await? else {
             return Ok(None);
@@ -1299,7 +1153,6 @@ impl ContactRepository<'_> {
         }))
     }
 
-    /// How many people a view holds, for the list's length.
     pub async fn count(&self, view: ContactView) -> Result<u64> {
         let count = sql::scalar(
             self.connection,
@@ -1313,13 +1166,8 @@ impl ContactRepository<'_> {
         Ok(u64::try_from(count).unwrap_or(0))
     }
 
-    /// The people in a view matching every word of `text`, by name, at most
-    /// `cap` of them (specs/005-contacts FR-004, research R5).
-    ///
-    /// Each word is a prefix range over `contact_terms` -- a name, the
-    /// organisation, the name the mail gave, any part of any address -- never
-    /// a `LIKE` over everyone. The cap is what bounds the rows a keystroke
-    /// materialises; typing more is how a person narrows past it.
+    /// Each word is a prefix range over `contact_terms`, never a `LIKE` over everyone. `cap` bounds
+    /// the rows a keystroke materialises.
     pub async fn filtered(
         &self,
         view: ContactView,
@@ -1387,8 +1235,7 @@ impl ContactRepository<'_> {
     }
 }
 
-/// A list row's columns, in the order [`read_list_row`] reads them. Needs `c`
-/// (contacts) and a `LEFT JOIN`ed `pa` (the preferred address).
+/// Needs `c` (contacts) and a `LEFT JOIN`ed `pa` (the preferred address).
 const LIST_COLUMNS: &str = "c.id,
        coalesce(nullif(trim(c.name), ''), nullif(trim(c.seen_name), ''), pa.address, ''),
        pa.address,
@@ -1397,13 +1244,11 @@ const LIST_COLUMNS: &str = "c.id,
        c.kind, c.times_seen, c.saved_at IS NOT NULL,
        cs.arrival, coalesce(cs.notify, 0), cs.html_treatment, cs.digest_cadence";
 
-/// What a list row joins to: the preferred address and what the user decided.
 const LIST_JOINS: &str = "LEFT JOIN addresses pa ON pa.id = c.preferred_address
            LEFT JOIN contact_settings cs ON cs.contact_id = c.id";
 
-/// Which people a view holds. Each is a prefix of one of the list indexes, so
-/// a page is a seek: `idx_contacts_list_default` for the default view,
-/// `idx_contacts_list` for the other two.
+/// Each is a prefix of a list index so a page is a seek: `idx_contacts_list_default` for the
+/// default view, `idx_contacts_list` for the others.
 fn view_predicate(view: ContactView) -> &'static str {
     match view {
         ContactView::Written => "c.state = 'live' AND c.listed = 1",
@@ -1432,15 +1277,9 @@ fn next_page_sql(view: ContactView) -> String {
     )
 }
 
-/// The pairs a suggestion read considers: live people who share a name key,
-/// and people whose addresses answered one another -- minus any pair a
-/// dismissed address pair spans. `replies` is NULL for a name match.
-///
-/// Every step is an index seek on `contacts` and `addresses`; the one walk is
-/// over the reply candidates, which are the evidence and are read whole.
-/// `CROSS JOIN` pins that order: left to itself the planner walked
-/// `addresses` and probed the candidates, which is the wrong way round for a
-/// table that is every address the user has ever seen.
+/// Every step is an index seek; the one walk is over the reply candidates, read whole.
+/// `CROSS JOIN` pins that order: the planner otherwise walked `addresses` (every address ever seen)
+/// and probed the candidates.
 const SUGGESTION_PAIRS: &str = "
     SELECT a.id, b.id, NULL FROM contacts a
       JOIN contacts b ON b.state = 'live' AND b.name_key = a.name_key AND b.id > a.id
@@ -1467,14 +1306,11 @@ const SUGGESTION_PAIRS: &str = "
             WHERE u.contact_id = x.contact_id)
     LIMIT ?1";
 
-/// The suggestion read's statements, for the budget that asks the planner.
 #[cfg(feature = "test-support")]
 pub(crate) fn suggestion_statements() -> Vec<String> {
     vec![SUGGESTION_PAIRS.replace("?1", "50")]
 }
 
-/// Every statement the list issues, named -- for the budget that asks the
-/// planner about them.
 #[cfg(feature = "test-support")]
 pub(crate) fn list_statements() -> Vec<(&'static str, String)> {
     vec![
@@ -1525,12 +1361,9 @@ fn read_list_row(row: &Row) -> Result<ContactListRow> {
     })
 }
 
-/// Takes `address` away from whichever person owns it, because it has become
-/// one of the user's own (an account's or an identity's). The user is never
-/// their own contact (spec edge case): the record path skips own addresses as
-/// it sees them, and this is the other half, for an address that was
-/// somebody's before it was the user's. Doing it at write time is what lets
-/// every list read go without a per-row exclusion.
+/// The user is never their own contact: the record path skips own addresses, and this covers an
+/// address that was somebody's before it was the user's. Doing it at write time lets list reads
+/// skip a per-row exclusion.
 pub(crate) async fn release_own_address(
     connection: &Connection,
     address: &EmailAddress,
@@ -1555,17 +1388,10 @@ pub(crate) async fn release_own_address(
 }
 
 impl ContactRepository<'_> {
-    /// Joins `others` into `into`: one person afterwards, owning every
-    /// address, keeping every sighting, every group and every note
-    /// (specs/005-contacts FR-012, FR-013).
-    ///
-    /// `name` is the joined person's name, which the user picked or typed --
-    /// every join ends with one, and it counts as set by the user from here
-    /// on. `organization`, when given, is the one the user chose between
-    /// conflicting ones; otherwise the survivor's stands, or the first absorbed
-    /// person's if it had none. The absorbed become `merged` rather than
-    /// deleted, which is what lets [`unjoin`](Self::unjoin) put them back
-    /// exactly from the [`JoinReceipt`] this returns.
+    /// `name` is the user's pick and counts as set by them. `organization` is their choice among
+    /// conflicting ones, else the survivor's, else the first absorbed's. The absorbed become
+    /// `merged`, not deleted, so [`unjoin`](Self::unjoin) restores them exactly from the
+    /// [`JoinReceipt`].
     pub async fn join(
         &self,
         into: ContactId,
@@ -1672,8 +1498,6 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Takes a join apart: every absorbed person back, with the addresses
-    /// that were theirs, and the survivor's fields and groups as they were.
     pub async fn unjoin(&self, receipt: &JoinReceipt) -> Result<()> {
         sql::in_scope(self.connection, |transaction| async move {
             for (person, owned) in &receipt.restore {
@@ -1726,9 +1550,7 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Takes `address` away from its person and makes it a person of its own,
-    /// carrying its own sighting history (FR-014). Refused for a person's last
-    /// address -- deleting is how a person goes.
+    /// Refused for a person's last address; deleting is how a person goes.
     pub async fn detach_address(&self, address: AddressId) -> Result<ContactId> {
         sql::in_scope(self.connection, |transaction| async move {
             let owner: Option<Option<i64>> = sql::first(
@@ -1762,7 +1584,6 @@ impl ContactRepository<'_> {
                 [address.get()],
             )
             .await?;
-            // Known from mail if the mail knows it; otherwise it was typed in.
             let source = if seen > 0 { "mail" } else { "user" };
             let now = to_millis(Utc::now());
             sql::execute(
@@ -1787,10 +1608,8 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Gives `person` an address they typed. One nobody owns, or one a deleted
-    /// person owns, becomes theirs; one a live person owns is refused with
-    /// [`Error::AddressOwned`], naming who, so the caller can offer to move it
-    /// (FR-015).
+    /// One a live person owns is refused with [`Error::AddressOwned`], naming who, so the caller
+    /// can offer to move it.
     pub async fn add_address(
         &self,
         person: ContactId,
@@ -1825,13 +1644,9 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Moves `address` to `person`, whoever had it -- the "move it" answer to
-    /// [`Error::AddressOwned`], and what undoes a detach or an add. Moving an
-    /// address off a deleted person lifts its suppression (FR-024).
-    ///
-    /// `revive`, given by an undo, is the state `person` had before an earlier
-    /// move left them with nothing: they come back in it. The returned
-    /// [`AddressMove`] is what the same undo needs for this move.
+    /// The "move it" answer to [`Error::AddressOwned`], and what undoes a detach or add. `revive`
+    /// is the state `person` had before an earlier move left them with nothing. The returned
+    /// [`AddressMove`] is what the same undo needs.
     pub async fn move_address(
         &self,
         address: AddressId,
@@ -1876,10 +1691,8 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// The names the user gave the live owners of `addresses`, keyed by
-    /// normalised address -- what the reader substitutes for a header's
-    /// display name (FR-032). An address nobody live owns, or whose owner the
-    /// user never named, is absent: its mail says what it said.
+    /// Keyed by normalised address; an address nobody live owns, or whose owner was never named, is
+    /// absent.
     pub async fn user_names(
         &self,
         addresses: &[String],
@@ -1912,9 +1725,8 @@ impl ContactRepository<'_> {
         Ok(rows.into_iter().collect())
     }
 
-    /// Sets a person's name, organisation and note, making them the user's
-    /// if they were only the mail's (FR-021, FR-022). Hands back the fields
-    /// it replaced, which [`put_fields`](Self::put_fields) restores.
+    /// Makes the person the user's if they were only the mail's. Returns the replaced fields for
+    /// [`put_fields`](Self::put_fields).
     pub async fn edit(&self, person: ContactId, edit: &PersonEdit) -> Result<PersonFields> {
         let filled = |value: &Option<String>| {
             value
@@ -1950,8 +1762,6 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Puts a person's fields back exactly as `fields` has them -- source
-    /// and preferred address included. What undoes an edit.
     pub async fn put_fields(&self, person: ContactId, fields: &PersonFields) -> Result<()> {
         let fields = fields.clone();
         sql::in_scope(self.connection, |transaction| async move {
@@ -1979,9 +1789,8 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Deletes a person: offered nowhere, listed only in the Deleted view,
-    /// still counting their addresses' mail (FR-023, SC-005). Hands back the
-    /// state they were in.
+    /// Listed only in the Deleted view, still counting their addresses' mail. Returns their prior
+    /// state.
     pub async fn delete(&self, person: ContactId) -> Result<ContactState> {
         sql::in_scope(self.connection, |transaction| async move {
             let state = state_of(&transaction, person).await?;
@@ -2002,7 +1811,6 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Brings a deleted person back in `state` -- what they were before.
     pub async fn restore(&self, person: ContactId, state: ContactState) -> Result<()> {
         sql::in_scope(self.connection, |transaction| async move {
             if state_of(&transaction, person).await? != ContactState::Deleted {
@@ -2023,8 +1831,6 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// A group's live members as list rows, by name, at most `cap` -- what
-    /// the list shows while the cursor is on the group (FR-040).
     pub async fn group_rows(
         &self,
         group: postio_model::ContactGroupId,
@@ -2045,9 +1851,8 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Who might be the same person, with the evidence (FR-018, R11): at
-    /// most `limit` pairs, an answered-from-another-address pair before a
-    /// name match. Reads only; a suggestion joins nobody (FR-019).
+    /// Reads only; a suggestion joins nobody. Answered-from-another-address pairs come before name
+    /// matches.
     pub async fn suggestions(&self, limit: u32) -> Result<Vec<JoinSuggestion>> {
         let pairs: Vec<(i64, i64, Option<i64>)> = sql::all_unbounded(
             self.connection,
@@ -2098,8 +1903,6 @@ impl ContactRepository<'_> {
             .collect())
     }
 
-    /// People by id, with their addresses: two statements whatever the
-    /// number.
     async fn people_by_ids(&self, ids: &[i64]) -> Result<Vec<Contact>> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -2120,9 +1923,7 @@ impl ContactRepository<'_> {
         self.with_addresses(people).await
     }
 
-    /// The user says `a` and `b` are not the same person: never offered
-    /// together again. Kept as the pair of their preferred addresses, which
-    /// is what lets it outlive a join on either side (R11).
+    /// Kept as the pair of preferred addresses, so it outlives a join on either side.
     pub async fn dismiss(&self, a: ContactId, b: ContactId) -> Result<()> {
         sql::in_scope(self.connection, |transaction| async move {
             let pa = fields(&transaction, a).await?.preferred.get();
@@ -2139,9 +1940,8 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Mail the user sent to `asked` was answered from `answered`: evidence
-    /// that the two addresses may be one person (R11). Nothing when either is
-    /// unknown or one person already owns both.
+    /// Evidence the two addresses may be one person. Nothing when either is unknown or one person
+    /// owns both.
     pub async fn note_reply(&self, asked: &str, answered: &str) -> Result<()> {
         let (asked, answered) = (asked.to_lowercase(), answered.to_lowercase());
         if asked == answered {
@@ -2177,9 +1977,7 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// If `message` answers mail the user sent to exactly one address, and
-    /// answers it from a different one, notes the pair (R11). One read, and
-    /// only for a reply that is not the user's own.
+    /// One read, and only for a reply that is not the user's own.
     pub async fn record_reply(&self, message: &Message, own: &[EmailAddress]) -> Result<()> {
         let (Some(parent), Some(from)) = (&message.in_reply_to, message.from.first()) else {
             return Ok(());
@@ -2218,14 +2016,10 @@ impl ContactRepository<'_> {
         }
     }
 
-    /// Applies a vCard import in one transaction (FR-053, R9): people first,
-    /// so a group card can name them by `UID`, then groups.
-    ///
-    /// A card whose addresses nobody owns is a new person. A card whose
-    /// addresses one person owns is that person, and takes the card's name
-    /// unless the user named them -- which the summary counts. A card whose
-    /// addresses several people own joins them, and the summary lists the
-    /// join. Every card is kept whole in `contacts.vcard` for export.
+    /// People first, so a group card can name them by `UID`, then groups. A card owned by one
+    /// person takes the card's name unless the user named them (counted in the summary); a card
+    /// spanning several people lists the join and merges nobody. Each card is kept whole in
+    /// `contacts.vcard` for export.
     pub async fn apply_import(&self, cards: &[ParsedCard]) -> Result<ImportSummary> {
         let cards = cards.to_vec();
         sql::in_scope(self.connection, |transaction| async move {
@@ -2287,9 +2081,7 @@ impl ContactRepository<'_> {
                     summary.name_conflicts += 1;
                 }
                 if !rest.is_empty() {
-                    // The card lists the addresses of several people you
-                    // have. An import never merges people behind your back:
-                    // the card is the evidence the review shows.
+                    // An import never merges people: the card is the evidence the review shows.
                     summary.offered_merges += 1;
                     let key = card.uid.clone().unwrap_or_else(|| card.raw.clone());
                     for owner in &owners {
@@ -2326,7 +2118,6 @@ impl ContactRepository<'_> {
                 summary.touched.push(owner.id);
             }
         }
-        // Which of the card's addresses it prefers.
         if let Some((preferred, _)) = card.emails.iter().find(|(_, p)| *p)
             && let Some(owned) = self.get(person).await?.and_then(|p| {
                 p.addresses
@@ -2372,8 +2163,6 @@ impl ContactRepository<'_> {
             self.note_evidence(person, postio_model::EvidenceKind::Signature, &key)
                 .await?;
         }
-        // A new person who has the name of someone you already have is
-        // counted, and the review offers the merge.
         if owners.is_empty() {
             let same = sql::scalar(
                 self.connection,
@@ -2390,7 +2179,6 @@ impl ContactRepository<'_> {
         Ok(person)
     }
 
-    /// A person's vCard identity and stored card, if any.
     pub async fn card_of(&self, person: ContactId) -> Result<(Option<String>, Option<String>)> {
         let found: Option<(Option<String>, Option<String>)> = sql::first(
             self.connection,
@@ -2405,8 +2193,6 @@ impl ContactRepository<'_> {
         })
     }
 
-    /// Every live person in `view`, by id, in list order -- what export
-    /// writes when nothing is selected and nothing filtered (FR-050).
     pub async fn view_ids(&self, view: ContactView) -> Result<Vec<ContactId>> {
         sql::all_unbounded(
             self.connection,
@@ -2420,9 +2206,7 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// What export writes for each of `ids` that is live: the person, their
-    /// `UID` -- given one now, and kept, if they had none, so a second export
-    /// names them the same -- and their stored card.
+    /// Gives a person without one a `UID`, kept so a second export names them the same.
     pub async fn export_people(&self, ids: &[ContactId]) -> Result<Vec<ExportRow>> {
         let ids = ids.to_vec();
         sql::in_scope(self.connection, |transaction| async move {
@@ -2462,10 +2246,7 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Every group with a member among `rows`, as export writes it: a `UID`
-    /// -- given now and kept, as for people -- its name, its stored card,
-    /// and the `UID`s of the members being exported with it. A group whose
-    /// members are all left out of this export is left out too.
+    /// A group whose members are all left out of this export is left out too.
     pub async fn export_groups(&self, rows: &[ExportRow]) -> Result<Vec<GroupExport>> {
         let by_person: BTreeMap<ContactId, String> = rows
             .iter()
@@ -2517,16 +2298,12 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Who owns `address`, or `None` for nobody.
     pub async fn owner_of_address(&self, address: AddressId) -> Result<Option<ContactId>> {
         Ok(owner_of(self.connection, address)
             .await?
             .map(ContactId::new))
     }
 
-    /// Lets go of `address`: it belongs to nobody afterwards, as a typed
-    /// address did before anyone added it. What undoes adding one nobody
-    /// owned.
     pub async fn release_address(&self, address: AddressId) -> Result<AddressMove> {
         sql::in_scope(self.connection, |transaction| async move {
             let previous = owner_of(&transaction, address).await?;
@@ -2550,9 +2327,7 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Makes `address` the one completion offers first and "write to" uses
-    /// (FR-016). Returns the preferred address it replaced. Refused for an
-    /// address that is not the person's own.
+    /// Returns the preferred address it replaced; refused for an address that is not the person's.
     pub async fn set_preferred(&self, person: ContactId, address: AddressId) -> Result<AddressId> {
         sql::in_scope(self.connection, |transaction| async move {
             let owns = sql::exists(
@@ -2581,8 +2356,7 @@ impl ContactRepository<'_> {
     }
 }
 
-/// Who owned `address`, or `None` for nobody; an address the store does not
-/// have is an error.
+/// An address the store does not have is an error.
 async fn owner_of(connection: &Connection, address: AddressId) -> Result<Option<i64>> {
     let found: Option<Option<i64>> = sql::first(
         connection,
@@ -2597,33 +2371,23 @@ async fn owner_of(connection: &Connection, address: AddressId) -> Result<Option<
     })
 }
 
-/// One person as export writes them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportRow {
-    /// The person, with their addresses, preferred first.
     pub person: Contact,
-    /// Their vCard `UID`.
     pub uid: String,
-    /// The card they were imported from, if they were.
     pub vcard: Option<String>,
 }
 
-/// One group as export writes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupExport {
-    /// Its vCard `UID`.
     pub uid: String,
-    /// Its name.
     pub name: String,
-    /// The `UID`s of its members in this export.
     pub members: Vec<String>,
-    /// The card it was imported from, if it was.
     pub vcard: Option<String>,
 }
 
-/// A fresh vCard `UID`: a version 4 UUID from the standard library's
-/// per-process random hash keys, so no generator crate is needed for one
-/// identifier per exported person.
+/// A v4 UUID from the standard library's per-process random hash keys, so no generator crate is
+/// needed.
 fn new_uid() -> String {
     use std::hash::{BuildHasher, Hasher};
     let half = || {
@@ -2660,9 +2424,6 @@ fn new_uid() -> String {
     )
 }
 
-/// Makes a group card's group, or finds the one already called that, and
-/// puts its members in it: by `UID` among the cards just imported or the
-/// people already here, or by address.
 async fn import_group(
     connection: &Connection,
     card: &ParsedGroup,
@@ -2718,7 +2479,6 @@ async fn import_group(
     Ok(())
 }
 
-/// A person's state.
 async fn state_of(connection: &Connection, person: ContactId) -> Result<ContactState> {
     let state: Option<String> = sql::first(
         connection,
@@ -2737,9 +2497,6 @@ async fn state_of(connection: &Connection, person: ContactId) -> Result<ContactS
     })
 }
 
-/// Refuses one of the user's own addresses -- an account's or an
-/// identity's. The user is never their own contact (spec edge case), and
-/// saying so beats a person who silently never appears.
 async fn refuse_own(connection: &Connection, address: &EmailAddress) -> Result<()> {
     let own = sql::scalar(
         connection,
@@ -2757,7 +2514,6 @@ async fn refuse_own(connection: &Connection, address: &EmailAddress) -> Result<(
     Ok(())
 }
 
-/// A person's editable fields, for a receipt or an inverse.
 async fn fields(connection: &Connection, person: ContactId) -> Result<PersonFields> {
     type Row = (
         Option<String>,
@@ -2799,7 +2555,6 @@ async fn fields(connection: &Connection, person: ContactId) -> Result<PersonFiel
     })
 }
 
-/// A person's job title, if they have one.
 async fn title_of(connection: &Connection, person: ContactId) -> Result<Option<String>> {
     let title: Option<Option<String>> = sql::first(
         connection,
@@ -2811,7 +2566,6 @@ async fn title_of(connection: &Connection, person: ContactId) -> Result<Option<S
     Ok(title.flatten().filter(|t| !t.trim().is_empty()))
 }
 
-/// The groups a person is in.
 async fn groups_of(
     connection: &Connection,
     person: ContactId,
@@ -2825,8 +2579,6 @@ async fn groups_of(
     .await
 }
 
-/// A deliberate edit promotes a person known only from mail to one the user
-/// made, in place (FR-022).
 async fn promote(connection: &Connection, person: ContactId) -> Result<()> {
     sql::execute(
         connection,
@@ -2837,14 +2589,9 @@ async fn promote(connection: &Connection, person: ContactId) -> Result<()> {
     Ok(())
 }
 
-/// Records one correspondent, inside the message's transaction.
-///
-/// Three statements when the address already has an owner and its name has
-/// not changed, which is almost every call on a mailbox of any age: find the
-/// address and its owner, count the sighting, add it to the owner's
-/// aggregates. A first sighting creates the person — two more — and a new
-/// display name adds its words to the filter index. Every statement is a
-/// literal so it is compiled once per connection (#728).
+/// Three statements when the address has an owner and its name is unchanged (almost every call); a
+/// first sighting adds two more, and a new display name adds its words to the filter index. Every
+/// statement is a literal so it compiles once per connection (#728).
 async fn record_in(connection: &Connection, now: &Recording<'_>, seen: &Seen<'_>) -> Result<()> {
     let Recording {
         account, at, own, ..
@@ -2878,9 +2625,8 @@ async fn record_in(connection: &Connection, now: &Recording<'_>, seen: &Seen<'_>
     let existed = found.is_some();
     let (address_id, owner, user_name, seen_name, last_seen) = match found {
         Some(found) => found,
-        // Sync writes a message's recipients before recording it, so the
-        // address row is already there; a caller recording a message it never
-        // stored gets one made here.
+        // Sync writes recipients before recording, so the address row exists; a caller recording a
+        // never-stored message gets one made here.
         None => (
             super::messages::address_id(connection, address).await?,
             None,
@@ -2952,8 +2698,8 @@ async fn record_in(connection: &Connection, now: &Recording<'_>, seen: &Seen<'_>
             let mut terms = address_terms(address);
             terms.extend(header_name.into_iter().flat_map(words));
             insert_terms(connection, person, &terms).await?;
-            // An address that had mail before contacts began has history
-            // nothing recorded; add it to this first sighting.
+            // Mail from before contacts began has history nothing recorded; fold it into this first
+            // sighting.
             if existed && history_through(connection).await? > 0 {
                 fold_sightings(connection, address_id, Some(own), true).await?;
                 refresh(connection, person).await?;
@@ -3010,20 +2756,13 @@ async fn record_in(connection: &Connection, now: &Recording<'_>, seen: &Seen<'_>
     Ok(())
 }
 
-/// What one batch of the catch-up did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CatchUp {
-    /// People made.
     pub made: usize,
-    /// The lowest address this batch reached: pass it as `before` for the
-    /// next. `None` when the walk found nothing.
     pub last: Option<AddressId>,
-    /// Whether the walk ran out before the batch filled.
     pub done: bool,
 }
 
-/// The person owning `address`, made from its stored mail if there is none;
-/// `None` for the user's own address.
 async fn adopt(connection: &Connection, address: i64) -> Result<Option<i64>> {
     type Found = (Option<i64>, String, i64);
     let found: Option<Found> = sql::first(
@@ -3069,16 +2808,10 @@ async fn adopt(connection: &Connection, address: i64) -> Result<Option<i64>> {
     Ok(Some(person))
 }
 
-/// Sets the address's sightings to what its stored mail says, folded per
-/// account in one statement: how many messages, the newest, how many the
-/// user sent to it, and the newest name a header gave it. `own` is who
-/// counts as the user -- a caller that was told (sync) says so; `None`
-/// reads the accounts' and identities' addresses from the store.
-///
-/// Only mail stored before contacts began ([`history_through`]) is folded: a
-/// message stored since is recorded by the pass that stored it, and counting
-/// it here too would count it twice. `add` adds to the sightings already
-/// there (an address recorded since), where otherwise they are set.
+/// Only mail stored before contacts began ([`history_through`]) is folded: later mail is recorded
+/// by the pass that stored it, and counting it here would count it twice. `own` says who counts as
+/// the user (`None` reads accounts and identities from the store); `add` adds to existing sightings
+/// instead of setting them.
 async fn fold_sightings(
     connection: &Connection,
     address: i64,
@@ -3182,8 +2915,6 @@ async fn fold_sightings(
     fold_months_and_ring(connection, address, &mine, &parameters, through_at, add).await
 }
 
-/// The months and the ring of the mail stored before contacts began,
-/// written the way recording would have.
 async fn fold_months_and_ring(
     connection: &Connection,
     address: i64,
@@ -3231,7 +2962,6 @@ async fn fold_months_and_ring(
     trim_ring(connection, address).await
 }
 
-/// What `person` decided (see `contact_settings`), the default for no row.
 async fn read_settings(
     connection: &Connection,
     person: i64,
@@ -3241,7 +2971,6 @@ async fn read_settings(
         .await
 }
 
-/// Records what `person` decided; the default removes the row.
 async fn write_settings(
     connection: &Connection,
     person: i64,
@@ -3252,8 +2981,6 @@ async fn write_settings(
         .await
 }
 
-/// Writes one sighting's month and ring entry: the strip and the newest
-/// fifty a card reads. A message never stored has no ring entry.
 async fn note_month_and_ring(
     connection: &Connection,
     address: i64,
@@ -3286,7 +3013,6 @@ async fn note_month_and_ring(
     trim_ring(connection, address).await
 }
 
-/// Keeps an address's ring to its newest [`postio_model::RECENT`].
 async fn trim_ring(connection: &Connection, address: i64) -> Result<()> {
     sql::execute(
         connection,
@@ -3300,9 +3026,8 @@ async fn trim_ring(connection: &Connection, address: i64) -> Result<()> {
     Ok(())
 }
 
-/// The newest message id the store held when contacts began, or 0 for a
-/// store that began with them. Mail up to it was stored before anything
-/// recorded who it was from; mail after it is recorded as it is stored.
+/// 0 for a store that began with contacts. Mail up to it was stored before anything recorded who it
+/// was from.
 async fn history_through(connection: &Connection) -> Result<i64> {
     let kept: Option<String> = sql::first(
         connection,
@@ -3314,7 +3039,6 @@ async fn history_through(connection: &Connection) -> Result<i64> {
     Ok(kept.and_then(|text| text.trim().parse().ok()).unwrap_or(0))
 }
 
-/// An address's row id and, if someone owns it, the owner's id and state.
 /// Creates the address row when the store has never seen it.
 pub(super) async fn address_and_owner(
     connection: &Connection,
@@ -3339,11 +3063,8 @@ pub(super) async fn address_and_owner(
     }
 }
 
-/// Recomputes everything about a person that is derived from their addresses:
-/// the aggregates, the name the mail last gave them, the sort and suggestion
-/// keys, a preferred address that is one of their own, and their filter
-/// terms. Used after any structural edit — create, join, detach, move — which
-/// are rare, so clarity wins over statement count here.
+/// Used after structural edits (create, join, detach, move), which are rare, so clarity wins over
+/// statement count.
 pub(super) async fn refresh(connection: &Connection, person: i64) -> Result<()> {
     sql::execute(
         connection,
@@ -3435,14 +3156,8 @@ pub(super) async fn refresh(connection: &Connection, person: i64) -> Result<()> 
     Ok(())
 }
 
-/// After `person` has lost addresses to someone else: refreshed if they
-/// still own one, and folded into `receiver` -- `merged`, offered nowhere --
-/// if they are left with none.
-///
-/// Folded rather than removed, and the state they were in handed back,
-/// because undo has to be able to give the address back to *them*: a
-/// person removed here would leave the inverse with nobody to return it to
-/// (specs/005-contacts research R8).
+/// Folded into `receiver` (`merged`) rather than removed, and the prior state handed back: undo
+/// must be able to return the address to them (research R8).
 pub(super) async fn settle_after_losing_addresses(
     connection: &Connection,
     person: i64,
@@ -3480,7 +3195,6 @@ pub(super) async fn settle_after_losing_addresses(
     Ok(state.as_deref().and_then(ContactState::from_name))
 }
 
-/// Adds `terms` to a person's filter index; one statement for all of them.
 async fn insert_terms(
     connection: &Connection,
     person: i64,
@@ -3504,17 +3218,13 @@ async fn insert_terms(
     Ok(())
 }
 
-/// The words of a name or an organisation, lowercased: what a person types
-/// to find it, first name or surname alike.
 pub(crate) fn words(text: &str) -> impl Iterator<Item = String> + '_ {
     text.split(|c: char| !c.is_alphanumeric())
         .filter(|w| !w.is_empty())
         .map(str::to_lowercase)
 }
 
-/// The ways a person types an address to find it: the whole thing, the local
-/// part, the domain, and each word of either — so `lovelace` finds
-/// `ada.lovelace@example.com` and `example` finds its whole domain.
+/// So `lovelace` finds `ada.lovelace@example.com` and `example` finds its whole domain.
 pub(crate) fn address_terms(address: &EmailAddress) -> BTreeSet<String> {
     let normalized = address.normalized();
     let mut terms = BTreeSet::new();
@@ -3529,20 +3239,16 @@ pub(crate) fn address_terms(address: &EmailAddress) -> BTreeSet<String> {
     terms
 }
 
-/// The smallest string greater than every string starting with `prefix`, for
-/// an index range `term >= prefix AND term < bound`.
 pub(crate) fn term_upper_bound(prefix: &str) -> String {
     let mut bound = prefix.to_owned();
     bound.push(char::MAX);
     bound
 }
 
-/// A displayed name, folded for ordering the list.
 pub(crate) fn sort_key(displayed: &str) -> String {
     displayed.trim().to_lowercase()
 }
 
-/// A displayed name, folded for noticing that two people share it (R11).
 pub(crate) fn name_key(displayed: &str) -> String {
     displayed
         .split_whitespace()
@@ -3551,7 +3257,6 @@ pub(crate) fn name_key(displayed: &str) -> String {
         .to_lowercase()
 }
 
-/// Moves the preferred address to the front, the order completion offers them.
 fn put_preferred_first(person: &mut Contact) {
     if let Some(at) = person
         .addresses
@@ -3563,18 +3268,14 @@ fn put_preferred_first(person: &mut Contact) {
     }
 }
 
-/// What saving the Edit form did, and what puts it back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SavedForm {
-    /// Who was made or changed.
     pub person: ContactId,
-    /// The form as it was before, for an existing person; `None` for one just
-    /// made, whom undo deletes.
+    /// `None` for a person just made, whom undo deletes.
     pub prior: Option<postio_model::ContactForm>,
 }
 
 impl ContactRepository<'_> {
-    /// The label and bounce mark of each of `person`'s addresses.
     pub async fn address_notes(&self, person: ContactId) -> Result<Vec<postio_model::AddressNote>> {
         sql::all(
             self.connection,
@@ -3595,7 +3296,6 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// The Edit form for `person`, as the card would fill it.
     pub async fn form_of(&self, person: ContactId) -> Result<Option<postio_model::ContactForm>> {
         let Some(detail) = self.detail(person).await? else {
             return Ok(None);
@@ -3615,15 +3315,9 @@ impl ContactRepository<'_> {
         Ok(Some(postio_model::ContactForm::of(&card, &notes)))
     }
 
-    /// Makes a person from the Edit form, or changes `person` to be what the
-    /// form says (specs/011-focus-contacts S8), and hands back what puts it
-    /// back.
-    ///
-    /// Everything the form holds is checked before anything is written: an
-    /// address a live person owns is refused whole, naming no half-saved
-    /// state. Names, kind (the user's from now on), style, work, addresses,
-    /// which one is primary, their labels and their groups all land; an
-    /// address the form no longer lists is let go, never deleted from the mail.
+    /// Everything is checked before anything is written: an address a live person owns refuses the
+    /// whole save. The kind becomes the user's; an address the form no longer lists is let go,
+    /// never deleted from the mail.
     pub async fn save_form(
         &self,
         person: Option<ContactId>,
@@ -3656,7 +3350,6 @@ impl ContactRepository<'_> {
                     .any(|old| old.address.eq_ignore_ascii_case(&address.address))
             })
         };
-        // Every address the form adds must be one nobody live owns.
         for address in wanted.iter().filter(|address| !keeps(address)) {
             if let Some(owner) = self.by_address(&address.address).await?
                 && owner.state == ContactState::Live
@@ -3772,7 +3465,6 @@ impl ContactRepository<'_> {
                 bind![id.get(), now],
             )
             .await?;
-            // Groups: by name, made when new, shared across people.
             let held: Vec<(i64, String)> = sql::all(
                 &transaction,
                 "SELECT g.id, g.name FROM contact_group_members m
@@ -3833,54 +3525,35 @@ impl ContactRepository<'_> {
     }
 }
 
-/// A record of an address book, as Postio would keep it. Plain fields: the
-/// sync crate's types stop above the store.
+/// Plain fields: the sync crate's types stop above the store.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BookPerson {
     /// A company when the record has an organisation and no name.
     pub kind: ContactKind,
-    /// Given name.
     pub given: String,
-    /// Family name.
     pub family: String,
-    /// Organisation.
     pub organization: String,
-    /// Job title.
     pub title: String,
-    /// Every address, lowercase.
     pub emails: Vec<String>,
-    /// Every phone number, as written.
     pub phones: Vec<String>,
 }
 
-/// What an address book changed about a person Postio has: the fields to take
-/// from it. Absent fields stay as they are, and nothing is ever taken away.
+/// Absent fields stay as they are; nothing is ever taken away.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BookChanges {
-    /// A new given name.
     pub given: Option<String>,
-    /// A new family name.
     pub family: Option<String>,
-    /// A new organisation.
     pub organization: Option<String>,
-    /// A new job title.
     pub title: Option<String>,
-    /// Addresses to add.
     pub emails: Vec<String>,
-    /// Phone numbers to add.
     pub phones: Vec<String>,
 }
 
-/// A saved person and the address-book record they are the same person as,
-/// with the fields as of the last sync: what makes the next comparison
-/// three-way.
+/// The fields as of the last sync make the next comparison three-way.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncLinkRow {
-    /// Postio's id.
     pub contact: i64,
-    /// The address book's id for the record.
     pub external: String,
-    /// The synced fields as of the last sync.
     pub base: BookPerson,
 }
 
@@ -3896,14 +3569,9 @@ fn unlines(text: &str) -> Vec<String> {
 }
 
 impl ContactRepository<'_> {
-    /// Brings a record of an address book into Postio as a saved contact, or
-    /// returns who it already is. Writes Postio's database and nothing else.
-    ///
-    /// The address decides who: nobody owning any of its addresses makes a new
-    /// person; one unsaved person owning them (a sender seen in mail) is saved
-    /// and takes the record's details; a saved person, or several, owning
-    /// them leaves the record where it is (`None`), because deciding that is a
-    /// merge the person is offered, not an import's to do.
+    /// Writes Postio's database only. Nobody owning its addresses makes a new person; one unsaved
+    /// person (a sender seen in mail) is saved and takes the details; a saved person, or several,
+    /// leaves the record (`None`), since that is a merge the user is offered.
     pub async fn bring_in(&self, record: &BookPerson) -> Result<Option<ContactId>> {
         let mut owners: Vec<Contact> = Vec::new();
         for address in &record.emails {
@@ -3955,7 +3623,6 @@ impl ContactRepository<'_> {
         Ok(Some(saved.person))
     }
 
-    /// Takes `changes` from an address book into the saved `person`.
     pub async fn take_from_book(&self, person: ContactId, changes: &BookChanges) -> Result<()> {
         let mut form = self.form_of(person).await?.ok_or(Error::NotFound {
             entity: "contact",
@@ -3974,7 +3641,6 @@ impl ContactRepository<'_> {
             form.title.clone_from(title);
         }
         for address in &changes.emails {
-            // An address another person has stays theirs.
             if let Some(owner) = self.by_address(address).await?
                 && owner.state == ContactState::Live
                 && owner.id != person
@@ -4000,7 +3666,6 @@ impl ContactRepository<'_> {
         Ok(())
     }
 
-    /// Every link between a saved person and an address-book record.
     pub async fn sync_links(&self) -> Result<Vec<SyncLinkRow>> {
         sql::all_unbounded(
             self.connection,
@@ -4026,8 +3691,7 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Records that `link.contact` and `link.external` are the same person, as
-    /// of these fields. Each side has at most one partner.
+    /// Each side has at most one partner.
     pub async fn put_sync_link(&self, link: &SyncLinkRow) -> Result<()> {
         let link = link.clone();
         sql::in_scope(self.connection, |transaction| async move {
@@ -4061,7 +3725,6 @@ impl ContactRepository<'_> {
 }
 
 impl ContactRepository<'_> {
-    /// The phones and websites kept for `person`, or refused.
     pub async fn details(&self, person: ContactId) -> Result<Vec<postio_model::KeptDetail>> {
         sql::all(
             self.connection,
@@ -4084,8 +3747,6 @@ impl ContactRepository<'_> {
         .await
     }
 
-    /// Keeps a detail (`Some(true)`), refuses it so it is not offered again
-    /// (`Some(false)`), or forgets it (`None`).
     pub async fn set_detail(
         &self,
         person: ContactId,
@@ -4121,9 +3782,6 @@ impl ContactRepository<'_> {
         Ok(())
     }
 
-    /// For the new-sender popover: the newest message `person` sent, when it
-    /// arrived, and the names of up to three saved people who were also on
-    /// it. `None` when they have sent nothing that is still here.
     pub async fn introduction_facts(
         &self,
         person: &postio_model::Contact,
@@ -4169,9 +3827,8 @@ impl ContactRepository<'_> {
         )))
     }
 
-    /// "Add contact" in the new-sender popover: the person is saved, and what
-    /// their signature said becomes theirs -- title and company where they
-    /// had none, phones and websites as details. Hands back what undo needs.
+    /// The person is saved and their signature's title, company, phones and websites become theirs
+    /// where they had none. Returns what undo needs.
     pub async fn add_sender(
         &self,
         person: ContactId,
@@ -4236,7 +3893,6 @@ impl ContactRepository<'_> {
         })
     }
 
-    /// Puts a person back as they were before [`add_sender`](Self::add_sender).
     pub async fn restore_sender(
         &self,
         person: ContactId,
@@ -4263,9 +3919,7 @@ impl ContactRepository<'_> {
 }
 
 impl ContactRepository<'_> {
-    /// Saves every live person the user has written to and not yet saved or
-    /// put away. Returns how many. People only: a list, a company or an
-    /// automated sender is not saved by being written to.
+    /// People only: a list, company or automated sender is not saved by being written to.
     pub async fn save_written_to(&self) -> Result<usize> {
         let changed = sql::execute(
             self.connection,
@@ -4278,8 +3932,6 @@ impl ContactRepository<'_> {
         Ok(usize::try_from(changed).unwrap_or(usize::MAX))
     }
 
-    /// Everyone sync would consider: live people the user saved, with their
-    /// addresses, and the phones they kept. Read only.
     pub async fn saved_for_sync(&self) -> Result<Vec<(Contact, Vec<String>)>> {
         let people: Vec<Contact> = sql::all_unbounded(
             self.connection,
@@ -4312,8 +3964,6 @@ impl ContactRepository<'_> {
             .collect())
     }
 
-    /// Notes a fact about `person` the way the body stage does for a sender:
-    /// what an import read from their card.
     pub async fn note_evidence(
         &self,
         person: ContactId,
@@ -4329,10 +3979,8 @@ impl ContactRepository<'_> {
         Ok(())
     }
 
-    /// Notes what a message said about its sender (specs/011-focus-contacts
-    /// S10): a signature, a phone, a `Resent-From`. Kept against the sender's
-    /// person, once however often the mail says it; what is noted is a fact
-    /// about them, never the message.
+    /// Kept against the sender's person once however often the mail says it; a fact about them,
+    /// never the message.
     pub async fn record_evidence(
         &self,
         message: postio_model::MessageId,
@@ -4364,11 +4012,9 @@ impl ContactRepository<'_> {
         Ok(())
     }
 
-    /// Pairs of live people the mail says may be one, found without being
-    /// told: the same signature or phone noted on both, a `Resent-From` that
-    /// names the other's address, or one stopping as the other begins in at
-    /// least two shared threads. Lower id first; pairs the user said are two
-    /// people are left out.
+    /// Same signature or phone noted on both, a `Resent-From` naming the other's address, or one
+    /// stopping as the other begins in at least two shared threads. Lower id first; pairs the user
+    /// said are two people are left out.
     pub async fn discovered_pairs(&self, limit: u32) -> Result<Vec<(ContactId, ContactId)>> {
         use std::collections::BTreeSet;
         let cap = i64::from(limit) * 4;
@@ -4438,7 +4084,6 @@ impl ContactRepository<'_> {
         Ok(out)
     }
 
-    /// What the noted evidence says the two records share.
     pub async fn pair_evidence(
         &self,
         a: &postio_model::Contact,
@@ -4493,9 +4138,8 @@ impl ContactRepository<'_> {
         })
     }
 
-    /// A delivery failure named `address`: it is marked, at the time of the
-    /// report, unless a later failure already is. Returns whether the address
-    /// is one the store knows.
+    /// Marked at the time of the report unless a later failure already is. Returns whether the
+    /// store knows the address.
     pub async fn mark_bounced(&self, address: &str, at: chrono::DateTime<Utc>) -> Result<bool> {
         let at = to_millis(at);
         let found = sql::first(
@@ -4517,9 +4161,7 @@ impl ContactRepository<'_> {
         Ok(true)
     }
 
-    /// Whether one of two people stopped writing as the other began, in the
-    /// same threads: the address that stopped, the one that began, and in how
-    /// many threads. `None` when it did not happen in at least one.
+    /// `None` when it did not happen in at least one thread.
     pub async fn took_over(
         &self,
         a: &postio_model::Contact,
@@ -4583,8 +4225,6 @@ impl ContactRepository<'_> {
         Ok(None)
     }
 
-    /// The suggestions as pairs with the answers that crossed, the
-    /// strongest first, for the review.
     pub async fn suggestion_pairs(
         &self,
         limit: u32,
@@ -4604,11 +4244,8 @@ impl ContactRepository<'_> {
     }
 }
 
-/// How long a bounce counts as recent in the review.
 const BOUNCE_RECENT_DAYS: i64 = 30;
 
-/// A person, without addresses — [`ContactRepository::with_addresses`] adds
-/// them.
 pub(super) fn read_person(row: &Row) -> Result<Contact> {
     let source: String = row.col(4)?;
     let state: String = row.col(5)?;
@@ -4653,7 +4290,6 @@ pub(super) fn read_person(row: &Row) -> Result<Contact> {
     })
 }
 
-/// One owned address from [`ADDRESS_COLUMNS`], starting at column `at`.
 fn read_address(row: &Row, at: usize) -> Result<ContactAddress> {
     Ok(ContactAddress {
         id: AddressId::new(row.col(at)?),

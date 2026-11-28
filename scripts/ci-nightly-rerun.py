@@ -56,9 +56,8 @@ from pathlib import Path
 
 ALL = ["coverage", "doc", "tests", "doctests"]
 
-# Job names in `nightly.yml`, which is what the jobs API reports. A job
-# renamed there without moving here falls back to everything, which is slow
-# rather than wrong.
+# Job names in `nightly.yml`; a renamed job falls back to everything, which is slow rather than
+# wrong.
 JOB_SCOPE = {"Coverage floors": ["coverage"], "Docs": ["doc"]}
 SUITE_JOB = "Full suite"
 SUITE_STEP_PREFIX = "cargo nextest run"
@@ -74,8 +73,6 @@ def decide(jobs: list[dict], failed_tests: list[str]) -> dict[str, object]:
     fallback = {"only": list(ALL), "profile": "ci", "tests": []}
     red = [job for job in jobs if job.get("conclusion") in RED]
     if not red:
-        # The run is red and no job says why: a workflow that failed to
-        # start, say. Nothing to narrow to.
         return fallback
 
     only: list[str] = []
@@ -103,7 +100,6 @@ def decide(jobs: list[dict], failed_tests: list[str]) -> dict[str, object]:
             elif step.startswith(DOCTEST_STEP_PREFIX):
                 only.append("doctests")
             else:
-                # Setup broke before the suite said anything.
                 only += ["tests", "doctests"]
                 profile, tests = "ci", []
         if not red_steps:
@@ -183,8 +179,6 @@ def cargo_args(specs: list[str], metadata: dict) -> list[str]:
         flag = flag or "--lib"
         if flag not in flags:
             flags.append(flag)
-    # Target flags apply across every selected package and match where they
-    # can, so `-p a -p b --lib --test=x` builds a's lib tests and b's x.
     return [arg for package in packages for arg in ("-p", package)] + flags
 
 

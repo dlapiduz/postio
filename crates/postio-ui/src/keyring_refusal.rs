@@ -1,19 +1,11 @@
-//! What the window says when the keyring will not give up the key that opens
-//! the mail.
-//!
-//! The store is encrypted under a key the keyring holds (ADR 0014 Q3), so a
-//! keyring that will not answer means the mail cannot be opened at all. The
-//! error type's own `Display` is written for a log; this is the sentence for
-//! a person, in sentence case and in the app's words, so the page that stands
-//! between someone and their mail never shows a pasted error.
+//! The sentence for a person when the keyring will not give up the key that opens the mail
+//! (ADR 0014 Q3); the error's own `Display` is for a log.
 
-/// Where a person unlocks the keyring on this platform.
 #[cfg(not(target_os = "macos"))]
 const UNLOCK: &str = "log in again, or open Passwords and Keys and unlock the login keyring";
 #[cfg(target_os = "macos")]
 const UNLOCK: &str = "log in again, or open Keychain Access and unlock the login keychain";
 
-/// The keyring is locked: say what that costs and how to get past it.
 pub fn locked() -> String {
     format!(
         "Your mail is encrypted, and your system keyring holds the key. The \
@@ -21,8 +13,6 @@ pub fn locked() -> String {
     )
 }
 
-/// The keyring could not be read for some other reason, which `reason`
-/// gives in the keyring's own words.
 pub fn unreadable(reason: &str) -> String {
     let reason = reason.trim().trim_end_matches('.');
     format!(
@@ -48,7 +38,6 @@ mod tests {
             said.contains("locked") && said.contains("unlock it"),
             "{said}"
         );
-        // One spelling of the keyring, not "login keyring" and "Login keyring".
         assert!(!said.contains("Login"), "{said}");
     }
 

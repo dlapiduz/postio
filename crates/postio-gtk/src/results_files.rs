@@ -1,12 +1,6 @@
-//! The results' Files tab and Quick Look (spec 010 steps 6 and 9, design
-//! §3.7 and §3.8, screens 10 and 11).
-//!
-//! The Files tab is a grid of cards in the rows' place, each read by
-//! position when the grid draws it, as the rows are. Quick Look is a panel
-//! over the results showing one hit and every match in its conversation.
-//! Both are the controller's to fill: which card has the ring, which match
-//! card is current, what the panel's buttons are. This draws them, and
+//! The results' Files tab and Quick Look. Both are the controller's to fill: this draws them and
 //! says a click back.
+//! Cards are read by position when the grid draws them, as rows are.
 
 use std::cell::Cell;
 use std::rc::{Rc, Weak};
@@ -57,7 +51,6 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// How many cards or people a tab holds; each is read when drawn.
     pub struct Positions(ObjectSubclass<imp::Positions>)
         @implements gio::ListModel;
 }
@@ -80,7 +73,6 @@ impl Positions {
     }
 }
 
-/// The Files tab: its header, and the grid.
 pub struct FilesGrid {
     root: gtk::Box,
     title: gtk::Label,
@@ -91,13 +83,10 @@ pub struct FilesGrid {
     act: Rc<dyn Fn(CommandId)>,
 }
 
-/// How many lines a preview draws, where the first sits and how far apart.
 const PREVIEW_LINES: u32 = 6;
 const PREVIEW_FIRST: f64 = 14.0;
 const PREVIEW_STEP: f64 = 12.0;
 
-/// A card's preview: its file's shape in quiet ink, the line `marked`
-/// matched in the find highlight.
 fn preview(shape: FilePreview, marked: Option<u32>) -> gtk::DrawingArea {
     let area = gtk::DrawingArea::new();
     area.set_content_height(84);
@@ -165,7 +154,6 @@ fn preview(shape: FilePreview, marked: Option<u32>) -> gtk::DrawingArea {
 }
 
 impl FilesGrid {
-    /// An empty grid over `feed`.
     pub fn new(feed: Feed, act: Rc<dyn Fn(CommandId)>) -> Rc<Self> {
         let title = gtk::Label::new(None);
         title.add_css_class("focus-files-title");
@@ -241,12 +229,10 @@ impl FilesGrid {
         files
     }
 
-    /// What the results pane lays out.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Draw the header and `count` cards, every drawn card read again.
     pub fn show(&self, header: &FilesHeader, count: u64) {
         self.title.set_text(&header.title);
         self.note.set_text(&header.note);
@@ -258,20 +244,15 @@ impl FilesGrid {
         }
     }
 
-    /// The cards drawn again: a page landed, or the ring moved.
     pub fn refresh(&self) {
         self.cards.refresh();
     }
 
-    /// Take the keyboard.
     pub fn focus(&self) {
         self.grid.grab_focus();
     }
 
-    /// An arrow on the grid: the ring goes where it takes it among the
-    /// cards as they are laid out now, from `ring`, and the controller is
-    /// told, as a click tells it (the Mac's grid does the same). Whether it
-    /// went anywhere.
+    /// The controller is told, as a click tells it. Whether it went anywhere.
     pub fn step(&self, arrow: postio_ui::search_view::GridArrow, ring: Option<u64>) -> bool {
         let count = u64::from(self.cards.n_items());
         let Some(to) = postio_ui::search_view::grid_step(ring, arrow, count, self.columns()) else {
@@ -286,8 +267,6 @@ impl FilesGrid {
         true
     }
 
-    /// How many cards the grid lays across now: those in its first row.
-    /// The grid takes two to four by its width.
     fn columns(&self) -> u64 {
         let mut child = self.grid.first_child();
         let row_of = |card: &gtk::Widget| card.compute_bounds(&self.grid).map(|at| at.y());
@@ -305,7 +284,6 @@ impl FilesGrid {
         across.max(1)
     }
 
-    /// The cards' names, in order: what a test reads.
     pub fn names(&self) -> Vec<String> {
         (0..u64::from(self.cards.n_items()))
             .filter_map(|at| self.feed.result_file(at))
@@ -313,14 +291,11 @@ impl FilesGrid {
             .collect()
     }
 
-    /// The card with the ring.
     pub fn focused(&self) -> Option<u64> {
         (0..u64::from(self.cards.n_items()))
             .find(|at| self.feed.result_file(*at).is_some_and(|card| card.focused))
     }
 
-    /// One card: the type tile over its preview, the name, who and when,
-    /// the matching line, and the message it came in.
     fn card(&self, at: u64, card: &FileCard) -> gtk::Box {
         let tile = gtk::Box::new(gtk::Orientation::Vertical, S1);
         tile.add_css_class("focus-file-preview");
@@ -335,9 +310,7 @@ impl FilesGrid {
         kind.add_css_class("focus-file-kind");
         kind.set_halign(gtk::Align::Start);
         tile.append(&kind);
-        // The file's shape, drawn rather than rendered from it, as on the
-        // Mac (FileCardView): a sheet's grid, a page's or a text's lines, a
-        // slide, a picture's ground; the matching line in the find yellow.
+        // The file's shape, drawn rather than rendered from it, as on the Mac (`FileCardView`).
         tile.append(&preview(card.preview, card.marked));
         let name = crate::dropdown::runs_label(&card.name, false);
         name.add_css_class("focus-file-name");
@@ -373,8 +346,6 @@ impl FilesGrid {
     }
 }
 
-/// The People tab (design §3.11): everyone the results are from or to,
-/// most messages first, a row a person in the rows' place.
 pub struct PeopleList {
     root: gtk::ScrolledWindow,
     people: Positions,
@@ -383,8 +354,6 @@ pub struct PeopleList {
 }
 
 impl PeopleList {
-    /// An empty list over `feed`; `act` runs Return's command on a
-    /// double-click.
     pub fn new(feed: Feed, act: Rc<dyn Fn(CommandId)>) -> Rc<Self> {
         let people = Positions::default();
         let factory = gtk::SignalListItemFactory::new();
@@ -441,12 +410,10 @@ impl PeopleList {
         pane
     }
 
-    /// What the results pane lays out.
     pub fn widget(&self) -> &gtk::ScrolledWindow {
         &self.root
     }
 
-    /// `count` people, every drawn row read again.
     pub fn show(&self, count: u64) {
         let count = u32::try_from(count).unwrap_or(u32::MAX);
         if self.people.n_items() == count {
@@ -456,12 +423,10 @@ impl PeopleList {
         }
     }
 
-    /// The rows drawn again: the ring moved.
     pub fn refresh(&self) {
         self.people.refresh();
     }
 
-    /// Scroll the row at `at` into view.
     pub fn reveal(&self, at: u64) {
         if let Ok(at) = u32::try_from(at)
             && at < self.people.n_items()
@@ -470,12 +435,10 @@ impl PeopleList {
         }
     }
 
-    /// Take the keyboard.
     pub fn focus(&self) {
         self.list.grab_focus();
     }
 
-    /// The people's names, in order: what a test reads.
     pub fn names(&self) -> Vec<String> {
         (0..u64::from(self.people.n_items()))
             .filter_map(|at| self.feed.result_person(at))
@@ -483,8 +446,6 @@ impl PeopleList {
             .collect()
     }
 
-    /// One person: the avatar, the name over the address, how many
-    /// messages, the newest one's date.
     fn row(&self, at: u64, row: &postio_focus::PersonRow) -> gtk::Box {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, S3);
         line.add_css_class("focus-results-row");
@@ -531,10 +492,8 @@ impl PeopleList {
     }
 }
 
-/// The page a search that found nothing shows in the rows' place (design
-/// §3.10, screen 13): never a dead end. Each looser search that finds
-/// something is a row, numbered with the key that runs it; the focused one
-/// carries the ring, since Return runs it.
+/// Never a dead end: each looser search that finds something is a row, numbered with the key that
+/// runs it; the focused one carries the ring, since Return runs it.
 pub struct NoResultsPage {
     root: gtk::Box,
     title: gtk::Label,
@@ -545,7 +504,6 @@ pub struct NoResultsPage {
     act: Rc<dyn Fn(CommandId)>,
 }
 
-/// The command that runs looser search `number`, from 1.
 fn relaxation_command(number: u32) -> Option<CommandId> {
     match number {
         1 => Some(CommandId::PickRelaxation1),
@@ -557,7 +515,6 @@ fn relaxation_command(number: u32) -> Option<CommandId> {
 }
 
 impl NoResultsPage {
-    /// An empty page; `act` runs a looser search's command on a click.
     pub fn new(act: Rc<dyn Fn(CommandId)>) -> Rc<Self> {
         let title = gtk::Label::new(None);
         title.add_css_class("focus-nothing-title");
@@ -598,20 +555,17 @@ impl NoResultsPage {
         })
     }
 
-    /// What the results pane lays out.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Take the keyboard: the page itself, while it stands in the rows'
-    /// place, so what is pressed reaches the results' keys -- the numbers
-    /// that pick a looser search, Ctrl+Backspace.
+    /// The page itself takes the keyboard while it stands in the rows' place, so the numbers that
+    /// pick a looser search and Ctrl+Backspace reach the results' keys.
     pub fn focus(&self) {
         self.root.set_focusable(true);
         self.root.grab_focus();
     }
 
-    /// Draw `view`.
     pub fn show(&self, view: &postio_focus::NoResultsView) {
         self.title.set_text(&view.title);
         self.body.set_text(&view.body);
@@ -659,7 +613,6 @@ impl NoResultsPage {
         self.searched.set_text(&view.searched);
     }
 
-    /// The looser searches' words, and which is focused: what a test reads.
     pub fn ways(&self) -> Vec<(String, bool)> {
         let mut ways = Vec::new();
         let mut child = self.ways.first_child();
@@ -675,13 +628,11 @@ impl NoResultsPage {
         ways
     }
 
-    /// The page's title.
     pub fn title(&self) -> String {
         self.title.text().to_string()
     }
 }
 
-/// Every label under `root`.
 fn labels_of(root: &gtk::Widget) -> Vec<gtk::Label> {
     let mut found = Vec::new();
     let mut stack = vec![root.clone()];
@@ -698,9 +649,7 @@ fn labels_of(root: &gtk::Widget) -> Vec<gtk::Label> {
     found
 }
 
-/// Quick Look over the results.
 pub struct QuickLookPanel {
-    /// Holds the panel to its width, whatever its words would ask for.
     clamp: adw::Clamp,
     root: gtk::Box,
     title: gtk::Label,
@@ -715,7 +664,6 @@ pub struct QuickLookPanel {
 }
 
 impl QuickLookPanel {
-    /// A closed panel; `act` runs a header button's command.
     pub fn new(act: Rc<dyn Fn(CommandId)>) -> Rc<Self> {
         let title = gtk::Label::new(None);
         title.add_css_class("focus-quicklook-title");
@@ -734,8 +682,8 @@ impl QuickLookPanel {
         subject.add_css_class("focus-quicklook-subject");
         subject.set_xalign(0.0);
         subject.set_wrap(true);
-        // Wrapped within the panel's width rather than widening it: a
-        // wrapping label asks for its whole line unless told less.
+        // Wrapped within the panel's width rather than widening it: a wrapping label asks for its
+        // whole line unless told less.
         subject.set_max_width_chars(1);
         subject.set_hexpand(true);
         let sender = gtk::Label::new(None);
@@ -762,9 +710,8 @@ impl QuickLookPanel {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.add_css_class("focus-quicklook");
         root.set_halign(gtk::Align::Center);
-        // The rows' whole height, within its margins, whatever it holds: as
-        // the Mac's fixed frame, its edges stay put while j and k walk
-        // results of more or fewer matches.
+        // The rows' whole height whatever it holds, as the Mac's fixed frame: its edges stay put
+        // while j and k walk results of more or fewer matches.
         root.set_valign(gtk::Align::Fill);
         root.set_width_request(720);
         root.append(&head);
@@ -772,8 +719,7 @@ impl QuickLookPanel {
         root.append(&body);
         root.set_visible(false);
         root.set_accessible_role(gtk::AccessibleRole::Dialog);
-        // A long subject or passage asks for its whole line; the clamp
-        // holds the panel to its width and the words wrap within it.
+        // The clamp holds the panel to its width and the words wrap within it.
         let clamp = adw::Clamp::builder()
             .maximum_size(720)
             .tightening_threshold(720)
@@ -798,19 +744,14 @@ impl QuickLookPanel {
         panel
     }
 
-    /// What the results pane lays over its rows.
     pub fn widget(&self) -> &adw::Clamp {
         &self.clamp
     }
 
-    /// The panel itself, inside its clamp.
     pub fn panel(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Draw `view`, or close with `None`: `Intent::QuickLook`. `commands`
-    /// are what its buttons run, in order
-    /// ([`postio_ui::search_view::quick_look_commands`]).
     pub fn show(&self, view: Option<&QuickLookView>, commands: &[CommandId]) {
         let Some(view) = view else {
             self.root.set_visible(false);
@@ -879,12 +820,10 @@ impl QuickLookPanel {
         self.root.set_visible(true);
     }
 
-    /// Whether it is up.
     pub fn is_open(&self) -> bool {
         self.root.is_visible()
     }
 
-    /// The match cards' places, and which is current: what a test reads.
     pub fn cards(&self) -> Vec<(String, bool)> {
         let mut cards = Vec::new();
         let mut child = self.cards.first_child();
@@ -902,7 +841,6 @@ impl QuickLookPanel {
     }
 }
 
-/// `runs` as markup: strong, mono and the find highlight.
 fn markup(runs: &[postio_focus::Run]) -> String {
     crate::dropdown::runs_label(runs, false).label().to_string()
 }

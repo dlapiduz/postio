@@ -29,7 +29,6 @@ import subprocess
 from pathlib import Path
 
 ARCHIVE = "docs/archive/"
-# The archive's own index: listing what is in it is what it is for.
 EDITABLE = {"docs/archive/README.md"}
 
 

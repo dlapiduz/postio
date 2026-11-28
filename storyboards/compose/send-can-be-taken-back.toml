@@ -29,7 +29,8 @@ expect  = "The composer closes and the list is back."
 
 [[step]]
 command = "go_to_folders"
-check   = { overlay.kind = "picker", keyboard.region = "picker" }
+check   = { overlay.kind = "picker", keyboard.region = "picker", app.focus.footer.title = { absent = true } }
+expect  = "The places popover opens with the keyboard in its query. No footer is drawn under it: r, f and e type into the query, and Return opens the place (#2227)."
 
 [[step]]
 type    = "Outbox"
@@ -41,6 +42,8 @@ expect  = "The Outbox lists the reply, queued and not yet sent."
 
 [[step]]
 command = "next_message"
+check   = { cursor.index = 0, app.focus.footer.labels = "move | open | cancel send" }
+expect  = "The cursor is on the queued reply. Its footer offers what acts on it from the row: move, open and cancel send, never reply, forward or archive (#2227)."
 
 [[step]]
 command = "open_message"

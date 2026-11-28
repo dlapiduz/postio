@@ -1,8 +1,5 @@
-//! Whether the keyboard is on something a person could use.
-//!
-//! Observed on every step whatever the delivery mode (research R3): it is a
-//! cheap guard on the class of defect `chain` exists for, and it makes "the
-//! keyboard is on nothing" a check rather than a guess.
+//! Observed on every step whatever the delivery mode: a cheap guard that makes "keyboard is on
+//! nothing" a check.
 
 use adw::prelude::AdwDialogExt;
 use gtk::prelude::*;

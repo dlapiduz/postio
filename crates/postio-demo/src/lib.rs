@@ -1,19 +1,6 @@
-//! Focus's demo stores, shared by every app that photographs or drives Focus
-//! (specs/008-storyboards R11, specs/009-focus-macos T004).
-//!
-//! The GTK app's `shot` and storyboard runner, and the Mac app's demo mode,
-//! each need a real, migrated, seeded store in the references' shape:
-//! today's inbox, a long newsletter, thirty conversations. Building it lives
-//! here, toolkit-free, so the apps share it rather than each keeping a copy;
-//! starting a window over it stays with each app.
-//!
-//! Test-support code: it turns on `postio-storage/test-support`, and an app
-//! reaches it only behind its own `demo` feature, never in a normal build.
-//!
-//! Every name is invented and every address is on a reserved domain.
-//! Nothing touches the network.
-
-#![allow(missing_docs)]
+//! Focus's demo stores, shared by every app that photographs or drives Focus; toolkit-free so apps
+//! share one seed. Test-support code: an app reaches it only behind its own `demo` feature.
+//! Every name is invented, every address is on a reserved domain, and nothing touches the network.
 
 mod files;
 mod search;
@@ -23,51 +10,24 @@ pub use files::{SearchFile, search_files};
 pub use search::{search_demo, store_search_blobs};
 pub use threads::{Arrival, deliver_harbor_reply, store_threads_blobs, threads_demo};
 
-/// A condition of the store, named as every app names it
-/// (specs/008-storyboards R11): something no step can produce, such as
-/// thirty conversations or a draft left over from yesterday.
-///
-/// The bases decide what mail the store holds; the rest add one thing to
-/// [`Seed::Small`]'s inbox. `first-run` is not here: Focus has no orientation strip
-/// (`classic-parity.md` row 12), and its own first run is the store with no
-/// account.
+/// The bases decide what mail the store holds; the rest add one thing to the small inbox.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Seed {
-    /// Today's inbox over the storage seed: the default.
     Small,
-    /// An account with its folders and no mail in the inbox.
     Empty,
-    /// The small seed with the row screen 04 opens refiled as a long
-    /// newsletter that paints its own page: a message tall enough to
-    /// scroll, with a treatment `O` can switch.
     LongNewsletter,
-    /// The message screen 04 opens, addressed to three bare long addresses.
     BareRecipients,
-    /// One conversation of seven messages, the last two unread.
     LongThread,
-    /// Thirty-six conversations in the inbox.
     ThirtyThreads,
-    /// The small seed and a second account beside the first.
     TwoAccounts,
-    /// The small seed and one message queued to send, never sent.
     Outbox,
-    /// The small seed and one draft saved and walked away from.
     DraftLeftOver,
-    /// The small seed with a backfill in flight, said through the host's
-    /// events as the engine says it.
     Backfilling,
-    /// Two years of invented mail for the search design's screens: about
-    /// five hundred messages in conversations of one to twelve, labels,
-    /// folders, two open asks, and files with stored blobs (specs/010-focus-search).
     Search,
-    /// The threads design's conversations: a six-message thread with an
-    /// unsent reply, a 23-message and a 41-message thread, singles, and the
-    /// "rate limit headers" search fixtures (specs/013-focus-threads R14).
     Threads,
 }
 
 impl Seed {
-    /// Every seed Focus can build.
     pub const ALL: [Seed; 12] = [
         Seed::Small,
         Seed::Empty,
@@ -83,7 +43,6 @@ impl Seed {
         Seed::Threads,
     ];
 
-    /// The name a storyboard uses.
     pub fn id(self) -> &'static str {
         match self {
             Seed::Small => "small",
@@ -101,16 +60,13 @@ impl Seed {
         }
     }
 
-    /// The seed a storyboard's name stands for.
     pub fn from_id(id: &str) -> Option<Seed> {
         Seed::ALL.into_iter().find(|seed| seed.id() == id)
     }
 }
 
-/// A store seeded as `seed` asks, and the account its mail is in.
-///
-/// The store half only: a backfill in flight is an event, which
-/// `postio-gtk`'s `demo::storyboard` says once the host is up.
+/// The store half only: a backfill in flight is an event, which `postio-gtk`'s `demo::storyboard`
+/// says once the host is up.
 pub async fn seeded(seed: Seed) -> (Store, AccountId) {
     match seed {
         Seed::Empty => empty_demo().await,
@@ -204,8 +160,6 @@ use postio_storage::repository::{
     MessageRepository, ThreadingRepository,
 };
 
-/// This week's newsletters, held and delivered as screen 01's digest row:
-/// who, about what, and how many minutes before 16:09 each came.
 pub const NEWSLETTERS: &[((&str, &str), &str, i64)] = &[
     (("Ledger", "news@ledger.example"), "The rate decision", 1500),
     (("Ledger", "news@ledger.example"), "Rail funding vote", 4400),
@@ -223,8 +177,6 @@ pub const NEWSLETTERS: &[((&str, &str), &str, i64)] = &[
     ),
 ];
 
-/// Screen 21's filtered mail: the sender, the subject, the first line, the
-/// reason and its source, and how many minutes before 16:09 it was filed.
 pub type Filtered = (
     (&'static str, &'static str),
     &'static str,
@@ -308,36 +260,25 @@ pub const FILTERED: &[Filtered] = &[
     ),
 ];
 
-/// What a row's second line says, when it has one.
 pub enum Ask {
-    /// An invitation, starting this many days from today at this hour, for
-    /// this many minutes.
     Invite { days: i64, hour: i64, minutes: i64 },
-    /// A question, quoting this sentence.
     Question(&'static str),
-    /// A to-do, due this many days from today, quoting this sentence.
     Todo { days: i64, sentence: &'static str },
 }
 
-/// One of today's conversations.
 pub struct Row {
     name: &'static str,
     address: &'static str,
     subject: &'static str,
     preview: &'static str,
-    /// Minutes before 16:09 today.
     minutes: i64,
     unread: bool,
     labels: &'static [&'static str],
     attachment: bool,
-    /// How many messages the conversation holds.
     messages: usize,
     ask: Option<Ask>,
 }
 
-/// Today's inbox, top to bottom, in the references' shape.
-/// The sender the new-sender popover is for: a first email, signed, copied
-/// to someone the user saved (handoff screen 05).
 pub const NEW_SENDER: &str = "caspian@example.com";
 
 pub const TODAY: &[Row] = &[
@@ -576,9 +517,8 @@ pub const TODAY: &[Row] = &[
     },
 ];
 
-/// The demo's config.toml: filtering on, and one digest rule that comes due
-/// on the demo's own day, 16:00 -- the delivery the seed makes is dated then,
-/// so the rule and the row's "came due" agree.
+/// The rule comes due on the demo's own day, 16:00, so the delivery the seed makes and the row's
+/// "came due" agree.
 pub fn config() -> String {
     let day = today()
         .with_timezone(&Local)
@@ -595,8 +535,6 @@ match = [\"from:news@ledger.example\", \"from:hello@soil.example\", \"from:notes
     )
 }
 
-/// Screen 25's vault: three projects in `Projects/`, each with open tasks,
-/// and the tasks note.
 pub fn demo_vault() -> std::io::Result<tempfile::TempDir> {
     let vault = tempfile::tempdir()?;
     let projects = vault.path().join("Projects");
@@ -614,9 +552,7 @@ pub fn demo_vault() -> std::io::Result<tempfile::TempDir> {
     Ok(vault)
 }
 
-/// Records `message`'s correspondents as a sync pass would, handing down the
-/// addresses the store's accounts send as so they are not counted as people
-/// (specs/005-contacts R3).
+/// Hands down the addresses the store's accounts send as, so they are not counted as people.
 pub(crate) async fn record_correspondents(
     connection: &postio_storage::Connection,
     message: &postio_model::Message,
@@ -629,9 +565,6 @@ pub(crate) async fn record_correspondents(
         .await
 }
 
-/// What screens 05 and 06 add to the demo store: the people the To field
-/// completes to, and the Harbor thread's recipients and body, so a reply
-/// to all has someone to copy and something to quote.
 pub async fn compose_demo(database: &Store, account: AccountId) {
     let connection = database.connect().await.expect("a connection");
     let contacts = postio_storage::repository::ContactRepository::new(&connection);
@@ -696,8 +629,73 @@ pub async fn compose_demo(database: &Store, account: AccountId) {
         .expect("its body");
 }
 
-/// 16:09 today, local, by the interface's clock: when the references were
-/// drawn, and a fixed instant once a storyboard has frozen the clock.
+const EVENTS: [(&str, i64, i64, i64, &str); 6] = [
+    ("Standup", 0, 9 * 60 + 30, 15, "Room 2"),
+    ("Design review", 0, 14 * 60, 60, "Room 4.12"),
+    ("Dentist", 0, 17 * 60, 30, "Harbour Street clinic"),
+    ("Standup", 1, 9 * 60 + 30, 15, "Room 2"),
+    ("Lunch with Ines", 1, 12 * 60 + 30, 60, "Corner café"),
+    ("Quarterly planning", 2, 10 * 60, 120, "Room 4.12"),
+];
+
+async fn calendar_demo(connection: &postio_storage::Connection, today: DateTime<Utc>) {
+    use postio_storage::repository::{CalendarRepository, StoredEvent, StoredOccurrence};
+    let calendars = CalendarRepository::new(connection);
+    let local = calendars.local().await.expect("On this computer").id;
+    let midnight = today.with_timezone(&Local).date_naive();
+    for (n, (title, day, minute, length, place)) in EVENTS.into_iter().enumerate() {
+        let start = Local
+            .from_local_datetime(
+                &(midnight + chrono::Duration::days(day)).and_time(chrono::NaiveTime::MIN),
+            )
+            .earliest()
+            .map(|at| at.to_utc())
+            .unwrap_or(today)
+            + chrono::Duration::minutes(minute);
+        let end = start + chrono::Duration::minutes(length);
+        let stamp = |at: DateTime<Utc>| at.format("%Y%m%dT%H%M%SZ").to_string();
+        let uid = format!("demo-event-{n}@example.test");
+        let object = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Postio demo//EN\r\nBEGIN:VEVENT\r\n\
+             UID:{uid}\r\nDTSTAMP:{}\r\nDTSTART:{}\r\nDTEND:{}\r\nSUMMARY:{title}\r\n\
+             LOCATION:{place}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+            stamp(start),
+            stamp(start),
+            stamp(end)
+        );
+        let event = calendars
+            .put_event(&StoredEvent {
+                calendar: local,
+                uid,
+                href: None,
+                etag: None,
+                object: object.into_bytes(),
+                title: title.to_owned(),
+                location: place.to_owned(),
+                starts_at: start,
+                recurs: false,
+                status: postio_model::calendar::EventStatus::Confirmed,
+                my_partstat: None,
+                source_message: None,
+            })
+            .await
+            .expect("a demo event");
+        calendars
+            .set_occurrences(
+                event,
+                &[StoredOccurrence {
+                    start,
+                    end,
+                    all_day: false,
+                    floating: false,
+                    recurrence_id: None,
+                }],
+            )
+            .await
+            .expect("its occurrence");
+    }
+}
+
 pub fn today() -> DateTime<Utc> {
     postio_model::clock::now()
         .date_naive()
@@ -707,7 +705,6 @@ pub fn today() -> DateTime<Utc> {
         .unwrap_or_else(|| postio_model::clock::now().to_utc())
 }
 
-/// Say the inbox last synced at `at`, as a completed pass would.
 pub async fn synced(connection: &postio_storage::Connection, inbox: MailboxId, at: DateTime<Utc>) {
     let mailboxes = postio_storage::repository::MailboxRepository::new(connection);
     if let Ok(Some(mut mailbox)) = mailboxes.get(inbox).await {
@@ -719,8 +716,6 @@ pub async fn synced(connection: &postio_storage::Connection, inbox: MailboxId, a
     }
 }
 
-/// The empty inbox's store (screen 16): an account and its folders, no mail
-/// in the inbox, and a morning's worth of mail filed away.
 pub async fn empty_demo() -> (Store, AccountId) {
     let database = postio_storage::test_support::memory().await;
     let connection = database.connect().await.expect("a connection");
@@ -754,11 +749,8 @@ pub async fn empty_demo() -> (Store, AccountId) {
     (database, account.id)
 }
 
-/// The conversation a storyboard's `body_arrived` holds back: the first row
-/// of [`TODAY`], which the window opens with the cursor on.
 const HELD: usize = 0;
 
-/// The message a storyboard's `new_mail` delivers into the inbox.
 const ARRIVAL: Row = Row {
     name: "Ines Marlow",
     address: "ines@example.com",
@@ -776,7 +768,6 @@ fn text_of(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
-/// The held conversation's only message.
 async fn held_message(
     connection: &postio_storage::Connection,
     account: AccountId,
@@ -791,8 +782,6 @@ async fn held_message(
         .ok_or_else(|| "the seed has no message to hold a body back from".to_owned())
 }
 
-/// Takes the held message's body away, leaving its headers: the state a
-/// message is in before its body is fetched. Done before the window opens.
 pub async fn hold_back_body(store: &Store, account: AccountId) -> Result<(), String> {
     let connection = store.connect().await.map_err(text_of)?;
     let id = held_message(&connection, account).await?;
@@ -813,8 +802,6 @@ pub async fn hold_back_body(store: &Store, account: AccountId) -> Result<(), Str
     Ok(())
 }
 
-/// Stores the held message's body, as a fetch landing it would; the message
-/// whose `BodyLoaded` the caller then says.
 pub async fn deliver_held_body(store: &Store, account: AccountId) -> Result<MessageId, String> {
     let connection = store.connect().await.map_err(text_of)?;
     let id = held_message(&connection, account).await?;
@@ -835,8 +822,6 @@ pub async fn deliver_held_body(store: &Store, account: AccountId) -> Result<Mess
     Ok(id)
 }
 
-/// Files one new message at the top of the inbox, threaded and counted as
-/// sync would leave it; the mailbox and message the caller then announces.
 pub async fn deliver_new_mail(
     store: &Store,
     account: AccountId,
@@ -882,12 +867,8 @@ pub async fn deliver_new_mail(
     Ok((inbox, message.id))
 }
 
-/// The row screen 04 opens: the to-do about the API draft, by its place in
-/// [`TODAY`].
 pub const OPENED: usize = 3;
 
-/// Its body: the marked sentence, a list, and the quoted history folded
-/// under it, as screen 04 draws them.
 pub const OPENED_BODY: &str = "Hi all,\n\n\
 Uploaded v3 of the Harbor API draft with the pagination changes. The main differences from v2:\n\n\
 - Cursor pagination on every list endpoint, replacing page and offset.\n\
@@ -901,7 +882,6 @@ On Monday, Hollis Varga wrote:\n\
 > the exports path, and the rate limits.\n\
 > Everything else reads well to me.\n";
 
-/// Its attachments: the rendered draft and its source.
 pub fn opened_parts() -> Vec<Attachment> {
     [
         ("Harbor-API-v3.pdf", "application/pdf", 212_000),
@@ -912,18 +892,12 @@ pub fn opened_parts() -> Vec<Attachment> {
     .map(|(index, (name, mime, size))| {
         let mut part = Attachment::new(MessageId::UNASSIGNED, mime, size);
         part.filename = Some(name.to_owned());
-        // After the text part, as a synced message's parts are numbered.
         part.part_id = Some((index + 2).to_string());
         part
     })
     .collect()
 }
 
-/// Screens 27-29 (the message dialog redesign, T214): the row screen 04
-/// opens, refiled as one of the handoff's two HTML bodies from the corpus --
-/// the newsletter that paints its own page, or the office mail in black
-/// text with the question its card quotes. The row keeps its place, so the
-/// screens open it the way screen 04 does.
 pub async fn treatment_demo(database: &Store, account: AccountId, screen: &str) {
     let newsletter = matches!(screen, "27" | "30" | "31");
     let connection = database.connect().await.expect("a connection");
@@ -968,12 +942,10 @@ pub async fn treatment_demo(database: &Store, account: AccountId, screen: &str) 
         message.subject = Some(subject.to_owned());
         message.to = vec![to];
         message.cc = Vec::new();
-        // The row's first line is the message's own, not the draft's.
         message.preview = Some(format!(
             "{subject}. Read the release notes in your browser."
         ));
         if newsletter {
-            // Nor the draft's attachments.
             message.attachments.clear();
         }
         messages.update(&mut message).await.expect("its headers");
@@ -1010,10 +982,8 @@ pub async fn treatment_demo(database: &Store, account: AccountId, screen: &str) 
     }
 }
 
-/// The row screen 06 replies to: "Harbor API draft v3".
 pub const HARBOR: u32 = 3;
 
-/// The demo store: the storage seed, and today's inbox on top of it.
 pub async fn demo() -> (Store, AccountId) {
     let database = postio_storage::test_support::memory().await;
     let report = postio_storage::seed::seed_small_downloaded(&database, 1).await;
@@ -1024,13 +994,12 @@ pub async fn demo() -> (Store, AccountId) {
     let today = today();
     let connection = database.connect().await.expect("a connection");
     synced(&connection, inbox, today).await;
+    calendar_demo(&connection, today).await;
     let mut labels: HashMap<&str, postio_model::LabelId> = HashMap::new();
     for (index, row) in TODAY.iter().enumerate() {
         let at = today - chrono::Duration::minutes(row.minutes);
         let mut previous: Option<RfcMessageId> = None;
         let mut last = MessageId::UNASSIGNED;
-        // The earlier messages of the conversation first, read, then the
-        // one the row shows.
         for step in 0..row.messages {
             let later = (row.messages - 1 - step) as i64;
             let newest = later == 0;
@@ -1038,7 +1007,6 @@ pub async fn demo() -> (Store, AccountId) {
             let mut message = message(report.account.id, inbox, row, when, newest);
             if newest && index == OPENED {
                 message.attachments = opened_parts();
-                // Who it went to and who was copied, as screen 04 draws them.
                 message.to = vec![
                     EmailAddress::new(Some("You"), "you@example.com"),
                     EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net"),
@@ -1049,8 +1017,6 @@ pub async fn demo() -> (Store, AccountId) {
                     "harbor-api@example.org",
                 )];
             }
-            // A first email from someone new, copied to someone the user
-            // knows: what the new-sender popover is introduced by.
             if newest && row.address == NEW_SENDER {
                 message.cc = vec![EmailAddress::new(Some("Ben Adeyemi"), "ben@example.net")];
             }
@@ -1064,8 +1030,6 @@ pub async fn demo() -> (Store, AccountId) {
                 .create(&mut message)
                 .await
                 .expect("a message");
-            // Sync records every address it sees; the bar reads names from
-            // them (screen 07).
             record_correspondents(&connection, &message)
                 .await
                 .expect("its correspondents");
@@ -1119,16 +1083,12 @@ pub async fn demo() -> (Store, AccountId) {
                 .expect("a marker");
         }
     }
-    // Screens 07 and 08: invoices from Marisol filed in three places, and
-    // a folder of receipts.
     let receipts = postio_storage::test_support::mailbox(&connection, &report.account, "Receipts")
         .await
         .id;
     let archive = report
         .mailbox(MailboxRole::Archive)
         .map_or(inbox, |mailbox| mailbox.id);
-    // The 19th of last month, whatever today is: "last month" is a
-    // calendar month.
     let last_month = {
         use chrono::Datelike as _;
         let first = today.date_naive().with_day(1).unwrap_or(today.date_naive());
@@ -1169,9 +1129,6 @@ pub async fn demo() -> (Store, AccountId) {
         )
         .await;
     }
-    // Something you are waiting on Marisol for: a message you sent her, with
-    // a reminder no reply has settled, which her popover lists as "Waiting
-    // on Marisol" beside what waits on you.
     waiting_on(
         &connection,
         &report.account,
@@ -1197,8 +1154,6 @@ pub async fn demo() -> (Store, AccountId) {
         )
         .await;
     }
-    // Screen 01's digest row: this week's newsletters, held for
-    // "Newsletters" and delivered at 16:00 today.
     let digests = postio_storage::repository::DigestRepository::new(&connection);
     let mut newsletter_ids = Vec::with_capacity(NEWSLETTERS.len());
     for (index, (from, subject, minutes)) in NEWSLETTERS.iter().enumerate() {
@@ -1222,10 +1177,7 @@ pub async fn demo() -> (Store, AccountId) {
         digests.hold(id, "Newsletters", at).await.expect("held");
         newsletter_ids.push(id);
     }
-    // Earlier issues, a week apart, kept in the Archive: what makes a
-    // newsletter's card say how often it comes (specs/011-focus-contacts S7).
-    // One transaction for the whole run: every window of the every-command
-    // pass seeds a store, and a commit per issue was a third of this.
+    // One transaction for the whole run: every window of the every-command pass seeds a store.
     postio_storage::sql::batch(&connection, "BEGIN IMMEDIATE")
         .await
         .expect("begin");
@@ -1256,9 +1208,6 @@ pub async fn demo() -> (Store, AccountId) {
         .await
         .expect("delivered")
         .expect("a delivery");
-    // Screens 22 and 23: a summary of two of the newsletters, citing the
-    // rate decision and the CRDT comparison, each with a body the cited
-    // passage is found in verbatim.
     let rate_body = "Good morning.\n\n\
         The committee held the rate at four percent for a third month.\n\n\
         The Ledger\n";
@@ -1324,7 +1273,6 @@ pub async fn demo() -> (Store, AccountId) {
         )
         .await
         .expect("a summary");
-    // Screen 21: what filing archived today, each with its reason.
     for (index, (from, subject, preview, reason, source, minutes)) in FILTERED.iter().enumerate() {
         let at = today - chrono::Duration::minutes(*minutes);
         let mut message = Message::new(report.account.id, archive, at);
@@ -1352,7 +1300,6 @@ pub async fn demo() -> (Store, AccountId) {
             .await
             .expect("a decision");
     }
-    // Screen 14: mail was last moved to Receipts.
     postio_storage::repository::SettingsRepository::new(&connection)
         .note_move(receipts)
         .await
@@ -1360,7 +1307,6 @@ pub async fn demo() -> (Store, AccountId) {
     // Before the search index exists: its triggers index every message
     // this makes, and `ensure_schema` backfills the rest in one pass.
     people(&connection).await;
-    // The command bar searches this machine's index, as sync fills it.
     postio_index::index::ensure_schema(&connection)
         .await
         .expect("the search index");
@@ -1368,34 +1314,20 @@ pub async fn demo() -> (Store, AccountId) {
     (database, report.account.id)
 }
 
-/// Everyone the mail names becomes a person, and the senders that are not
-/// people say what they are -- the newsletters of the digest, a list, a
-/// builder -- as the kind detector would have decided, so Contacts has its
-/// tabs to show (specs/011-focus-contacts S7).
-/// The file File \u{25b8} Import Contacts reads in a demo, in place of the open
-/// panel: three invented cards, one for a person the demo has (matched by
-/// address), one for a name the demo has under another address (offered in
-/// the review, never merged), and one nobody has.
 pub const IMPORT_VCF: &str = "BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:demo-grace\r\nFN:Grace Oyelaran\r\nEMAIL:grace@example.org\r\nORG:Example Labs\r\nEND:VCARD\r\n\
 BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:demo-ben\r\nFN:Ben Adeyemi\r\nEMAIL:ben@adeyemi.example\r\nTEL:+1 555 0188\r\nEND:VCARD\r\n\
 BEGIN:VCARD\r\nVERSION:4.0\r\nUID:urn:uuid:demo-tove\r\nFN:Tove Larsson\r\nEMAIL:tove.larsson@example.net\r\nORG:Larsson Studio\r\nEND:VCARD\r\n";
 
-/// The corpus's hostile-markup fixtures all send from here: Beacon Works,
-/// Big Pictures, Account Desk and the rest. Mail from it is in the demo; none
-/// of it is a person a screenshot should show.
+/// Mail from it is in the demo; none of it is a person a screenshot should show.
 const ABUSE_DOMAIN: &str = "abuse.example.com";
 
-/// Senders whose names or addresses exist to attack the header parsers
-/// (`encoded-word-*` in the corpus). Their mail is in the demo; they are not
-/// among its people.
+/// Their mail is in the demo; they are not among its people.
 const HOSTILE_SENDERS: &[&str] = &[
     "mallory@sender.invalid",
     "billing@sender.invalid",
     "broken.from@example.com",
 ];
 
-/// What the app's own catch-up does after it makes people: decide each one's
-/// kind from the counts over their mail.
 async fn sort_by_kind(connection: &postio_storage::Connection) {
     let contacts = ContactRepository::new(connection);
     let rules = postio_classify::kind::KindRules::shipped();
@@ -1422,8 +1354,6 @@ async fn sort_by_kind(connection: &postio_storage::Connection) {
 }
 
 async fn people(connection: &postio_storage::Connection) {
-    // The rows below are many small writes; one commit for them, up to the
-    // threads (whose messages go through the repository on their own).
     postio_storage::sql::batch(connection, "BEGIN IMMEDIATE")
         .await
         .expect("begin");
@@ -1431,15 +1361,11 @@ async fn people(connection: &postio_storage::Connection) {
         .catch_up_batch(None, 100_000)
         .await
         .expect("a person for every address");
-    // The corpus's attack senders stay in the corpus: a screenshot shows
-    // what a person would see, and nobody has a contact named by a header
+    // The corpus's attack senders stay in the corpus: nobody has a contact named by a header
     // injection.
     for hostile in HOSTILE_SENDERS {
         postio_storage::sql::execute(
             connection,
-            // Deleted, as a person would: the address keeps its owner, so
-            // nothing is left "waiting" for the catch-up, and no list shows
-            // them.
             "UPDATE contacts SET state = 'deleted'
               WHERE id IN (SELECT contact_id FROM addresses
                             WHERE address_normalized = ?1 OR address_normalized LIKE ?2)",
@@ -1460,9 +1386,8 @@ async fn people(connection: &postio_storage::Connection) {
         ("automated", "reports@builds.example.com"),
         ("automated", "receipts@shop.example"),
         ("automated", "no-reply@city.example"),
-        // Detection calls a role mailbox a company only where the user knows
-        // two of its people, which this small mailbox does not; the demo
-        // says what a fuller one would.
+        // Detection calls a role mailbox a company only where the user knows two of its people; the
+        // demo says what a fuller mailbox would.
         ("company", "office@northfield.example"),
     ] {
         kinds.push((kind, address.to_owned()));
@@ -1479,7 +1404,6 @@ async fn people(connection: &postio_storage::Connection) {
         .await
         .expect("a kind");
         if *kind == "newsletter" {
-            // Held for the weekly digest, as the demo's rule holds them.
             postio_storage::sql::execute(
                 connection,
                 "INSERT INTO contact_settings
@@ -1492,8 +1416,6 @@ async fn people(connection: &postio_storage::Connection) {
             .expect("a digest setting");
         }
     }
-    // Three records of one person, as the merge sheet shows them (handoff
-    // screen 07): the saved one, and two that only the mail knows.
     {
         let contacts = ContactRepository::new(connection);
         for (name, address, seen, saved) in [
@@ -1508,8 +1430,6 @@ async fn people(connection: &postio_storage::Connection) {
                 )
                 .await
                 .expect("a record");
-            // What the card's tiles read: the address's sightings. The row's
-            // count is their sum, so the two say one number.
             postio_storage::sql::execute(
                 connection,
                 "INSERT OR REPLACE INTO contact_sightings
@@ -1520,9 +1440,6 @@ async fn people(connection: &postio_storage::Connection) {
             )
             .await
             .expect("their sightings");
-            // The strip under the tiles reads the months: the same count,
-            // spread over the six months up to the last sighting, so the
-            // strip and the tiles say one thing.
             for back in 0..6_i64 {
                 let share = seen / 6 + if back == 0 { seen % 6 } else { 0 };
                 postio_storage::sql::execute(
@@ -1564,9 +1481,6 @@ async fn people(connection: &postio_storage::Connection) {
             .await
             .expect("their counts");
         }
-        // What the review finds them by, as the body stage would have noted
-        // it: the same signature on all three, one address that stopped as
-        // another began in the same threads, and a Resent-From.
         let signature = "ada moreno|finance lead|northwind partners";
         for address in [
             "ada.moreno@northwind.example",
@@ -1594,8 +1508,6 @@ async fn people(connection: &postio_storage::Connection) {
         postio_storage::sql::batch(connection, "COMMIT")
             .await
             .expect("commit");
-        // Two threads in the archive where a.moreno@example.net stops and
-        // ada.moreno@northwind.example begins.
         for n in 0..2_i64 {
             postio_storage::sql::execute(
                 connection,
@@ -1643,9 +1555,6 @@ async fn people(connection: &postio_storage::Connection) {
             }
         }
     }
-    // Ben is someone the user saved, so he is who is "on copy" with the new
-    // sender (handoff screen 05); and Hollis, whom the first row is from, is
-    // a colleague, so `i` on that row is the known-sender popover (screen 04).
     for address in ["ben@example.net", "hollis@example.com"] {
         postio_storage::sql::execute(
             connection,
@@ -1656,7 +1565,6 @@ async fn people(connection: &postio_storage::Connection) {
         .await
         .expect("a saved person");
     }
-    // Marisol is saved, notifies, is reminded about, and has a note.
     for statement in [
         "UPDATE contacts SET saved_at = 1, source = 'user',
                 note = 'Prefers numbers in a sheet rather than in the email body.',
@@ -1671,7 +1579,6 @@ async fn people(connection: &postio_storage::Connection) {
     }
 }
 
-/// File one message from `from` about `subject` into `mailbox` at `at`.
 pub async fn filed(
     connection: &postio_storage::Connection,
     account: AccountId,
@@ -1704,8 +1611,6 @@ pub async fn filed(
         .expect("threaded");
 }
 
-/// A message the user sent to `to`, with a reminder that no reply has
-/// settled: what is open "Waiting on them".
 async fn waiting_on(
     connection: &postio_storage::Connection,
     account: &postio_model::Account,
@@ -1829,8 +1734,6 @@ pub fn marker(message: MessageId, ask: &Ask, today: DateTime<Utc>) -> Marker {
 
 #[cfg(test)]
 mod tests {
-    /// Spec 013 US4's arrival: a seventh Harbor member, threaded by the
-    /// engine's own path, unread, with the thread to announce.
     #[tokio::test]
     async fn the_harbor_reply_lands_as_a_seventh_member_of_the_thread() {
         use postio_storage::sql::scalar;
@@ -1865,9 +1768,6 @@ mod tests {
         assert_eq!(unread, 3, "two unread and the reply");
     }
 
-    /// Spec 013's seed groups through the engine: Harbor is one thread of
-    /// six with two unread, the long threads are as long as the design
-    /// says, and the unsent reply is filed in Harbor's thread.
     #[tokio::test]
     async fn the_threads_seed_groups_the_designs_conversations() {
         use postio_storage::sql::scalar;
@@ -1915,9 +1815,7 @@ mod tests {
         let _ = account;
     }
 
-    /// Screens 05 and 06 add their people over the demo store, which has
-    /// already met some of them as correspondents: adding a person someone
-    /// already owns is refused, so the screenshots panicked instead.
+    /// Adding a person someone already owns is refused, so the screenshots panicked.
     #[tokio::test]
     async fn the_compose_people_join_a_demo_that_already_met_them() {
         let (database, account) = super::demo().await;
@@ -1936,9 +1834,6 @@ mod tests {
         }
     }
 
-    /// The digest rule comes due on the day the seed delivers it, so the
-    /// window's "came due today 16:00" and the rule's "Weekly, <day> 16:00"
-    /// never contradict each other.
     #[test]
     fn the_demo_digest_rule_comes_due_on_the_day_the_seed_delivers() {
         let day = super::today()
@@ -1950,9 +1845,6 @@ mod tests {
         assert!(config.contains(&format!("day = \"{day}\"")), "{config}");
     }
 
-    /// A contact the demo shows is sorted by what its mail says, as it is in
-    /// the app, not left a person by default; and the senders that exist to
-    /// attack the parsers are in the corpus, not in the demo's people.
     #[tokio::test]
     async fn the_demo_sorts_its_people_and_keeps_the_hostile_senders_out() {
         use postio_storage::sql::scalar;
@@ -2034,9 +1926,6 @@ mod tests {
         }
     }
 
-    /// Spec 010 T001: the search seed is a two-year mailbox in the shape of
-    /// the search design's screens, with the files the Files tab and the
-    /// attachment indexer need.
     #[tokio::test]
     async fn the_search_seed_is_two_years_of_invented_mail() {
         use postio_storage::sql::{all, scalar};
@@ -2058,8 +1947,6 @@ mod tests {
         .expect("a count");
         assert!(messages >= 400, "only {messages} messages");
 
-        // Screen 01's three recent searches, newest first, each with what
-        // it matched when it ran (specs/010-focus-search step 2).
         let recent = postio_storage::searches::SearchRepository::new(&connection)
             .recent()
             .await
@@ -2074,7 +1961,6 @@ mod tests {
             ]
         );
 
-        // Twenty-four months, ending at the demo's today.
         let oldest = scalar(&connection, "SELECT min(received_at) FROM messages", ())
             .await
             .expect("oldest");
@@ -2088,7 +1974,6 @@ mod tests {
         let age = (today - newest / unit) / 3_600;
         assert!((0..=24).contains(&age), "newest is {age} hours old");
 
-        // Threads of one to twelve messages, and both ends are present.
         let sizes: Vec<i64> = all(
             &connection,
             "SELECT count(*) FROM messages WHERE thread_id IS NOT NULL GROUP BY thread_id",
@@ -2103,7 +1988,6 @@ mod tests {
         );
         assert!(sizes.contains(&1) && sizes.contains(&12), "{sizes:?}");
 
-        // Every address is on a reserved domain.
         let outside = scalar(
             &connection,
             "SELECT count(*) FROM addresses WHERE contact_id IS NOT NULL AND address NOT LIKE '%@example.com'",
@@ -2145,8 +2029,6 @@ mod tests {
         .expect("markers");
         assert_eq!(open, 2, "two open markers");
 
-        // Five kinds of file, each with bytes in a blob store, each saying
-        // "atlas budget" in its name's words and in its contents.
         let files = search_files();
         let blobs_dir = tempfile::tempdir().expect("scratch");
         let blobs = postio_storage::BlobStore::open(
@@ -2174,7 +2056,6 @@ mod tests {
             assert_eq!(bytes, file.bytes);
             let text = readable_text(extension, &bytes).to_lowercase();
             assert!(text.contains("atlas budget"), "{}: {text}", file.name);
-            // The database knows the blob.
             let rows = scalar(
                 &connection,
                 "SELECT count(*) FROM attachments WHERE filename = ?1 AND blob_id = ?2",
@@ -2184,7 +2065,6 @@ mod tests {
             .expect("attachment rows");
             assert!(rows > 0, "{} has no stored blob in the store", file.name);
         }
-        // And one attachment is left undownloaded, for the indexer to skip.
         let undownloaded = scalar(
             &connection,
             "SELECT count(*) FROM attachments WHERE blob_id IS NULL",
@@ -2195,12 +2075,8 @@ mod tests {
         assert!(undownloaded > 0);
     }
 
-    /// The words a file's bytes hold, as a reader of the format would see
-    /// them: the stored zip entries' text for OOXML, the content streams for
-    /// a PDF, the bytes for plain text.
     fn readable_text(extension: &str, bytes: &[u8]) -> String {
         match extension {
-            // Stored entries, so the XML is in the zip's bytes as written.
             "xlsx" | "docx" | "pptx" => {
                 assert_eq!(&bytes[..4], b"PK\x03\x04");
                 String::from_utf8_lossy(bytes).into_owned()
@@ -2227,7 +2103,6 @@ mod tests {
         ("Sunday", Weekday::Sun),
     ];
 
-    /// The first weekday a text names, if any.
     fn weekday_named(text: &str) -> Option<Weekday> {
         WEEKDAYS
             .iter()
@@ -2236,9 +2111,6 @@ mod tests {
             .map(|(_, day)| day)
     }
 
-    /// A marker's date agrees with the weekday its own words name, on the
-    /// clock the storyboards freeze (Tuesday 2 June): a person reads the
-    /// sentence and the date side by side.
     #[test]
     fn a_marker_date_agrees_with_the_weekday_its_row_names() {
         let today = Utc.with_ymd_and_hms(2026, 6, 2, 16, 9, 0).unwrap();

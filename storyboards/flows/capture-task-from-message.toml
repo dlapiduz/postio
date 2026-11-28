@@ -44,8 +44,8 @@ expect  = "The to-do opens in the message window, its action card under the send
 
 [[step]]
 command = "capture_task"
-check   = { keyboard.typing = true }
-expect  = "Capture opens over the message, the keyboard in its Task field: Cancel with Esc, Task and Note, Add task with Ctrl+Return as the primary button. \"From\" names the sender, the subject and when it came; the Task field holds the action sentence as written, with \"Alt+S use the subject instead\" under it; Due shows the day the mail gives with Today, the weekdays and None beside it; Project names the vault's suggestion and why, with Change; and the preview is the exact line, ending in the message's postio:// link and the date."
+check   = { keyboard.typing = true, app.focus.footer.title = { absent = true } }
+expect  = "Capture opens over the message, the keyboard in its Task field: Cancel with Esc, Task and Note, Add task with Ctrl+Return as the primary button. \"From\" names the sender, the subject and when it came; the Task field holds the action sentence as written, with \"Alt+S use the subject instead\" under it; Due shows the day the mail gives with Today, the weekdays and None beside it; Project names the vault's suggestion and why, with Change; and the preview is the exact line, ending in the message's postio:// link and the date. No footer is drawn behind the sheet: r, f and e type letters in its field (#2218)."
 
 [[step]]
 command = "capture_use_subject"

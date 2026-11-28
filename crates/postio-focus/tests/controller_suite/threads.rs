@@ -1,12 +1,4 @@
-//! Expanding a thread in place (spec 013 US1, research R7).
-//!
-//! The controller holds one `Expansion` and the frontend holds the rows: the
-//! controller reads them through `Rows` (row positions) and speaks in
-//! display positions, which count the expanded thread's children. These
-//! cases drive it as a frontend would: a fake list, keys, and the replies a
-//! client would give.
-
-use crate::search_support::{asks, shown};
+use crate::search_support::{asks, footer_of, shown};
 use chrono::{TimeZone, Utc};
 use postio_config::paths::Platform;
 use postio_core::{CommandId, Event};
@@ -19,7 +11,6 @@ use postio_model::{AccountId, DraftId, EmailAddress, MessageId, ThreadId};
 use postio_ui::focus_list::{FocusRow, lone};
 use postio_ui::thread_list::ChildRowView;
 
-/// One row of the fake list: a conversation of `count` messages.
 #[derive(Clone)]
 struct Row {
     id: MessageId,
@@ -32,8 +23,6 @@ pub(crate) struct List {
 }
 
 impl List {
-    /// Rows 0.. with the message counts given; row `n` is message `100 + n`
-    /// of thread `500 + n`.
     pub(crate) fn of(counts: &[u32]) -> Self {
         List {
             rows: counts
@@ -48,15 +37,12 @@ impl List {
         }
     }
 
-    /// The list with row `at` standing for message `id` of `thread`, `count`
-    /// messages: a conversation whose newest message changed.
     pub(crate) fn with_row(&self, at: usize, id: MessageId, thread: ThreadId, count: u32) -> Self {
         let mut rows = self.rows.clone();
         rows[at] = Row { id, thread, count };
         List { rows }
     }
 
-    /// The same list without the row for `thread`.
     fn without(&self, thread: ThreadId) -> Self {
         List {
             rows: self
@@ -110,13 +96,10 @@ impl Rows for List {
     }
 }
 
-/// The member `index` of the thread `thread`.
 pub(crate) fn member_id(thread: ThreadId, index: usize) -> MessageId {
     MessageId::new(thread.get() * 100 + index as i64)
 }
 
-/// A thread read: `members` messages, the last `unread` of them unread, and
-/// an unsent reply when `draft`.
 pub(crate) fn view(thread: ThreadId, members: usize, unread: usize, draft: bool) -> ThreadView {
     let at = Utc.with_ymd_and_hms(2026, 9, 21, 9, 0, 0).unwrap();
     ThreadView {
@@ -153,7 +136,6 @@ pub(crate) fn run(focus: &mut FocusController, command: CommandId, rows: &List) 
     focus.handle_on(Input::Command(command), rows)
 }
 
-/// The thread read the effects ask for, and its ticket.
 pub(crate) fn read_asked(effects: &[Effect]) -> Option<(Ticket, ThreadId)> {
     asks(effects)
         .into_iter()
@@ -163,7 +145,6 @@ pub(crate) fn read_asked(effects: &[Effect]) -> Option<(Ticket, ThreadId)> {
         })
 }
 
-/// Answer a read the way the client would.
 pub(crate) fn answer(
     focus: &mut FocusController,
     ticket: Ticket,
@@ -216,8 +197,6 @@ pub(crate) fn opened_message(effects: &[Effect]) -> Option<MessageId> {
     })
 }
 
-/// Harbor, row 0 (thread 500, six messages and a draft), expanded over a
-/// list of `counts`.
 pub(crate) fn expanded(counts: &[u32]) -> (FocusController, List) {
     let rows = List::of(counts);
     let mut focus = focus();
@@ -271,12 +250,10 @@ fn expanding_harbor_reads_it_and_splices_six_children_and_the_draft() {
 #[test]
 fn expanding_another_thread_collapses_the_first() {
     let (mut focus, rows) = expanded(&[6, 4, 1, 3]);
-    // Harbor's children sit between rows 0 and 1: row 1 is display 8.
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     assert_eq!(cursor_of(&effects), Some(1), "first child");
     let _ = run(&mut focus, CommandId::LastMessage, &rows);
     let _ = run(&mut focus, CommandId::PrevMessage, &rows);
-    // Back onto row 2 (a single message), then up to row 1.
     let _ = run(&mut focus, CommandId::PrevMessage, &rows);
     assert_eq!(focus.cursor(), Some(8), "row 1 sits after the 7 children");
 
@@ -303,8 +280,6 @@ fn j_and_k_walk_into_and_through_the_children() {
         let effects = run(&mut focus, CommandId::NextMessage, &rows);
         seen.push(cursor_of(&effects));
     }
-    // Seven children (display 1..=7), then row 1 (display 8), then row 2,
-    // and so on to the end of the list: 12 positions in all.
     assert_eq!(
         seen,
         (1..=8).map(Some).collect::<Vec<_>>(),
@@ -315,7 +290,6 @@ fn j_and_k_walk_into_and_through_the_children() {
         assert_eq!(cursor_of(&effects), Some(want));
     }
     assert_eq!(focus.cursor(), Some(0), "back on the thread's row");
-    // The list is 4 rows + 7 children: the last position is 10.
     let effects = run(&mut focus, CommandId::LastMessage, &rows);
     assert_eq!(cursor_of(&effects), Some(10));
 }
@@ -331,7 +305,6 @@ fn collapsing_from_a_child_unsplices_and_returns_to_the_row() {
     assert_eq!(unspliced(&effects), vec![0]);
     assert_eq!(cursor_of(&effects), Some(0), "the thread's row");
     assert_eq!(focus.cursor(), Some(0));
-    // Collapsed: j goes to the next row, not into children.
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     assert_eq!(cursor_of(&effects), Some(1));
 }
@@ -345,7 +318,6 @@ fn expanding_a_thread_of_one_message_does_nothing() {
     ));
     let _ = focus.landed(&rows, true);
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
-    // Positive control: the same key on a thread of six reads it.
     let _ = run(&mut focus, CommandId::PrevMessage, &rows);
     assert!(read_asked(&run(&mut focus, CommandId::ExpandThread, &rows)).is_some());
     let mut focus = self::focus();
@@ -364,7 +336,6 @@ fn the_anchor_leaving_the_list_unsplices_and_the_cursor_moves_to_the_next_row() 
     for _ in 0..3 {
         let _ = run(&mut focus, CommandId::NextMessage, &rows);
     }
-    // Archived elsewhere: the list no longer holds Harbor.
     let rest = rows.without(ThreadId::new(500));
     let effects = focus.landed(&rest, false);
     assert_eq!(unspliced(&effects), vec![0]);
@@ -388,7 +359,6 @@ fn a_changed_thread_is_read_again_and_keeps_the_focused_child() {
     let focused = member_id(thread, 2);
     assert_eq!(focus.cursor(), Some(3), "the third member");
 
-    // A reply arrives.
     let effects = focus.handle_on(
         Input::Event(Event::ThreadChanged {
             account: AccountId::new(1),
@@ -400,8 +370,6 @@ fn a_changed_thread_is_read_again_and_keeps_the_focused_child() {
     let (ticket, asked) = read_asked(&effects).expect("the expansion reads again");
     assert_eq!(asked, thread);
 
-    // An older message is re-linked ahead of the focused one: the same
-    // message is now at index 3, not 2.
     let mut changed = view(thread, 6, 3, true);
     changed
         .members
@@ -426,7 +394,6 @@ fn a_changed_thread_is_read_again_and_keeps_the_focused_child() {
     );
     assert_eq!(focus.cursor(), Some(1 + at as u32));
 
-    // A change to another thread reads nothing.
     let effects = focus.handle_on(
         Input::Event(Event::ThreadChanged {
             account: AccountId::new(1),
@@ -447,8 +414,6 @@ fn return_on_a_thread_row_opens_the_first_unread_and_on_a_child_that_child() {
     ));
     let _ = focus.landed(&rows, true);
 
-    // The thread is not loaded: it is read first, then opened where
-    // `open_at` says (members 4 and 5 are unread).
     let effects = run(&mut focus, CommandId::OpenMessage, &rows);
     assert_eq!(opened_message(&effects), None, "not before it is read");
     let (ticket, thread) = read_asked(&effects).expect("the thread is read first");
@@ -459,7 +424,6 @@ fn return_on_a_thread_row_opens_the_first_unread_and_on_a_child_that_child() {
         "opening a row does not expand it"
     );
 
-    // On a child: that child's message.
     let (mut focus, rows) = expanded(&[6, 4]);
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
@@ -469,7 +433,6 @@ fn return_on_a_thread_row_opens_the_first_unread_and_on_a_child_that_child() {
         Some(member_id(ThreadId::new(500), 1))
     );
 
-    // Expanded, the row's own Return needs no second read.
     let (mut focus, rows) = expanded(&[6, 4]);
     let effects = run(&mut focus, CommandId::OpenMessage, &rows);
     assert!(read_asked(&effects).is_none(), "{effects:?}");
@@ -479,10 +442,6 @@ fn return_on_a_thread_row_opens_the_first_unread_and_on_a_child_that_child() {
     );
 }
 
-// ---- Other surfaces (T035, FR-009): a folder and Filtered -------------------
-
-/// A folder (not the inbox) is the same list surface with another scope.
-/// This is a guard, not a TDD step: it was green on arrival.
 #[test]
 fn a_folder_list_expands_and_collapses_as_the_inbox_does() {
     let rows = List::of(&[6, 4, 1]);
@@ -502,7 +461,6 @@ fn a_folder_list_expands_and_collapses_as_the_inbox_does() {
     assert_eq!(unspliced(&effects), vec![0]);
 }
 
-/// Filtered's rows: messages, the first of three messages in its thread.
 fn filed_rows(counts: &[u32]) -> Vec<postio_client::protocol::FilteredRow> {
     let at = Utc.with_ymd_and_hms(2026, 10, 2, 9, 0, 0).unwrap();
     counts
@@ -542,7 +500,6 @@ fn filtered_splice_of(effects: &[Effect]) -> Option<(u32, Vec<ChildRowView>)> {
     })
 }
 
-/// `g f`, answered with `counts`' rows.
 fn filtered_over(counts: &[u32]) -> (FocusController, List) {
     let rows = List::of(&[1]);
     let mut focus = focus();
@@ -573,7 +530,6 @@ fn filtered_expands_and_collapses_a_thread_row() {
     let (anchor, children) = filtered_splice_of(&effects).expect("the read splices over Filtered");
     assert_eq!((anchor, children.len()), (0, 7));
 
-    // j walks into the children, as in the inbox.
     let effects = run(&mut focus, CommandId::NextMessage, &rows);
     assert!(
         shown(&effects)
@@ -609,7 +565,6 @@ fn filtered_keeps_its_open_thread_and_the_child_focus_when_the_page_is_read_agai
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
 
-    // Mail moved elsewhere: Filtered reads its first page again.
     let page = filed_rows(&[6, 1, 3]);
     let effects = focus.handle_on(
         Input::Event(Event::MessageListChanged {
@@ -647,8 +602,6 @@ fn filtered_keeps_its_open_thread_and_the_child_focus_when_the_page_is_read_agai
     assert_eq!(view.focused, Some(2), "still on the second child");
 }
 
-/// D2: Restore moves mail, so on a child it moves the thread (every
-/// member), not the child message.
 #[test]
 fn restore_on_a_filtered_child_aims_the_whole_thread() {
     let (mut focus, rows) = filtered_over(&[6, 1, 3]);
@@ -672,18 +625,12 @@ fn restore_on_a_filtered_child_aims_the_whole_thread() {
     );
 }
 
-// ---------------------------------------------------------------------
-// Spec 013 US2: every action says what it acts on (T037, T041).
-// ---------------------------------------------------------------------
-
-/// Harbor as the design draws it: message 4 (index 3) is Ben Adeyemi's.
 fn harbor(thread: ThreadId) -> ThreadView {
     let mut view = view(thread, 6, 2, true);
     view.members[3].from = Some(EmailAddress::new(Some("Ben Adeyemi"), "ben@example.com"));
     view
 }
 
-/// Harbor expanded as [`expanded`] does, but with the design's names.
 fn harbor_expanded(counts: &[u32]) -> (FocusController, List) {
     let rows = List::of(counts);
     let mut focus = focus();
@@ -697,19 +644,6 @@ fn harbor_expanded(counts: &[u32]) -> (FocusController, List) {
     (focus, rows)
 }
 
-/// The footer an effect list draws last, if any.
-fn footer_of(effects: &[Effect]) -> Option<postio_ui::scope::FooterView> {
-    shown(effects)
-        .into_iter()
-        .rev()
-        .find_map(|intent| match intent {
-            Intent::Footer(view) => Some(view),
-            _ => None,
-        })
-}
-
-/// What `command` pressed on the cursor's row would aim at: the targets of
-/// the verb it sends, or of the picker it opens.
 fn aimed_by(
     focus: &mut FocusController,
     command: CommandId,
@@ -734,7 +668,6 @@ fn aimed_by(
         .collect()
 }
 
-/// Down to Ben Adeyemi's message 4: the fourth child.
 fn on_child_four(focus: &mut FocusController, rows: &List) {
     for _ in 0..4 {
         let _ = run(focus, CommandId::NextMessage, rows);
@@ -813,8 +746,6 @@ fn move_or_delete_only_this_is_refused_on_a_collapsed_row() {
     }
 }
 
-/// D2: on a child, "move only this" opens the Move picker aimed at that
-/// message alone, and choosing a folder moves that message.
 #[test]
 fn move_only_this_on_a_child_opens_the_picker_aimed_at_that_message() {
     let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
@@ -879,7 +810,6 @@ fn delete_only_this_on_a_child_deletes_that_message_and_the_cursor_stays_among_t
         )])],
         "only the child"
     );
-    // The thread is read again without it.
     let thread = ThreadId::new(500);
     let effects = focus.handle_on(
         Input::Event(Event::ThreadChanged {
@@ -966,7 +896,6 @@ fn the_footer_on_an_expanded_row_offers_collapse_not_expand() {
     assert!(labels(&footer).contains(&"collapse"), "{footer:?}");
     assert!(!labels(&footer).contains(&"expand"), "{footer:?}");
 
-    // Back on the row from its first child: still expanded.
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
     let effects = run(&mut focus, CommandId::PrevMessage, &rows);
     let footer = footer_of(&effects).expect("a footer on the row");
@@ -991,14 +920,15 @@ fn the_footer_s_keycaps_and_note_are_the_keymaps_not_the_designs() {
     };
     let reply = keymap.binding(CommandId::Reply).expect("reply is bound");
     assert_eq!(key_of(&footer, "reply to this").as_deref(), Some(reply));
-    let [archive, snooze, label, mv] = [
+    let [archive, delete, snooze, label, mv] = [
         CommandId::Archive,
+        CommandId::Delete,
         CommandId::Snooze,
         CommandId::AddLabel,
         CommandId::Move,
     ]
     .map(|id| keymap.binding(id).expect("bound").to_owned());
-    let note = format!("{archive}, {snooze}, {label}, {mv} act on the thread");
+    let note = format!("{archive}, {delete}, {snooze}, {label}, {mv} act on the thread");
     assert_eq!(footer.note.as_deref(), Some(note.as_str()));
     assert_ne!(
         footer.note.as_deref(),
@@ -1006,7 +936,6 @@ fn the_footer_s_keycaps_and_note_are_the_keymaps_not_the_designs() {
         "the design's keys are not the registry's"
     );
 
-    // Rebind reply; the next footer follows.
     let mut overrides = postio_config::KeyBindings::default();
     overrides
         .overrides_mut()
@@ -1023,8 +952,6 @@ fn the_footer_s_keycaps_and_note_are_the_keymaps_not_the_designs() {
 #[test]
 fn a_one_message_row_s_footer_has_no_thread_wording() {
     let (mut focus, rows) = harbor_expanded(&[6, 4, 1, 3]);
-    // Row 2 (one message) is display 9 behind Harbor's seven children and
-    // row 1.
     let _ = run(&mut focus, CommandId::LastMessage, &rows);
     let effects = run(&mut focus, CommandId::PrevMessage, &rows);
     assert_eq!(focus.cursor(), Some(9));
@@ -1077,9 +1004,6 @@ fn a_label_added_from_a_child_aims_the_thread_and_one_undo_undoes_it() {
     );
 }
 
-// ---- Spec 013 US3: walking a thread in the message window ----
-
-/// What the window was told, as one record.
 #[derive(Default, Debug)]
 pub(crate) struct Window {
     pub(crate) shown: Option<MessageId>,
@@ -1106,7 +1030,6 @@ pub(crate) fn window_of(effects: &[Effect]) -> Window {
     window
 }
 
-/// The index of the ringed chip.
 pub(crate) fn ringed(bar: &postio_ui::thread_bar::ThreadBarView) -> Option<u32> {
     bar.chips.iter().find_map(|chip| match chip {
         postio_ui::thread_bar::Chip::Message { index, current, .. } if *current => Some(*index),
@@ -1131,8 +1054,6 @@ fn asked_requests(effects: &[Effect]) -> Vec<Request> {
         .collect()
 }
 
-/// Harbor (row 0, six messages, the last two unread) opened with Return: the
-/// window is on message 4 (index 4), the first unread.
 pub(crate) fn window_on_harbor(unread: usize) -> (FocusController, List, Window) {
     let rows = List::of(&[6, 4, 1, 3]);
     let mut focus = focus();
@@ -1180,7 +1101,6 @@ fn the_footer_behind_a_window_says_what_reply_acts_on_there() {
     let footer = window_of(&effects).footer.expect("stepping says it again");
     assert!(footer.title.starts_with("Message 4 of 6"), "{footer:?}");
 
-    // Closing the window gives the footer back to the row under the cursor.
     let effects = run(&mut focus, CommandId::Back, &rows);
     let footer = footer_of(&effects).expect("closing restores the row's footer");
     assert!(footer.title.ends_with("\u{b7} 6 messages"), "{footer:?}");
@@ -1306,7 +1226,6 @@ fn closing_the_window_forgets_the_walk() {
     assert!(shown(&effects).is_empty(), "no window, no bar: {effects:?}");
 }
 
-/// How many thread reads the effects ask for.
 fn reads_asked(effects: &[Effect]) -> usize {
     asked_requests(effects)
         .iter()
@@ -1360,8 +1279,6 @@ fn a_row_of_one_message_asks_for_no_thread_read() {
     assert_eq!(reads_asked(&effects), 0, "{effects:?}");
 }
 
-/// A list whose rows are counted but not yet read: the window's first
-/// landing, before its page arrives.
 struct Unread<'a>(&'a List);
 
 impl Rows for Unread<'_> {
@@ -1386,7 +1303,6 @@ fn the_footer_names_the_cursors_row_once_its_page_arrives() {
     let _ = focus.open(postio_model::ListScope::Focus(
         postio_model::FocusScope::Inbox,
     ));
-    // Landed before the page: there is nothing yet to say about the row.
     let early = focus.landed(&Unread(&rows), true);
     assert!(footer_of(&early).is_none(), "no footer from a row not read");
     assert_eq!(focus.cursor(), Some(0));
@@ -1395,4 +1311,72 @@ fn the_footer_names_the_cursors_row_once_its_page_arrives() {
     let effects = focus.landed(&rows, false);
     let footer = footer_of(&effects).expect("the footer, once the row is read");
     assert_eq!(footer.title, "Harbor API draft v3 \u{b7} 6 messages");
+}
+
+fn reading_child(child: usize) -> (FocusController, List, ThreadId) {
+    let harbor = ThreadId::new(500);
+    let next = ThreadId::new(501);
+    let rows = List::of(&[6, 2, 1])
+        .with_row(0, member_id(harbor, 5), harbor, 6)
+        .with_row(1, member_id(next, 1), next, 2);
+    let mut focus = focus();
+    let _ = focus.open(postio_model::ListScope::Focus(
+        postio_model::FocusScope::Inbox,
+    ));
+    let _ = focus.landed(&rows, true);
+    let effects = run(&mut focus, CommandId::ExpandThread, &rows);
+    let (ticket, thread) = read_asked(&effects).expect("a read");
+    let _ = answer(&mut focus, ticket, view(thread, 6, 0, false), &rows);
+    for _ in 0..=child {
+        let _ = run(&mut focus, CommandId::NextMessage, &rows);
+    }
+    let effects = run(&mut focus, CommandId::OpenMessage, &rows);
+    assert_eq!(opened_message(&effects), Some(member_id(harbor, child)));
+    (focus, rows, harbor)
+}
+
+#[test]
+fn deleting_an_expanded_thread_from_its_child_goes_on_to_the_row_that_took_its_place() {
+    for child in [5, 2] {
+        let (mut focus, rows, harbor) = reading_child(child);
+        let _ = run(&mut focus, CommandId::Delete, &rows);
+        let effects = focus.landed(&rows.without(harbor), false);
+        assert_eq!(
+            (opened_message(&effects), focus.cursor()),
+            (Some(member_id(ThreadId::new(501), 1)), Some(0)),
+            "from child {child}: the row below Harbor's children, now where Harbor was: {:?}",
+            shown(&effects)
+        );
+    }
+}
+
+#[test]
+fn undoing_the_delete_expands_the_thread_again_with_the_cursor_on_the_child() {
+    let (mut focus, rows, harbor) = reading_child(5);
+    let _ = run(&mut focus, CommandId::Delete, &rows);
+    let rest = rows.without(harbor);
+    let effects = focus.landed(&rest, false);
+    let (ticket, next) = read_asked(&effects).expect("the next row's thread is walked");
+    let _ = answer(&mut focus, ticket, view(next, 2, 0, false), &rest);
+    let _ = focus.handle_on(
+        Input::Event(Event::UndoPerformed {
+            description: "Deleted 1 thread (6 messages)".into(),
+        }),
+        &rows,
+    );
+    let effects = focus.landed(&rows, false);
+    let (anchor, children) = splice_of(&effects).expect("Harbor is expanded again");
+    assert_eq!((anchor, children.len()), (0, 6));
+    assert_eq!(
+        focus.cursor(),
+        Some(6),
+        "on the child the window was opened from: {:?}",
+        shown(&effects)
+    );
+    assert!(
+        focus.take_restored(),
+        "the window goes back to what came back"
+    );
+    let effects = focus.handle_on(Input::Follow, &rows);
+    assert_eq!(opened_message(&effects), Some(member_id(harbor, 5)));
 }

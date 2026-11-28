@@ -1,17 +1,13 @@
-//! Postio Focus: a dense, keyboard-first inbox on the Postio engine
-//! (`specs/007-postio-focus`).
-//!
-//! It runs `postio-host` in this process and reaches mail only through
-//! `postio-client` (ADR 0041), and it draws with `postio-widgets`, never with
-//! a crate of its own that draws mail (ADR 0043). The binary is a thin `main` over
-//! [`app::run`]; everything else is here, where `tests/focus_suite` can drive
-//! the same startup the binary runs.
+//! Postio Focus: a dense, keyboard-first inbox. It runs `postio-host` in this process and reaches
+//! mail only through `postio-client` (ADR 0041); it draws with `postio-widgets` (ADR 0043). The
+//! binary is a thin `main` over [`app::run`] so `tests/focus_suite` drives the same startup.
 
 pub mod a11y;
 pub mod app;
 pub mod banner;
 pub mod bar;
 pub mod bulk;
+pub mod calendar;
 pub mod capture;
 pub mod chooser;
 pub mod chrome;
@@ -34,6 +30,7 @@ pub mod move_picker;
 pub mod open;
 mod open_header;
 pub mod places;
+mod position_list;
 pub mod reading_pane;
 mod rebuild;
 pub mod results;

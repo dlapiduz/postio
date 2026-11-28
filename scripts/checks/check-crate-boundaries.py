@@ -115,24 +115,15 @@ import subprocess
 import sys
 from collections import deque
 
-# The workspace-hack (ADR 0047): every member depends on it, and it names
-# third-party crates only so that each is built with one feature set. It has
-# no code and re-exports nothing, so an edge into it reaches nothing a crate
-# could call; the walk does not enter it. A banned crate it names is still
-# found the moment a real dependency reaches it.
+# The workspace-hack (ADR 0047) has no code and re-exports nothing, so the walk does not enter it; a
+# banned crate it names is found when a real dependency reaches it.
 WORKSPACE_HACK = "postio-workspace-hack"
 
-# --- The invariants ---------------------------------------------------------
-#
-# `banned` lists crate names that must not appear anywhere in the guarded
-# crate's dependency closure. The `-sys` / companion crates are listed
-# alongside the bindings they belong to so the rule cannot be side-stepped by
-# depending on the lower layer directly.
+# `banned` lists crate names that must not appear in the guarded crate's dependency closure, with
+# the `-sys` companions so the lower layer cannot be depended on directly.
 
-# Inference engines: runtimes that would put a language model inside a Postio
-# package. The model is the user's own, run beside Postio, and optional
-# (specs/007-postio-focus FR-165), so no app binary may link one. The built-in
-# needs-action detector is plain code and needs none of these.
+# Inference engines: the user's model runs beside Postio and is optional (FR-165), so no app binary
+# may link one.
 INFERENCE_ENGINES = [
     "candle-core",
     "candle-nn",
@@ -153,7 +144,6 @@ INFERENCE_ENGINES = [
     "mistralrs-core",
 ]
 
-# HTTP clients, TLS and sockets: what a crate would need to reach the network.
 NETWORK_CRATES = [
     "reqwest",
     "hyper",
@@ -174,16 +164,11 @@ NETWORK_CRATES = [
     "pimalaya-stream",
 ]
 
-# What no interface may depend on directly: the store engine and the mail
-# protocol. Every interface -- the GTK app, the terminal, the macOS seam, and
-# whatever follows -- holds no SQL and no protocol code of its own and reaches
-# mail through Postio's engine crates (constitution VII, ADR 0041). The
-# engine is in each interface's graph on purpose, through those crates; this
-# list is checked against the interface's own manifest only. `rusqlite` and
-# `libsqlite3-sys` stay listed beside the current engine: a rule keyed on a
-# dependency's *name* stops holding the moment the name changes, and the
-# point of this check is that the boundary does not depend on anyone
-# noticing (docs/archive/specs/004-turso-store T002).
+# What no interface may depend on directly: the store engine and the mail protocol (constitution
+# VII, ADR 0041). The engine is in each interface's graph through the engine crates; this list is
+# checked against the interface's own manifest only. `rusqlite` and `libsqlite3-sys` stay listed: a
+# rule keyed on a name stops holding when the name changes (docs/archive/specs/004-turso-store
+# T002).
 INTERFACE_DIRECT = [
     "rusqlite",
     "libsqlite3-sys",
@@ -246,8 +231,6 @@ RULES: dict[str, dict[str, object]] = {
             *NETWORK_CRATES,
             *INFERENCE_ENGINES,
         ],
-        # What ships: the classifier's tests may build a store the way every
-        # store test does.
         "edges": "product",
         "why": (
             "specs/007-postio-focus FR-132 / ADR 0009: the classifier cannot "
@@ -277,9 +260,38 @@ RULES: dict[str, dict[str, object]] = {
             "store, no toolkit, no runtime and no network to do either"
         ),
     },
+    "postio-dav": {
+        "banned": [
+            "turso",
+            "turso_core",
+            "rusqlite",
+            "libsqlite3-sys",
+            "gtk4",
+            "gtk4-sys",
+            "libadwaita",
+            "libadwaita-sys",
+            "postio-storage",
+            "postio-session",
+            "postio-sync",
+        ],
+        "why": (
+            "postio-dav speaks CalDAV and nothing else (specs/017-calendar "
+            "plan R3): sync calls its trait and writes the store itself, so a "
+            "database engine, the store or a toolkit arriving here would mean "
+            "a network adapter has grown reach into what it reports to"
+        ),
+    },
+    "postio-sync": {
+        "banned": [],
+        "direct": ["io-webdav", "io-http"],
+        "why": (
+            "postio-sync drives calendars through postio-dav's trait and its "
+            "own types (specs/017-calendar plan R3); naming the WebDAV library "
+            "here would let its types into sync and tie sync to one client"
+        ),
+    },
     "postio-ai": {
         "banned": [
-            # A send path: nothing that submits, stores or syncs mail.
             "postio-smtp",
             "io-smtp",
             "postio-account",
@@ -287,30 +299,20 @@ RULES: dict[str, dict[str, object]] = {
             "postio-runtime",
             "postio-transport",
             "io-imap",
-            # The store engine, whatever it is called.
             "postio-storage",
             "turso",
             "turso_core",
             "rusqlite",
             "libsqlite3-sys",
-            # A toolkit.
             "gtk4",
             "gtk4-sys",
             "libadwaita",
             "libadwaita-sys",
             "webkit6",
             "webkit6-sys",
-            # Every other HTTP client. What it does keep is io-http, the
-            # framing it speaks to this computer with, and what the rest of
-            # the workspace turns on in it: cargo unifies features
-            # workspace-wide, so io-http's TLS (pimalaya-stream, rustls) is
-            # in the resolved graph however this crate asks for it -- the
-            # same reason postio-sync's rule lives in its own boundary test.
-            # The crate asks for io-http's `client` alone, and its own
-            # manifest test holds that line; `mio` and `socket2` come with
-            # the config crate's file watcher. The connection itself is
-            # std's, to a loopback address or a local socket, and a
-            # `ModelEndpoint` cannot name anything else.
+            # Every other HTTP client. io-http's TLS is in the resolved graph through workspace-wide
+            # feature unification; the crate's manifest test holds it to `client`. The connection is
+            # std's, to loopback or a local socket.
             *[
                 name
                 for name in NETWORK_CRATES
@@ -319,8 +321,6 @@ RULES: dict[str, dict[str, object]] = {
             ],
             *INFERENCE_ENGINES,
         ],
-        # What ships: its tests run against a fake runtime and need nothing
-        # more, but the invariant is about the product.
         "edges": "product",
         "why": (
             "specs/007-postio-focus FR-165, FR-168 / ADR 0009 Q1: postio-ai "
@@ -379,11 +379,9 @@ RULES: dict[str, dict[str, object]] = {
             "assumptions, or a second store owner, into all of them."
         ),
     },
-    # Focus's controller decides what Focus does for every frontend (ADR
-    # 0045). It does no I/O, so it may name no executor: the GTK app drives it
-    # from glib's loop and the FFI from tokio, and either executor here would
-    # make the other frontend's driver a second-class one. tokio reaching it
-    # through postio-core is fine; naming it directly is not.
+    # Focus's controller does no I/O, so it may name no executor: the GTK app drives it from glib's
+    # loop and the FFI from tokio (ADR 0045).
+    # tokio reaching it through postio-core is fine.
     "postio-focus": {
         "banned": [
             "gtk4",
@@ -418,9 +416,8 @@ RULES: dict[str, dict[str, object]] = {
             "again; an executor named here would tie it to one main loop."
         ),
     },
-    # The demo stores every app photographs and drives (specs/008-storyboards
-    # R11, specs/009-focus-macos T004). Shared by the GTK app and the Mac's
-    # FFI, so a toolkit here would keep one of them from building it.
+    # Shared by the GTK app and the Mac's FFI, so a toolkit here would keep one of them from
+    # building it.
     "postio-demo": {
         "banned": [
             "gtk4",
@@ -434,8 +431,6 @@ RULES: dict[str, dict[str, object]] = {
             "webkit6",
             "webkit6-sys",
             "uniffi",
-            # The clients that dial out; tokio's own sockets come with the
-            # store's runtime and are not a way out.
             "reqwest",
             "hyper",
             "ureq",
@@ -467,10 +462,8 @@ RULES: dict[str, dict[str, object]] = {
             "libsqlite3-sys",
             "turso",
             "turso_core",
-            # Not "tokio": the crate reads the command registry, which is
-            # postio-core, and postio-core depends on tokio for its own
-            # runtime types (research R7 needs the registry). The crate
-            # itself never starts or awaits anything.
+            # Not "tokio": the crate reads the command registry in postio-core, which depends on
+            # tokio; it never starts or awaits anything.
         ],
         "why": (
             "postio-storyboard is the pure half of storyboards -- format, "
@@ -544,8 +537,8 @@ RULES: dict[str, dict[str, object]] = {
             "webkit6-sys",
             "rusqlite",
             "libsqlite3-sys",
-            # An HTTP or WebSocket server is a network listener, and the MCP
-            # surface is stdio and a private Unix socket only (ADR 0010 Q6).
+            # An HTTP or WebSocket server is a network listener; MCP is stdio and a private Unix
+            # socket only (ADR 0010 Q6).
             "axum",
             "actix-web",
             "warp",
@@ -576,9 +569,8 @@ RULES: dict[str, dict[str, object]] = {
             "webkit6-sys",
             *INFERENCE_ENGINES,
         ],
-        # `rusqlite` is deliberately *not* banned. postio-ffi sits above
-        # postio-session, exactly where the desktop app does, and the store is on
-        # the other side of that composition root by design.
+        # `rusqlite` is not banned: postio-ffi sits above postio-session, with the store on the far
+        # side of the composition root.
         "direct": INTERFACE_DIRECT,
         "why": (
             "postio-ffi is the boundary the macOS app talks to (ADR 0019). "
@@ -599,16 +591,12 @@ RULES: dict[str, dict[str, object]] = {
             "libadwaita-sys",
             "rusqlite",
             "libsqlite3-sys",
-            # The engine, whatever it is currently called. `rusqlite` and
-            # `libsqlite3-sys` stay listed with it: a rule keyed on a
-            # dependency's *name* stops holding the moment the name changes,
-            # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
+            # The engine, whatever it is called; `rusqlite` and `libsqlite3-sys` stay listed because
+            # a name-keyed rule stops holding on rename.
             "turso",
             "turso_core",
         ],
-        # io-imap and io-jmap are banned too, but by the crate's own
-        # boundary.rs — the same feature-unification reason as postio-jmap's.
+        # io-imap and io-jmap are also banned, by the crate's own boundary.rs (feature unification).
         "why": (
             "postio-gmail answers the MailBackend seam over the Gmail REST "
             "API (ADR 0018): a protocol leaf. No GTK and no SQL; the other "
@@ -624,18 +612,13 @@ RULES: dict[str, dict[str, object]] = {
             "libadwaita-sys",
             "rusqlite",
             "libsqlite3-sys",
-            # The engine, whatever it is currently called. `rusqlite` and
-            # `libsqlite3-sys` stay listed with it: a rule keyed on a
-            # dependency's *name* stops holding the moment the name changes,
-            # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
+            # The engine, whatever it is called; `rusqlite` and `libsqlite3-sys` stay listed because
+            # a name-keyed rule stops holding on rename.
             "turso",
             "turso_core",
         ],
-        # io-imap is banned too, but not here: workspace feature unification
-        # puts it in the resolved graph however this crate's manifest asks
-        # (the same reason postio-sync's rule lives in its own boundary.rs).
-        # `crates/postio-jmap/tests/boundary.rs` guards the manifest.
+        # io-imap is banned by `crates/postio-jmap/tests/boundary.rs`: workspace feature unification
+        # puts it in the resolved graph.
         "why": (
             "postio-jmap answers the MailBackend seam in RFC 8620/8621 "
             "(ADR 0018): a protocol leaf like the adapter beside it. No GTK "
@@ -661,9 +644,8 @@ RULES: dict[str, dict[str, object]] = {
             "are fine, gtk4 is not."
         ),
     },
-    # The same list as postio-core's, and deliberately not shared with it: the
-    # two crates are guarded for related but different reasons, and a single
-    # constant would invite "fixing" one by loosening the other.
+    # Deliberately not shared with postio-core's list: related but different reasons, and one
+    # constant would invite loosening one to fix the other.
     "postio-session": {
         "banned": [
             "gtk4",
@@ -689,11 +671,8 @@ RULES: dict[str, dict[str, object]] = {
         "banned": [
             "rusqlite",
             "libsqlite3-sys",
-            # The engine, whatever it is currently called. `rusqlite` and
-            # `libsqlite3-sys` stay listed with it: a rule keyed on a
-            # dependency's *name* stops holding the moment the name changes,
-            # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
+            # The engine, whatever it is called; `rusqlite` and `libsqlite3-sys` stay listed because
+            # a name-keyed rule stops holding on rename.
             "turso",
             "turso_core",
             "gtk4",
@@ -739,11 +718,8 @@ RULES: dict[str, dict[str, object]] = {
         "banned": [
             "rusqlite",
             "libsqlite3-sys",
-            # The engine, whatever it is currently called. `rusqlite` and
-            # `libsqlite3-sys` stay listed with it: a rule keyed on a
-            # dependency's *name* stops holding the moment the name changes,
-            # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
+            # The engine, whatever it is called; `rusqlite` and `libsqlite3-sys` stay listed because
+            # a name-keyed rule stops holding on rename.
             "turso",
             "turso_core",
             "gtk4",
@@ -763,8 +739,6 @@ RULES: dict[str, dict[str, object]] = {
         "banned": [
             "rusqlite",
             "libsqlite3-sys",
-            # The engine, whatever it is currently called -- the same pair
-            # postio-search and postio-body ban, for the same reason.
             "turso",
             "turso_core",
             "gtk4",
@@ -809,11 +783,8 @@ RULES: dict[str, dict[str, object]] = {
             "markup5ever_rcdom",
             "rusqlite",
             "libsqlite3-sys",
-            # The engine, whatever it is currently called. `rusqlite` and
-            # `libsqlite3-sys` stay listed with it: a rule keyed on a
-            # dependency's *name* stops holding the moment the name changes,
-            # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
+            # The engine, whatever it is called; `rusqlite` and `libsqlite3-sys` stay listed because
+            # a name-keyed rule stops holding on rename.
             "turso",
             "turso_core",
             "gtk4",
@@ -821,10 +792,6 @@ RULES: dict[str, dict[str, object]] = {
             "gtk4-macros",
             "libadwaita",
             "tokio",
-            # Protocol and storage crates, and the workspace crates built on
-            # them. These were model_suite/purity.rs's list, a test that read
-            # the manifest; here they are judged on the resolved graph, which
-            # also catches one arriving transitively (spec 012, T026).
             "io-imap",
             "io-smtp",
             "imap",
@@ -852,14 +819,12 @@ RULES: dict[str, dict[str, object]] = {
     },
     "postio-render": {
         "banned": [
-            # toolkit / web engine
             "gtk4",
             "gtk4-sys",
             "glib",
             "gio",
             "webkit6",
             "webkit6-sys",
-            # Postio crates that network or store
             "postio-transport",
             "postio-sync",
             "postio-runtime",
@@ -870,10 +835,8 @@ RULES: dict[str, dict[str, object]] = {
             "postio-smtp",
             "io-http",
             "pimalaya-stream",
-            # Blitz's own networking
             "blitz",
             "blitz-net",
-            # network and TLS stacks
             "reqwest",
             "hyper",
             "h2",
@@ -892,9 +855,8 @@ RULES: dict[str, dict[str, object]] = {
             "tokio",
             "async-std",
         ],
-        # The product graph only: the renderer's own tests bind a loopback
-        # socket to prove it never connects, and use postio-test-support,
-        # which pulls in tokio. Neither ever links into the app.
+        # Product graph only: the renderer's tests bind a loopback socket and use
+        # postio-test-support (tokio), neither linked into the app.
         "edges": "product",
         "why": (
             "spec 006 FR-001 / ADR 0042: the renderer is incapable of a "
@@ -906,11 +868,8 @@ RULES: dict[str, dict[str, object]] = {
         "banned": [
             "rusqlite",
             "libsqlite3-sys",
-            # The engine, whatever it is currently called. `rusqlite` and
-            # `libsqlite3-sys` stay listed with it: a rule keyed on a
-            # dependency's *name* stops holding the moment the name changes,
-            # and the whole point of this check is that the boundary does not
-            # depend on anyone noticing (docs/archive/specs/004-turso-store T002).
+            # The engine, whatever it is called; `rusqlite` and `libsqlite3-sys` stay listed because
+            # a name-keyed rule stops holding on rename.
             "turso",
             "turso_core",
             "gtk4",

@@ -1,71 +1,22 @@
-//! The composer's document: a closed type, and the HTML subset it maps to.
-//!
-//! This is the model a Postio body is edited *as*, on every frontend. It is
-//! deliberately not the toolkit's buffer: `GtkTextBuffer`, `NSTextStorage`
-//! and a `contenteditable` DOM disagree about what a rich-text document is —
-//! attribute runs against nested spans, what constitutes one undo step, how
-//! lists nest — so a composer whose state is "whatever is in the buffer"
-//! makes a second frontend a rewrite rather than a port, and makes the two
-//! produce different HTML from the same gestures. See [ADR 0004].
-//!
-//! # The set is closed, and that is the security argument
-//!
-//! Six block kinds and seven inline kinds is the whole language. Outgoing
-//! HTML is *generated* from this type, never passed through, so:
-//!
-//! * [`Inline::Image`] carries a [`ContentId`] and there is no variant that
-//!   can hold `https://tracker.example.com/pixel.gif`. A remote image in a
-//!   quoted message does not get *stripped* — it has **no representation**.
-//! * [`Href`] only constructs for `http`, `https` and `mailto`. A
-//!   `javascript:` URL fails to parse rather than being filtered later.
-//! * There is no styling: no colours, no fonts, no `style`, no `class`. Every
-//!   styling attribute is an attribute a sanitiser would then have to reason
-//!   about in both directions.
-//!
-//! That is why [`fn@crate::parse`] can be *total*. Its input on the quoting path is
-//! attacker-controlled, and a parse error there would be a denial of service
-//! on replying to a hostile message. It never fails; it **narrows**.
-//!
-//! # Two round trips, both properties
-//!
-//! * `parse(to_html(d)) == d` for every document — structure survives.
-//! * `to_html(parse(h)) == h` for `h` already in the subset — [`to_html`] is
-//!   the *normal form*, so re-saving a draft is a no-op rather than a slow
-//!   rewrite of the user's markup.
-//!
-//! [`to_html`]: Document::to_html
-//! [ADR 0004]: https://github.com/dlapiduz/postio/blob/main/docs/decisions/0004-composer-document-model.md
+//! The composer's document: a closed type, and the HTML subset it maps to (ADR 0004).
+//! Outgoing HTML is generated from this type, never passed through, so no remote image, script URL
+//! or style has a representation.
+//! `parse` is total and narrows; `parse(to_html(d)) == d`, and `to_html(parse(h)) == h` for `h`
+//! already in the subset.
 
 use std::fmt::Write as _;
 
 use crate::flowed;
 
-// ---------------------------------------------------------------------------
-// Leaf types
-// ---------------------------------------------------------------------------
-
-/// A link target Postio is willing to emit.
-///
-/// Constructed only by [`Href::parse`], which accepts three schemes. This is
-/// the type-level half of "no `javascript:` in an outgoing body": there is no
-/// way to build one holding anything else, so no serialiser has to remember
-/// to check.
+/// Only [`Href::parse`] builds one, so no serialiser has to check for `javascript:`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Href(String);
 
 impl Href {
-    /// The only schemes a body may link to.
     const SCHEMES: [&'static str; 3] = ["http", "https", "mailto"];
 
-    /// Parse `raw`, or refuse it.
-    ///
-    /// Refuses anything without one of `http`, `https` or `mailto`, and anything
-    /// carrying an ASCII control character *anywhere*. The control-character
-    /// rule is not decoration: `java&#9;script:alert(1)` is a real bypass —
-    /// HTML entity-decodes the tab, and a scheme check that ran before the
-    /// decode would see `java\tscript` and a browser would see `javascript`.
-    /// Refusing controls outright means the check cannot be walked around by
-    /// choosing where to decode.
+    /// Refuses any ASCII control character anywhere: `java&#9;script:` entity-decodes to
+    /// `javascript:`, so a scheme check made before the decode would miss it.
     pub fn parse(raw: &str) -> Option<Self> {
         let trimmed = raw.trim();
         if trimmed.chars().any(|c| c.is_ascii_control()) {
@@ -75,34 +26,25 @@ impl Href {
         if rest.is_empty() {
             return None;
         }
-        // A relative reference has no scheme and no meaning in mail: there is
-        // no base document to resolve it against once the message is sent.
+        // No base document to resolve a relative reference against once sent.
         Self::SCHEMES
             .iter()
             .any(|allowed| scheme.eq_ignore_ascii_case(allowed))
             .then(|| Href(trimmed.to_owned()))
     }
 
-    /// The target, as it will be written.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// The `Content-ID` of a part carried by the message itself.
-///
-/// Never a URL. [`Inline::Image`] holds one of these and nothing else, which
-/// is what makes "Postio cannot send a tracking pixel" a fact about the type
-/// rather than a promise about a filter.
+/// Never a URL, so "Postio cannot send a tracking pixel" is a fact about the type.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ContentId(String);
 
 impl ContentId {
-    /// Wrap a `Content-ID`, with or without the angle brackets MIME writes.
-    ///
-    /// Refuses anything that could be read as a URL — a colon, whitespace or
-    /// a control character. A `cid:` reference whose body is `//evil.example`
-    /// must not become an image source by being copied through.
+    /// Refuses anything readable as a URL (colon, whitespace, control character):
+    /// a `cid:` body of `//evil.example` must not become an image source.
     pub fn parse(raw: &str) -> Option<Self> {
         let id = raw
             .trim()
@@ -119,160 +61,272 @@ impl ContentId {
         Some(ContentId(id.to_owned()))
     }
 
-    /// The id, without brackets.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
-/// How deep a heading goes. Three levels; a mail body is not a manual.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum HeadingLevel {
-    /// `<h1>`.
     One,
-    /// `<h2>`.
     Two,
-    /// `<h3>`.
     Three,
+    Four,
+    Five,
+    Six,
 }
 
 impl HeadingLevel {
-    /// The level as its HTML digit.
+    pub const ALL: [HeadingLevel; 6] = [
+        HeadingLevel::One,
+        HeadingLevel::Two,
+        HeadingLevel::Three,
+        HeadingLevel::Four,
+        HeadingLevel::Five,
+        HeadingLevel::Six,
+    ];
+
     pub fn digit(self) -> u8 {
         match self {
             HeadingLevel::One => 1,
             HeadingLevel::Two => 2,
             HeadingLevel::Three => 3,
+            HeadingLevel::Four => 4,
+            HeadingLevel::Five => 5,
+            HeadingLevel::Six => 6,
         }
     }
 
-    /// The level a `<hN>` tag names, if Postio has one for it.
-    ///
-    /// `<h4>` and deeper narrow to [`HeadingLevel::Three`] rather than being
-    /// dropped: the author meant "a heading", and losing the text entirely
-    /// would be worse than losing one level of rank.
     pub fn from_digit(digit: u8) -> Option<Self> {
-        match digit {
-            1 => Some(HeadingLevel::One),
-            2 => Some(HeadingLevel::Two),
-            3..=6 => Some(HeadingLevel::Three),
-            _ => None,
+        Self::ALL.get(usize::from(digit).checked_sub(1)?).copied()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ListKind {
+    Bullet,
+    /// `start` may be `0`, as in HTML and CommonMark.
+    Ordered {
+        start: u32,
+    },
+}
+
+impl ListKind {
+    pub const NUMBERED: ListKind = ListKind::Ordered { start: 1 };
+
+    pub fn is_ordered(self) -> bool {
+        matches!(self, ListKind::Ordered { .. })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Task {
+    Open,
+    Done,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ListItem {
+    pub task: Option<Task>,
+    pub blocks: Vec<Block>,
+}
+
+impl ListItem {
+    pub fn new(blocks: Vec<Block>) -> Self {
+        ListItem { task: None, blocks }
+    }
+
+    pub fn task(task: Task, blocks: Vec<Block>) -> Self {
+        ListItem {
+            task: Some(task),
+            blocks,
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// The document
-// ---------------------------------------------------------------------------
+/// Built only by [`Language::parse`] (1 to 32 of ASCII letter, digit or `+ # . _ -`),
+/// so `data-postio-lang` can never carry a quote.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Language(String);
 
-/// One run of inline content.
+impl Language {
+    pub const MAX: usize = 32;
+
+    /// No trimming: a space is refused, so a caller holding an info string picks its first word.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let allowed =
+            |c: char| c.is_ascii_alphanumeric() || matches!(c, '+' | '#' | '.' | '_' | '-');
+        (!raw.is_empty() && raw.chars().count() <= Self::MAX && raw.chars().all(allowed))
+            .then(|| Language(raw.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Alignment {
+    #[default]
+    None,
+    Left,
+    Center,
+    Right,
+}
+
+pub type Cell = Vec<Inline>;
+
+/// Rectangular: only [`Table::new`] builds one, padding short rows and truncating long ones as GFM
+/// does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Table {
+    alignments: Vec<Alignment>,
+    header: Vec<Cell>,
+    rows: Vec<Vec<Cell>>,
+}
+
+impl Table {
+    /// As wide as `alignments`, else as `header`; never under one column.
+    pub fn new(alignments: Vec<Alignment>, header: Vec<Cell>, rows: Vec<Vec<Cell>>) -> Self {
+        Self::counting(alignments, header, rows).0
+    }
+
+    /// As [`Table::new`], also reporting the cells truncated: what a narrowing counts as lost.
+    pub fn counting(
+        mut alignments: Vec<Alignment>,
+        header: Vec<Cell>,
+        rows: Vec<Vec<Cell>>,
+    ) -> (Self, usize) {
+        if alignments.is_empty() {
+            alignments = vec![Alignment::None; header.len().max(1)];
+        }
+        let width = alignments.len();
+        let mut dropped = 0;
+        let mut fit = |mut row: Vec<Cell>| {
+            dropped += row.len().saturating_sub(width);
+            row.resize_with(width, Vec::new);
+            row
+        };
+        let header = fit(header);
+        let rows = rows.into_iter().map(&mut fit).collect();
+        (
+            Table {
+                alignments,
+                header,
+                rows,
+            },
+            dropped,
+        )
+    }
+
+    pub fn alignments(&self) -> &[Alignment] {
+        &self.alignments
+    }
+
+    pub fn header(&self) -> &[Cell] {
+        &self.header
+    }
+
+    pub fn rows(&self) -> &[Vec<Cell>] {
+        &self.rows
+    }
+
+    pub fn width(&self) -> usize {
+        self.alignments.len()
+    }
+
+    pub fn cells(&self) -> impl Iterator<Item = &Cell> {
+        self.header.iter().chain(self.rows.iter().flatten())
+    }
+}
+
+/// An `http` or `https` [`Href`]. Holding one fetches nothing: it is written as a link,
+/// and only "Download and attach" reads it as an address.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct WebHref(Href);
+
+impl WebHref {
+    pub fn parse(raw: &str) -> Option<Self> {
+        let href = Href::parse(raw)?;
+        let scheme = href.as_str().split(':').next().unwrap_or_default();
+        (scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https"))
+            .then_some(WebHref(href))
+    }
+
+    pub fn as_href(&self) -> &Href {
+        &self.0
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Inline {
-    /// Literal text. Escaped on the way out, never interpreted.
     Text(String),
-    /// `<strong>`.
     Strong(Vec<Inline>),
-    /// `<em>`.
     Emphasis(Vec<Inline>),
-    /// `<code>`. Holds a string rather than inlines: code is not marked up.
+    Strikethrough(Vec<Inline>),
     Code(String),
-    /// `<a href>`, to somewhere [`Href`] would accept.
     Link {
-        /// Where it points.
         href: Href,
-        /// What it reads as.
         inlines: Vec<Inline>,
     },
-    /// `<img>` of a part this message carries.
     Image {
-        /// The part, by `Content-ID`.
         content_id: ContentId,
-        /// Alternative text. Empty is allowed; absent is not.
         alt: String,
     },
-    /// `<br>`.
+    /// Never an `<img>`: written as a link so a recipient's client fetches nothing. Only Markdown
+    /// makes one.
+    RemoteImage {
+        href: WebHref,
+        alt: String,
+    },
     Break,
 }
 
-/// One block of content.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Block {
-    /// `<p>`.
     Paragraph(Vec<Inline>),
-    /// `<h1>` to `<h3>`.
     Heading {
-        /// How deep.
         level: HeadingLevel,
-        /// What it says.
         inlines: Vec<Inline>,
     },
-    /// `<ul>` or `<ol>`. Each item is itself a run of blocks, so a list can
-    /// hold a paragraph and a nested list.
     List {
-        /// `<ol>` when true.
-        ordered: bool,
-        /// The items.
-        items: Vec<Vec<Block>>,
+        kind: ListKind,
+        items: Vec<ListItem>,
     },
-    /// `<blockquote>` — a quote the *user* made, from the authoring subset.
     Quote(Vec<Block>),
-    /// `<blockquote>` — the quote a reply opens with: the original message as
-    /// the reader rendered it (ADR 0033).
-    ///
-    /// Distinct from [`Block::Quote`] because its content is not the
-    /// authoring subset and must not be narrowed to it. Narrowing is exactly
-    /// what the reply quote stopped doing: a table, a colour and an inline
-    /// declaration have no `Block`, and losing them is what made a reply to a
-    /// rich message quote something that did not look like the message being
-    /// answered.
-    ///
-    /// The content is still a gate rather than a hole — see
-    /// [`crate::Quoted`], which only [`crate::quote_of`] can build, and which
-    /// the parser rebuilds through the same constructor on the way back in so
-    /// nothing the editor's DOM picked up can widen it.
+    /// The quote a reply opens with, kept as the reader rendered it, not narrowed to the authoring
+    /// subset (ADR 0033).
+    /// Only [`crate::quote_of`] builds a [`crate::Quoted`], and the parser rebuilds it through the
+    /// same constructor.
     Quoted(crate::Quoted),
-    /// `<pre>`. Holds a string: preformatted text is not marked up.
-    Pre(String),
-    /// `<hr>`.
+    Code {
+        language: Option<Language>,
+        text: String,
+    },
     Rule,
+    Table(Table),
 }
 
-/// The attribute that marks a `<blockquote>` as a reply quote rather than one
-/// the user made.
-///
-/// A `data-` attribute so it is valid HTML and so the editor's own DOM keeps
-/// it across a round trip. It carries no content: it says only "the parser
-/// should hand this back to `quote_of` rather than narrowing it".
+/// Marks a `<blockquote>` as a reply quote; the parser hands it back to `quote_of` instead of
+/// narrowing it.
 pub const QUOTED_MARKER: &str = "data-postio-quoted";
 
-/// A message body, as it is edited.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Document {
-    /// The blocks, in order.
     pub blocks: Vec<Block>,
 }
 
 impl Document {
-    /// An empty document.
     pub fn new() -> Self {
         Document::default()
     }
 
-    /// The document a plain-text composer produces.
-    ///
-    /// One paragraph per blank-line-separated run, `Break` for the single
-    /// newlines inside one. A document of nothing but [`Block::Paragraph`]
-    /// and [`Inline::Text`] *is* a plain-text document — which is why v1 can
-    /// ship a plain-text editor over the neutral model without restricting
-    /// the model.
-    ///
-    /// **Lossless**, and paired exactly with [`Document::to_text`]:
-    /// `to_text(from_text(t)) == t` for any `t` with no carriage returns.
-    /// Empty paragraphs and trailing newlines are kept rather than tidied
-    /// away, because they are the user's. A reply opens with blank lines
-    /// above the signature for the user to type into, and a composer that
-    /// swallowed them on the first read would move the cursor out from under
-    /// them — which is what the `gtk_identity` test caught when this did tidy.
+    /// Lossless with [`Document::to_text`] for text without carriage returns. Empty paragraphs and
+    /// trailing newlines are kept: a reply opens with blank lines for the user to type into.
     pub fn from_text(text: &str) -> Self {
         let blocks = text
             .replace("\r\n", "\n")
@@ -293,12 +347,7 @@ impl Document {
         Document { blocks }
     }
 
-    /// [`from_text`](Self::from_text), with each run of `>` lines a
-    /// [`Block::Quote`] of the text under the marker.
-    ///
-    /// What the composer's Rich switch builds from the plain field, which
-    /// for a reply ends in the quoted original. A quote within a quote
-    /// nests. Text with no `>` line is exactly what `from_text` makes.
+    /// [`from_text`](Self::from_text), with each run of `>` lines a nesting [`Block::Quote`].
     pub fn from_text_quoting(text: &str) -> Self {
         let text = text.replace("\r\n", "\n");
         let mut blocks = Vec::new();
@@ -332,20 +381,9 @@ impl Document {
         Document { blocks }
     }
 
-    /// The document `format=flowed` (RFC 3676) text means — the inverse of
-    /// [`to_flowed_text`](Self::to_flowed_text): every soft-wrapped run of
-    /// physical lines becomes the one logical line it was wrapped from, and
-    /// every *fixed* line (RFC 3676's term for one with no trailing space,
-    /// so no more than one per [`Inline::Break`]-delimited span) stays its
-    /// own line.
-    ///
-    /// Unlike [`from_text`](Self::from_text), which treats every `\n` as a
-    /// break the user typed on purpose — correct for the composer's own
-    /// buffer, wrong for text a `format=flowed` sender wrapped for the
-    /// terminal. Use this one only when the source actually declared
-    /// `format=flowed`; anything else, including ordinary short lines with
-    /// no such header, must go through `from_text` instead, or a real break
-    /// the writer meant gets silently joined onto its neighbour (#456).
+    /// Inverse of [`to_flowed_text`](Self::to_flowed_text). Only for text that declared
+    /// `format=flowed`:
+    /// otherwise a real break would be joined onto its neighbour (#456).
     pub fn from_flowed_text(text: &str) -> Self {
         let blocks = text
             .replace("\r\n", "\n")
@@ -353,10 +391,8 @@ impl Document {
             .map(|para| {
                 let mut inlines = Vec::new();
                 let mut span: Vec<&str> = Vec::new();
-                // Whether a span has ended yet -- not `inlines.is_empty()`,
-                // which a span that unwrapped to nothing (a leading hard
-                // break with no text before it) would leave empty too,
-                // silently dropping that break instead of counting it.
+                // Not `inlines.is_empty()`: a span that unwrapped to nothing would drop a leading
+                // hard break.
                 let mut first_span = true;
                 for line in para.split('\n') {
                     let fixed = !line.ends_with(' ');
@@ -380,20 +416,12 @@ impl Document {
         Document { blocks }
     }
 
-    /// Whether there is anything to send.
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
 
-    /// Whether [`Document::to_text`] loses nothing.
-    ///
-    /// True for a document of nothing but paragraphs and unstyled text —
-    /// which is what a plain-text composer produces, and what
-    /// [`Document::from_text`] builds. The composer uses this to decide
-    /// whether a message needs an HTML alternative at all: sending
-    /// `multipart/alternative` for a message somebody typed as plain text
-    /// adds bytes, adds a second thing to get wrong, and is exactly what
-    /// mailing lists ask people not to do.
+    /// True for only paragraphs and unstyled text; decides whether a message needs an HTML
+    /// alternative at all.
     pub fn is_plain_text(&self) -> bool {
         self.blocks.iter().all(|block| match block {
             Block::Paragraph(inlines) => inlines
@@ -403,26 +431,43 @@ impl Document {
         })
     }
 
-    /// Every link's host, lowercased and deduplicated.
-    ///
-    /// Not [`Href`] itself: a caller comparing against a sender's own domain
-    /// (issue #116's composer banner is the first) wants just the host, and
-    /// parsing one out of a raw href belongs with the type that already
-    /// knows what a valid href looks like. A `mailto:` link names no host at
-    /// all and is silently skipped, the same as any href [`url`](ammonia::Url) cannot find
-    /// one in.
+    /// Hosts only: `mailto:` links and hrefs with no host are skipped.
     pub fn link_hosts(&self) -> Vec<String> {
         let mut hosts = Vec::new();
         collect_link_hosts_in_blocks(&self.blocks, &mut hosts);
         hosts
     }
 
-    /// Render to the HTML subset.
-    ///
-    /// The **normal form**: no whitespace between blocks, attributes in a
-    /// fixed order, every text node escaped. That is what makes
-    /// `to_html(parse(h)) == h` hold for anything already in the subset, and
-    /// so what makes re-saving a draft a no-op.
+    pub fn remote_images(&self) -> Vec<(WebHref, String)> {
+        let mut found = Vec::new();
+        visit_inlines(&self.blocks, &mut |inline| {
+            if let Inline::RemoteImage { href, alt } = inline {
+                found.push((href.clone(), alt.clone()));
+            }
+        });
+        found
+    }
+
+    pub fn attach_remote(&mut self, href: &WebHref, content_id: &ContentId) -> bool {
+        replace_remote(&mut self.blocks, href, &mut |alt| Inline::Image {
+            content_id: content_id.clone(),
+            alt,
+        })
+    }
+
+    pub fn unlink_remote(&mut self, href: &WebHref) -> bool {
+        replace_remote(&mut self.blocks, href, &mut |alt| Inline::Link {
+            href: href.as_href().clone(),
+            inlines: vec![Inline::Text(if alt.is_empty() {
+                href.as_str().to_owned()
+            } else {
+                alt
+            })],
+        })
+    }
+
+    /// The normal form: no whitespace between blocks, fixed attribute order, escaped text,
+    /// so re-saving a draft is a no-op.
     pub fn to_html(&self) -> String {
         let mut out = String::new();
         for block in &self.blocks {
@@ -431,11 +476,7 @@ impl Document {
         out
     }
 
-    /// As [`to_html`](Self::to_html), but with every image source in the
-    /// editing shell's `postio-cid:` scheme rather than the wire's `cid:` —
-    /// the only form the shell's CSP will show. `parse` accepts the editing
-    /// scheme back, so `parse(editor_html(d)) == d` holds exactly as the
-    /// wire round trip does.
+    /// With image sources in the editing shell's `postio-cid:` scheme, the only form its CSP shows.
     pub fn editor_html(&self) -> String {
         let mut out = String::new();
         for block in &self.blocks {
@@ -444,53 +485,25 @@ impl Document {
         out
     }
 
-    /// Render to the plain-text alternative.
-    ///
-    /// A total function over a closed set, which is the whole reason the set
-    /// is closed: over arbitrary HTML this is the function that makes most
-    /// mail's `text/plain` part unreadable. **Do not reach for `html2text`** —
-    /// convert from here.
+    /// Total over a closed set. Do not reach for `html2text`.
     pub fn to_text(&self) -> String {
         self.render_text(Links::Spelled)
     }
 
-    /// The document as the words a person would read, for a search index.
-    ///
-    /// [`to_text`](Self::to_text) is written for *quoting*, where a link's
-    /// address is the point: dropping it leaves "click here" pointing at
-    /// nothing. An index wants the opposite. A message that links to
-    /// `tracker.example` does not say "tracker.example" anywhere a reader can
-    /// see, so indexing it makes that message a hit for a word it never
-    /// contained — and one tracking redirect would then answer for every
-    /// campaign that used the same shortener. Same for the `[image]`
-    /// placeholder, which would make every message carrying a picture a hit
-    /// for the word "image".
-    ///
-    /// A link whose visible text *is* its address still indexes as that
-    /// address: that is what the message says.
+    /// For a search index, so link addresses and the `[image]` placeholder are left out:
+    /// a tracker URL would make a message a hit for words it never shows.
+    /// A link whose visible text is its address still indexes as that.
     pub fn to_search_text(&self) -> String {
         self.render_text(Links::LabelOnly)
     }
 
-    /// Render to the outgoing `text/plain; format=flowed` alternative — RFC
-    /// 3676, at [`flowed::WIDTH`].
-    ///
-    /// Not [`to_text`](Self::to_text): that function is the composer's own
-    /// round-trip partner for [`from_text`](Self::from_text), and wrapping
-    /// it would move the user's cursor and whitespace out from under them
-    /// while they are still typing — see `from_text`'s own doc and the
-    /// `plain_text_survives_the_composer_exactly` test this crate's suite
-    /// already has. This is a second rendering of the same structure, for
-    /// the one caller that wants it wrapped: the bytes that actually leave
-    /// the machine.
+    /// Not [`to_text`](Self::to_text): wrapping that would move the user's cursor and whitespace
+    /// while they type.
     pub fn to_flowed_text(&self) -> String {
         self.to_flowed_text_at(flowed::WIDTH)
     }
 
-    /// As [`to_flowed_text`](Self::to_flowed_text), at a caller-chosen width
-    /// — split out for the property test that wants to see wrapping happen
-    /// at a width smaller than a paragraph, without waiting on a paragraph
-    /// long enough to wrap at 72 columns for real.
+    /// Split out so a property test can force wrapping below a paragraph's length.
     pub fn to_flowed_text_at(&self, width: usize) -> String {
         let mut out = String::new();
         for (index, block) in self.blocks.iter().enumerate() {
@@ -514,18 +527,107 @@ impl Document {
     }
 }
 
-/// How a rendered-to-text link spells itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Links {
-    /// Label and address, the way a quoted reply needs it.
     Spelled,
-    /// The visible label alone, the way an index needs it.
     LabelOnly,
 }
 
-// ---------------------------------------------------------------------------
-// Link hosts (issue #116)
-// ---------------------------------------------------------------------------
+fn each_block_inlines(blocks: &[Block], visit: &mut dyn FnMut(&[Inline])) {
+    for block in blocks {
+        match block {
+            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => visit(inlines),
+            Block::List { items, .. } => {
+                for item in items {
+                    each_block_inlines(&item.blocks, visit);
+                }
+            }
+            Block::Quote(blocks) => each_block_inlines(blocks, visit),
+            Block::Table(table) => {
+                for cell in table.cells() {
+                    visit(cell);
+                }
+            }
+            Block::Quoted(_) | Block::Code { .. } | Block::Rule => {}
+        }
+    }
+}
+
+fn visit_inlines(blocks: &[Block], visit: &mut dyn FnMut(&Inline)) {
+    fn walk(inlines: &[Inline], visit: &mut dyn FnMut(&Inline)) {
+        for inline in inlines {
+            visit(inline);
+            match inline {
+                Inline::Strong(inner)
+                | Inline::Emphasis(inner)
+                | Inline::Strikethrough(inner)
+                | Inline::Link { inlines: inner, .. } => walk(inner, visit),
+                _ => {}
+            }
+        }
+    }
+    each_block_inlines(blocks, &mut |inlines| walk(inlines, visit));
+}
+
+fn replace_remote(
+    blocks: &mut [Block],
+    href: &WebHref,
+    with: &mut dyn FnMut(String) -> Inline,
+) -> bool {
+    fn in_inlines(
+        inlines: &mut [Inline],
+        href: &WebHref,
+        with: &mut dyn FnMut(String) -> Inline,
+    ) -> bool {
+        for inline in inlines.iter_mut() {
+            match inline {
+                Inline::RemoteImage { href: at, alt } if at == href => {
+                    *inline = with(std::mem::take(alt));
+                    return true;
+                }
+                Inline::Strong(inner)
+                | Inline::Emphasis(inner)
+                | Inline::Strikethrough(inner)
+                | Inline::Link { inlines: inner, .. } => {
+                    if in_inlines(inner, href, with) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+    for block in blocks.iter_mut() {
+        let done = match block {
+            Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+                in_inlines(inlines, href, with)
+            }
+            Block::List { items, .. } => items
+                .iter_mut()
+                .any(|item| replace_remote(&mut item.blocks, href, with)),
+            Block::Quote(blocks) => replace_remote(blocks, href, with),
+            Block::Table(table) => {
+                let mut header = table.header().to_vec();
+                let mut rows = table.rows().to_vec();
+                let done = header.iter_mut().any(|cell| in_inlines(cell, href, with))
+                    || rows
+                        .iter_mut()
+                        .flatten()
+                        .any(|cell| in_inlines(cell, href, with));
+                if done {
+                    *table = Table::new(table.alignments().to_vec(), header, rows);
+                }
+                done
+            }
+            Block::Quoted(_) | Block::Code { .. } | Block::Rule => false,
+        };
+        if done {
+            return true;
+        }
+    }
+    false
+}
 
 fn collect_link_hosts_in_blocks(blocks: &[Block], hosts: &mut Vec<String>) {
     for block in blocks {
@@ -535,17 +637,19 @@ fn collect_link_hosts_in_blocks(blocks: &[Block], hosts: &mut Vec<String>) {
             }
             Block::List { items, .. } => {
                 for item in items {
-                    collect_link_hosts_in_blocks(item, hosts);
+                    collect_link_hosts_in_blocks(&item.blocks, hosts);
                 }
             }
             Block::Quote(blocks) => collect_link_hosts_in_blocks(blocks, hosts),
-            // The reply quote's links are the *original sender's*, already
-            // in front of whoever read the message. `link_hosts` answers
-            // "what would this draft reach out to", which is about what the
-            // user is about to send on their own behalf, so a quoted
-            // newsletter's fifty footer links do not belong in that answer.
+            // A quote's links are the original sender's; `link_hosts` is about what the draft
+            // reaches out to.
             Block::Quoted(_) => {}
-            Block::Pre(_) | Block::Rule => {}
+            Block::Table(table) => {
+                for cell in table.cells() {
+                    collect_link_hosts_in_inlines(cell, hosts);
+                }
+            }
+            Block::Code { .. } | Block::Rule => {}
         }
     }
 }
@@ -561,16 +665,24 @@ fn collect_link_hosts_in_inlines(inlines: &[Inline], hosts: &mut Vec<String>) {
                 }
                 collect_link_hosts_in_inlines(inlines, hosts);
             }
-            Inline::Strong(inlines) | Inline::Emphasis(inlines) => {
+            Inline::Strong(inlines)
+            | Inline::Emphasis(inlines)
+            | Inline::Strikethrough(inlines) => {
                 collect_link_hosts_in_inlines(inlines, hosts);
+            }
+            Inline::RemoteImage { href, .. } => {
+                if let Some(host) = host_of(href.as_str())
+                    && !hosts.contains(&host)
+                {
+                    hosts.push(host);
+                }
             }
             Inline::Text(_) | Inline::Code(_) | Inline::Image { .. } | Inline::Break => {}
         }
     }
 }
 
-/// The host of an `http`/`https` href, lowercased. `None` for `mailto:` and
-/// anything else with no authority component to name one.
+/// `None` for `mailto:` and anything else with no authority.
 fn host_of(href: &str) -> Option<String> {
     ammonia::Url::parse(href)
         .ok()?
@@ -578,11 +690,6 @@ fn host_of(href: &str) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-// ---------------------------------------------------------------------------
-// HTML out
-// ---------------------------------------------------------------------------
-
-/// Escape text for an element's content.
 fn escape_text(out: &mut String, text: &str) {
     for c in text.chars() {
         match c {
@@ -594,7 +701,6 @@ fn escape_text(out: &mut String, text: &str) {
     }
 }
 
-/// Escape text for a double-quoted attribute value.
 fn escape_attribute(out: &mut String, text: &str) {
     for c in text.chars() {
         match c {
@@ -607,9 +713,6 @@ fn escape_attribute(out: &mut String, text: &str) {
     }
 }
 
-/// One image source in the editing shell's scheme: what
-/// [`Document::editor_html`] emits for it, and what an editing gesture that
-/// inserts an image writes into the DOM.
 pub fn editor_image_src(content_id: &ContentId) -> String {
     format!(
         "postio-cid:{}",
@@ -617,9 +720,6 @@ pub fn editor_image_src(content_id: &ContentId) -> String {
     )
 }
 
-/// Which scheme an `<img>` source carries: the wire's `cid:`, or the editing
-/// shell's `postio-cid:` (percent-encoded, matching what the scheme handler
-/// decodes).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ImageScheme {
     Wire,
@@ -638,18 +738,7 @@ fn write_block(out: &mut String, block: &Block, scheme: ImageScheme) {
             write_inlines(out, inlines, scheme);
             let _ = write!(out, "</h{}>", level.digit());
         }
-        Block::List { ordered, items } => {
-            let tag = if *ordered { "ol" } else { "ul" };
-            let _ = write!(out, "<{tag}>");
-            for item in items {
-                out.push_str("<li>");
-                for block in item {
-                    write_block(out, block, scheme);
-                }
-                out.push_str("</li>");
-            }
-            let _ = write!(out, "</{tag}>");
-        }
+        Block::List { kind, items } => write_list(out, *kind, items, scheme),
         Block::Quote(blocks) => {
             out.push_str("<blockquote>");
             for block in blocks {
@@ -657,15 +746,10 @@ fn write_block(out: &mut String, block: &Block, scheme: ImageScheme) {
             }
             out.push_str("</blockquote>");
         }
-        // Verbatim, because narrowing it is the thing this variant exists to
-        // stop. The marker attribute is what `parse` recognises coming back,
-        // so a round trip through the editor's DOM returns a `Quoted` rather
-        // than collapsing to the authoring subset (FR-046).
+        // Verbatim: narrowing is what this variant exists to stop. The marker lets `parse`
+        // return a `Quoted` after a round trip through the editor's DOM.
         Block::Quoted(quoted) => {
-            // A reply's quote is a `<blockquote>`; a forward's carried body is
-            // not (#1483). Both went through the same gate and carry the same
-            // bytes -- what differs is whether this is somebody else's words
-            // inside yours, or the message itself.
+            // A reply's quote is a `<blockquote>`; a forward's carried body is not (#1483).
             let tag = match quoted.presentation() {
                 crate::Presentation::Quote => "blockquote",
                 crate::Presentation::Carried => "div",
@@ -678,13 +762,110 @@ fn write_block(out: &mut String, block: &Block, scheme: ImageScheme) {
             out.push_str(quoted.html());
             let _ = write!(out, "</{tag}>");
         }
-        Block::Pre(text) => {
-            out.push_str("<pre>");
+        Block::Code { language, text } => {
+            out.push_str("<pre");
+            if let Some(language) = language {
+                let _ = write!(out, " {LANGUAGE_MARKER}=\"{}\"", language.as_str());
+            }
+            out.push('>');
             escape_text(out, text);
             out.push_str("</pre>");
         }
         Block::Rule => out.push_str("<hr>"),
+        Block::Table(table) => write_table(out, table, scheme),
     }
+}
+
+/// Not `class="language-x"`: ADR 0004 admits no `class`.
+pub const LANGUAGE_MARKER: &str = "data-postio-lang";
+
+pub const TASK_MARKER: &str = "data-postio-task";
+
+pub const REMOTE_IMAGE_MARKER: &str = "data-postio-remote-image";
+
+pub const OPEN_BOX: &str = "\u{2610} ";
+
+pub const DONE_BOX: &str = "\u{2611} ";
+
+/// A box is a glyph, not `<input type=checkbox>`, which Gmail and Outlook drop. It goes inside the
+/// first paragraph; before a `<p>` it would be drawn on a line of its own.
+fn write_list(out: &mut String, kind: ListKind, items: &[ListItem], scheme: ImageScheme) {
+    let tag = if kind.is_ordered() { "ol" } else { "ul" };
+    let _ = write!(out, "<{tag}");
+    if let ListKind::Ordered { start } = kind
+        && start != 1
+    {
+        let _ = write!(out, " start=\"{start}\"");
+    }
+    if kind == ListKind::Bullet && !items.is_empty() && items.iter().all(|item| item.task.is_some())
+    {
+        let _ = write!(
+            out,
+            " {TASK_MARKER}=\"list\" style=\"list-style-type:none\""
+        );
+    }
+    out.push('>');
+    for item in items {
+        let (state, glyph) = match item.task {
+            None => {
+                out.push_str("<li>");
+                for block in &item.blocks {
+                    write_block(out, block, scheme);
+                }
+                out.push_str("</li>");
+                continue;
+            }
+            Some(Task::Open) => ("open", OPEN_BOX),
+            Some(Task::Done) => ("done", DONE_BOX),
+        };
+        let _ = write!(out, "<li {TASK_MARKER}=\"{state}\">");
+        match item.blocks.split_first() {
+            Some((Block::Paragraph(inlines), rest)) => {
+                out.push_str("<p>");
+                out.push_str(glyph);
+                write_inlines(out, inlines, scheme);
+                out.push_str("</p>");
+                for block in rest {
+                    write_block(out, block, scheme);
+                }
+            }
+            _ => {
+                out.push_str(glyph);
+                for block in &item.blocks {
+                    write_block(out, block, scheme);
+                }
+            }
+        }
+        out.push_str("</li>");
+    }
+    let _ = write!(out, "</{tag}>");
+}
+
+/// Layout attributes the Word engine honours: constant, and ignored by `parse`.
+fn write_table(out: &mut String, table: &Table, scheme: ImageScheme) {
+    out.push_str("<table border=\"1\" cellpadding=\"6\" cellspacing=\"0\"><thead><tr>");
+    let row = |out: &mut String, cells: &[Cell], tag: &str| {
+        for (cell, alignment) in cells.iter().zip(table.alignments()) {
+            let _ = write!(out, "<{tag}");
+            match alignment {
+                Alignment::None => {}
+                Alignment::Left => out.push_str(" align=\"left\""),
+                Alignment::Center => out.push_str(" align=\"center\""),
+                Alignment::Right => out.push_str(" align=\"right\""),
+            }
+            out.push('>');
+            write_inlines(out, cell, scheme);
+            let _ = write!(out, "</{tag}>");
+        }
+    };
+    row(out, table.header(), "th");
+    out.push_str("</tr></thead><tbody>");
+    for cells in table.rows() {
+        out.push_str("<tr>");
+        row(out, cells, "td");
+        out.push_str("</tr>");
+    }
+    out.push_str("</tbody></table>");
 }
 
 fn write_inlines(out: &mut String, inlines: &[Inline], scheme: ImageScheme) {
@@ -706,6 +887,11 @@ fn write_inline(out: &mut String, inline: &Inline, scheme: ImageScheme) {
             write_inlines(out, inlines, scheme);
             out.push_str("</em>");
         }
+        Inline::Strikethrough(inlines) => {
+            out.push_str("<del>");
+            write_inlines(out, inlines, scheme);
+            out.push_str("</del>");
+        }
         Inline::Code(text) => {
             out.push_str("<code>");
             escape_text(out, text);
@@ -718,11 +904,8 @@ fn write_inline(out: &mut String, inline: &Inline, scheme: ImageScheme) {
             write_inlines(out, inlines, scheme);
             out.push_str("</a>");
         }
-        // `cid:` on the wire; the rewrite to a local scheme is a
-        // display-time concern, and the editor is the one display that
-        // serialises it here (`editor_html`) rather than through
-        // `sanitize_body` — its input is the trusted document, not a
-        // message.
+        // `cid:` on the wire; the editor serialises its local scheme here because its input
+        // is the trusted document, not a message.
         Inline::Image { content_id, alt } => {
             match scheme {
                 ImageScheme::Wire => {
@@ -738,13 +921,18 @@ fn write_inline(out: &mut String, inline: &Inline, scheme: ImageScheme) {
             escape_attribute(out, alt);
             out.push_str("\">");
         }
+        // A link, never an `<img>`: a recipient's client fetches nothing until "Download and
+        // attach".
+        Inline::RemoteImage { href, alt } => {
+            out.push_str("<a href=\"");
+            escape_attribute(out, href.as_str());
+            let _ = write!(out, "\" {REMOTE_IMAGE_MARKER}=\"\">");
+            escape_text(out, if alt.is_empty() { href.as_str() } else { alt });
+            out.push_str("</a>");
+        }
         Inline::Break => out.push_str("<br>"),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Text out
-// ---------------------------------------------------------------------------
 
 fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links) {
     let indent = "    ".repeat(depth);
@@ -753,33 +941,34 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
             out.push_str(&indent);
             write_inlines_text(out, inlines, &indent, links);
         }
-        Block::Heading { inlines, .. } => {
-            out.push_str(&indent);
-            write_inlines_text(out, inlines, &indent, links);
+        Block::Heading { level, inlines } => {
+            let mut text = String::new();
+            write_inlines_text(&mut text, inlines, "", links);
+            for (index, line) in heading_lines(*level, &text, links).iter().enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&indent);
+                out.push_str(line);
+            }
         }
-        Block::List { ordered, items } => {
+        Block::List { kind, items } => {
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
                     out.push('\n');
                 }
                 out.push_str(&indent);
-                if *ordered {
-                    let _ = write!(out, "{}. ", index + 1);
-                } else {
-                    out.push_str("- ");
-                }
-                for (nth, block) in item.iter().enumerate() {
+                out.push_str(&item_marker(*kind, index, item.task, links));
+                for (nth, block) in item.blocks.iter().enumerate() {
                     if nth > 0 {
-                        out.push_str("\n\n");
+                        out.push_str(item_separator(block));
                     }
                     write_block_text(out, block, if nth > 0 { depth + 1 } else { 0 }, links);
                 }
             }
         }
-        // The plain rendering the original carried, under the same `> `
-        // convention: the rich half is what the HTML part shows, and
-        // `text/plain` recipients get the text alternative the sender wrote
-        // rather than a flattening of their markup.
+        // The original's own text alternative under the same `> ` convention, not a flattening of
+        // its markup.
         Block::Quoted(quoted) => {
             for (index, line) in quoted.text().split('\n').enumerate() {
                 if index > 0 {
@@ -794,8 +983,7 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
                 }
             }
         }
-        // The convention every mail client understands, and the one
-        // `quote::fold_html_quotes` recognises coming back the other way.
+        // `quote::fold_html_quotes` recognises this convention coming back.
         Block::Quote(blocks) => {
             let mut inner = String::new();
             for (index, block) in blocks.iter().enumerate() {
@@ -816,8 +1004,11 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
                 }
             }
         }
-        Block::Pre(text) => {
-            for (index, line) in text.split('\n').enumerate() {
+        Block::Code { language, text } => {
+            for (index, line) in code_lines(language.as_ref(), text, links)
+                .iter()
+                .enumerate()
+            {
                 if index > 0 {
                     out.push('\n');
                 }
@@ -829,13 +1020,136 @@ fn write_block_text(out: &mut String, block: &Block, depth: usize, links: Links)
             out.push_str(&indent);
             out.push_str("----");
         }
+        Block::Table(table) => {
+            for (index, line) in table_lines(table, links).iter().enumerate() {
+                if index > 0 {
+                    out.push('\n');
+                }
+                out.push_str(&indent);
+                out.push_str(line);
+            }
+        }
     }
 }
 
-/// The `> ` (or `>> `, `>>> `, …) RFC 3676 §4.5 gives one quote depth: every
-/// marker adjacent, one space total before content, never a space between
-/// markers — `> >` is two mail clients disagreeing about nesting, `>>` is
-/// one agreeing with itself. `0` is unquoted text and gets no prefix at all.
+fn item_separator(next: &Block) -> &'static str {
+    if matches!(next, Block::List { .. }) {
+        "\n"
+    } else {
+        "\n\n"
+    }
+}
+
+/// The search text keeps the bullet and drops the box.
+fn item_marker(kind: ListKind, index: usize, task: Option<Task>, links: Links) -> String {
+    let mut marker = match kind {
+        ListKind::Bullet => "- ".to_owned(),
+        ListKind::Ordered { start } => format!("{}. ", u64::from(start) + index as u64),
+    };
+    if links == Links::Spelled {
+        match task {
+            None => {}
+            Some(Task::Open) => marker.push_str("[ ] "),
+            Some(Task::Done) => marker.push_str("[x] "),
+        }
+    }
+    marker
+}
+
+fn heading_lines(level: HeadingLevel, text: &str, links: Links) -> Vec<String> {
+    if links == Links::LabelOnly {
+        return text.split('\n').map(str::to_owned).collect();
+    }
+    match level {
+        HeadingLevel::One | HeadingLevel::Two => {
+            let underline = if level == HeadingLevel::One { "=" } else { "-" };
+            let mut lines: Vec<String> = text.split('\n').map(str::to_owned).collect();
+            let width = lines
+                .iter()
+                .map(|line| line.chars().count())
+                .max()
+                .unwrap_or(0);
+            lines.push(underline.repeat(width.max(1)));
+            lines
+        }
+        _ => {
+            let hashes = "#".repeat(usize::from(level.digit()));
+            vec![format!("{hashes} {}", text.replace('\n', " "))]
+        }
+    }
+}
+
+/// The fence outruns any backtick run in the code.
+fn code_lines(language: Option<&Language>, text: &str, links: Links) -> Vec<String> {
+    let body = text.strip_suffix('\n').unwrap_or(text);
+    let mut lines: Vec<String> = body.split('\n').map(str::to_owned).collect();
+    if links == Links::LabelOnly {
+        return lines;
+    }
+    let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest.max(2) + 1);
+    lines.insert(
+        0,
+        format!("{fence}{}", language.map_or("", Language::as_str)),
+    );
+    lines.push(fence);
+    lines
+}
+
+fn table_lines(table: &Table, links: Links) -> Vec<String> {
+    let render = |cell: &Cell| {
+        let mut text = String::new();
+        write_inlines_text(&mut text, cell, "", links);
+        text.replace('\n', " ")
+    };
+    let rows: Vec<Vec<String>> = std::iter::once(table.header())
+        .chain(table.rows().iter().map(Vec::as_slice))
+        .map(|cells| cells.iter().map(render).collect())
+        .collect();
+    if links == Links::LabelOnly {
+        return rows.iter().map(|cells| cells.join(" ")).collect();
+    }
+    let widths: Vec<usize> = (0..table.width())
+        .map(|column| {
+            rows.iter()
+                .map(|cells| cells[column].chars().count())
+                .max()
+                .unwrap_or(0)
+                .max(1)
+        })
+        .collect();
+    let line = |cells: &[String]| {
+        let mut out = String::from("|");
+        for ((cell, width), alignment) in cells.iter().zip(&widths).zip(table.alignments()) {
+            let gap = width - cell.chars().count();
+            let (before, after) = match alignment {
+                Alignment::Right => (gap, 0),
+                Alignment::Center => (gap / 2, gap - gap / 2),
+                Alignment::None | Alignment::Left => (0, gap),
+            };
+            let _ = write!(out, " {}{cell}{} |", " ".repeat(before), " ".repeat(after));
+        }
+        out
+    };
+    let mut lines = vec![line(&rows[0])];
+    let mut delimiter = String::from("|");
+    for (width, alignment) in widths.iter().zip(table.alignments()) {
+        let dashes = |n: usize| "-".repeat(n);
+        delimiter.push_str(&match alignment {
+            Alignment::None => dashes(width + 2),
+            Alignment::Left => format!(":{}", dashes(width + 1)),
+            Alignment::Right => format!("{}:", dashes(width + 1)),
+            Alignment::Center => format!(":{}:", dashes(*width)),
+        });
+        delimiter.push('|');
+    }
+    lines.push(delimiter);
+    lines.extend(rows[1..].iter().map(|cells| line(cells)));
+    lines
+}
+
+/// RFC 3676 §4.5: markers adjacent, one space before content; `> >` is not `>>`. `0` gets no
+/// prefix.
 fn quote_prefix(depth: usize) -> String {
     if depth == 0 {
         String::new()
@@ -844,99 +1158,104 @@ fn quote_prefix(depth: usize) -> String {
     }
 }
 
-/// [`write_block_text`]'s counterpart for the flowed alternative: the same
-/// structure, wrapped at `width` per [`flowed::wrap`] instead of rendered
-/// verbatim.
-///
-/// `depth` is quote nesting only — unlike `write_block_text`'s `depth`,
-/// which also carries list indentation, because list continuation lines
-/// need their own alignment worked out from `flowed::wrap`'s prefix rather
-/// than reusing quote depth's meaning for a different purpose.
+/// `depth` is quote nesting only; list continuation alignment comes from `flowed::wrap`'s prefix.
 fn write_block_flowed(out: &mut String, block: &Block, depth: usize, width: usize) {
-    let prefix = quote_prefix(depth);
+    write_block_flowed_at(out, block, depth, "", width);
+}
+
+fn write_block_flowed_at(
+    out: &mut String,
+    block: &Block,
+    depth: usize,
+    indent: &str,
+    width: usize,
+) {
+    let prefix = format!("{}{indent}", quote_prefix(depth));
+    // Fixed line: never reflowed, space-stuffed where it would read as a quote marker.
+    let fixed = |out: &mut String, lines: &[String]| {
+        for (index, line) in lines.iter().enumerate() {
+            if index > 0 {
+                out.push('\n');
+            }
+            out.push_str(&prefix);
+            out.push_str(&flowed::stuff_for_display(line));
+        }
+    };
     match block {
-        Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+        Block::Paragraph(inlines) => {
             let mut text = String::new();
             write_inlines_text(&mut text, inlines, "", Links::Spelled);
             write_flowed_lines(out, &text, &prefix, width);
         }
-        Block::List { ordered, items } => {
+        Block::Heading { level, inlines } => {
+            let mut text = String::new();
+            write_inlines_text(&mut text, inlines, "", Links::Spelled);
+            fixed(out, &heading_lines(*level, &text, Links::Spelled));
+        }
+        Block::List { kind, items } => {
             for (index, item) in items.iter().enumerate() {
                 if index > 0 {
                     out.push('\n');
                 }
-                let marker = if *ordered {
-                    format!("{}. ", index + 1)
-                } else {
-                    "- ".to_owned()
-                };
+                let marker = item_marker(*kind, index, item.task, Links::Spelled);
                 let item_prefix = format!("{prefix}{marker}");
-                // Every continuation line after the marker aligns under it,
-                // the same shape `flowed::wrap`'s own quote prefix already
-                // gives a quote -- a marker is just a prefix with an
-                // unusual first line.
+                // Continuation lines align under the marker, as a quote prefix does.
                 let hang_prefix = format!("{prefix}{}", " ".repeat(marker.chars().count()));
-                for (nth, block) in item.iter().enumerate() {
+                for (nth, block) in item.blocks.iter().enumerate() {
                     if nth > 0 {
-                        out.push_str("\n\n");
+                        out.push_str(item_separator(block));
                     }
                     let block_prefix = if nth == 0 { &item_prefix } else { &hang_prefix };
                     match block {
-                        Block::Paragraph(inlines) | Block::Heading { inlines, .. } => {
+                        Block::Paragraph(inlines) => {
                             let mut text = String::new();
                             write_inlines_text(&mut text, inlines, "", Links::Spelled);
                             write_flowed_lines(out, &text, block_prefix, width);
                         }
-                        other => write_block_flowed(out, other, depth, width),
+                        other => write_block_flowed_at(
+                            out,
+                            other,
+                            depth,
+                            &format!("{indent}    "),
+                            width,
+                        ),
                     }
                 }
             }
         }
         Block::Quote(blocks) => {
+            // The blank line between a quote's blocks keeps its marker so the quote reads as one.
+            let blank = quote_prefix(depth + 1);
             for (index, block) in blocks.iter().enumerate() {
                 if index > 0 {
-                    out.push_str("\n\n");
+                    let _ = write!(out, "\n{}\n", blank.trim_end());
                 }
-                write_block_flowed(out, block, depth + 1, width);
+                write_block_flowed_at(out, block, depth + 1, indent, width);
             }
         }
         Block::Quoted(quoted) => {
-            // Through the same path as any other quote: `from_text` gives the
-            // sender's text alternative the block structure this needs, and
-            // the `> ` markers and wrapping then come from one place.
+            // Through `from_text` so the `> ` markers and wrapping come from one place.
             let inner = Document::from_text(quoted.text());
             for (index, block) in inner.blocks.iter().enumerate() {
                 if index > 0 {
                     out.push_str("\n\n");
                 }
-                write_block_flowed(out, block, depth + 1, width);
+                write_block_flowed_at(out, block, depth + 1, indent, width);
             }
         }
-        Block::Pre(text) => {
-            // Preformatted content is never reflowed -- "not marked up" is
-            // this variant's whole point -- but it still shares the wire
-            // with flowed lines around it, so a line that would otherwise
-            // read as a quote marker or a soft-break continuation still
-            // needs stuffing.
-            for (index, line) in text.split('\n').enumerate() {
-                if index > 0 {
-                    out.push('\n');
-                }
-                out.push_str(&prefix);
-                out.push_str(&flowed::stuff_for_display(line));
-            }
+        Block::Code { language, text } => {
+            fixed(out, &code_lines(language.as_ref(), text, Links::Spelled));
         }
         Block::Rule => {
             out.push_str(&prefix);
             out.push_str("----");
         }
+        // A row ends in `|` so it never reads as a soft break; RFC 3676 allows 998 columns.
+        Block::Table(table) => fixed(out, &table_lines(table, Links::Spelled)),
     }
 }
 
-/// Wraps each `\n`-separated span of already-rendered inline text — each
-/// span is one [`Inline::Break`]-delimited run, and RFC 3676 wants every one
-/// of those kept as its own *fixed* line, never joined with its neighbour by
-/// [`flowed::unwrap`].
+/// Each `\n`-separated span is one [`Inline::Break`]-delimited run, kept as its own fixed line.
 fn write_flowed_lines(out: &mut String, text: &str, prefix: &str, width: usize) {
     for (index, line) in text.split('\n').enumerate() {
         if index > 0 {
@@ -953,11 +1272,27 @@ fn write_inlines_text(out: &mut String, inlines: &[Inline], indent: &str, links:
             Inline::Strong(inner) | Inline::Emphasis(inner) => {
                 write_inlines_text(out, inner, indent, links)
             }
+            // "~~Tuesday~~ Wednesday" is not "Tuesday Wednesday"; not in a search index.
+            Inline::Strikethrough(inner) => {
+                let spelled = links == Links::Spelled;
+                if spelled {
+                    out.push_str("~~");
+                }
+                write_inlines_text(out, inner, indent, links);
+                if spelled {
+                    out.push_str("~~");
+                }
+            }
+            Inline::RemoteImage { href, alt } => match links {
+                Links::LabelOnly => out.push_str(alt),
+                Links::Spelled if alt.trim().is_empty() => out.push_str(href.as_str()),
+                Links::Spelled => {
+                    let _ = write!(out, "{alt} <{}>", href.as_str());
+                }
+            },
             Inline::Code(text) => out.push_str(text),
-            // The address is the point of a link in plain text, and dropping
-            // it would leave "click here" pointing at nothing. An index is
-            // the one reader that wants the label alone -- see
-            // [`Document::to_search_text`].
+            // The address is the point of a link in plain text; only an index wants the label
+            // alone.
             Inline::Link { href, inlines } => {
                 let mut label = String::new();
                 write_inlines_text(&mut label, inlines, indent, links);
@@ -972,8 +1307,6 @@ fn write_inlines_text(out: &mut String, inlines: &[Inline], indent: &str, links:
                 }
             }
             Inline::Image { alt, .. } => match (links, alt.is_empty()) {
-                // A picture with no alt text says nothing; only a reader
-                // looking at the layout needs to be told one was here.
                 (Links::LabelOnly, true) => {}
                 (Links::LabelOnly, false) => out.push_str(alt),
                 (Links::Spelled, true) => out.push_str("[image]"),
@@ -986,5 +1319,356 @@ fn write_inlines_text(out: &mut String, inlines: &[Inline], indent: &str, links:
                 out.push_str(indent);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod shapes {
+    use super::*;
+
+    fn text(s: &str) -> Inline {
+        Inline::Text(s.to_owned())
+    }
+
+    #[test]
+    fn six_heading_levels_and_none_narrows() {
+        for digit in 1..=6u8 {
+            let level = HeadingLevel::from_digit(digit).expect("a level");
+            assert_eq!(level.digit(), digit);
+        }
+        assert_eq!(HeadingLevel::from_digit(4), Some(HeadingLevel::Four));
+        assert_eq!(HeadingLevel::from_digit(0), None);
+        assert_eq!(HeadingLevel::from_digit(7), None);
+    }
+
+    #[test]
+    fn an_ordered_list_carries_its_start_and_a_bullet_list_cannot() {
+        let list = Block::List {
+            kind: ListKind::Ordered { start: 7 },
+            items: vec![ListItem::new(vec![Block::Paragraph(vec![text("seventh")])])],
+        };
+        let Block::List {
+            kind: ListKind::Ordered { start },
+            ..
+        } = list
+        else {
+            panic!("{list:?}")
+        };
+        assert_eq!(start, 7);
+        assert_eq!(ListKind::NUMBERED, ListKind::Ordered { start: 1 });
+        assert!(!ListKind::Bullet.is_ordered());
+    }
+
+    #[test]
+    fn a_task_is_on_the_item_not_the_list() {
+        let open = ListItem::task(Task::Open, vec![Block::Paragraph(vec![text("a")])]);
+        let plain = ListItem::new(vec![Block::Paragraph(vec![text("b")])]);
+        assert_eq!(open.task, Some(Task::Open));
+        assert_eq!(plain.task, None);
+    }
+
+    #[test]
+    fn a_language_is_one_short_word() {
+        for word in ["rust", "c++", "objective-c", "c#", "x.y_z"] {
+            assert_eq!(
+                Language::parse(word).map(|l| l.as_str().to_owned()),
+                Some(word.to_owned())
+            );
+        }
+        for refused in ["a b", "\"x\"", "", "<x>", &"a".repeat(33)] {
+            assert_eq!(Language::parse(refused), None, "{refused:?}");
+        }
+        assert!(Language::parse(&"a".repeat(32)).is_some());
+    }
+
+    #[test]
+    fn a_table_is_rectangular_by_construction() {
+        let (table, dropped) = Table::counting(
+            vec![Alignment::Left, Alignment::Right],
+            vec![vec![text("Item")], vec![text("Qty")]],
+            vec![
+                vec![vec![text("short")]],
+                vec![vec![text("a")], vec![text("b")], vec![text("c")]],
+            ],
+        );
+        assert_eq!(table.width(), 2);
+        assert_eq!(table.rows()[0], vec![vec![text("short")], vec![]]);
+        assert_eq!(table.rows()[1], vec![vec![text("a")], vec![text("b")]]);
+        assert_eq!(dropped, 1, "the cell past the edge is counted");
+        assert_eq!(
+            Table::new(vec![], vec![vec![text("x")], vec![text("y")]], vec![]).alignments(),
+            &[Alignment::None, Alignment::None],
+            "with no alignments, the header sets the width"
+        );
+        assert_eq!(Table::new(vec![], vec![], vec![]).width(), 1);
+    }
+
+    #[test]
+    fn strikethrough_nests_like_strong() {
+        let inline = Inline::Strikethrough(vec![Inline::Strong(vec![text("x")])]);
+        assert!(matches!(inline, Inline::Strikethrough(inner) if inner.len() == 1));
+    }
+
+    #[test]
+    fn a_remote_image_is_only_ever_on_the_web() {
+        assert!(WebHref::parse("https://example.com/x.png").is_some());
+        assert!(WebHref::parse("HTTP://example.com/x.png").is_some());
+        for refused in [
+            "mailto:ada@example.com",
+            "cid:x@example.com",
+            "javascript:x",
+            "ftp://example.com/x",
+        ] {
+            assert_eq!(WebHref::parse(refused), None, "{refused}");
+        }
+        let image = Inline::RemoteImage {
+            href: WebHref::parse("https://example.com/x.png").unwrap(),
+            alt: "x".to_owned(),
+        };
+        assert!(matches!(image, Inline::RemoteImage { .. }));
+    }
+}
+
+#[cfg(test)]
+mod plain_text {
+    use super::*;
+
+    fn text(s: &str) -> Inline {
+        Inline::Text(s.to_owned())
+    }
+
+    fn para(s: &str) -> Block {
+        Block::Paragraph(vec![text(s)])
+    }
+
+    fn doc(blocks: Vec<Block>) -> Document {
+        Document { blocks }
+    }
+
+    fn both(document: &Document) -> [String; 2] {
+        [document.to_text(), document.to_flowed_text()]
+    }
+
+    #[test]
+    fn strikethrough_keeps_its_tildes_and_bold_does_not_keep_its_stars() {
+        let document = doc(vec![Block::Paragraph(vec![
+            Inline::Strikethrough(vec![text("Tuesday")]),
+            text(" "),
+            Inline::Strong(vec![text("Wednesday")]),
+        ])]);
+        for rendered in both(&document) {
+            assert_eq!(rendered, "~~Tuesday~~ Wednesday");
+        }
+    }
+
+    #[test]
+    fn headings_one_and_two_are_underlined_and_the_rest_are_hashes() {
+        let heading = |level, s: &str| Block::Heading {
+            level,
+            inlines: vec![text(s)],
+        };
+        let document = doc(vec![
+            heading(HeadingLevel::One, "Plan"),
+            heading(HeadingLevel::Two, "Steps"),
+            heading(HeadingLevel::Three, "Three"),
+            heading(HeadingLevel::Six, "Six"),
+        ]);
+        for rendered in both(&document) {
+            assert_eq!(
+                rendered,
+                "Plan\n====\n\nSteps\n-----\n\n### Three\n\n###### Six"
+            );
+        }
+    }
+
+    #[test]
+    fn a_task_keeps_its_box_and_a_list_keeps_its_start() {
+        let document = doc(vec![
+            Block::List {
+                kind: ListKind::Bullet,
+                items: vec![
+                    ListItem::task(Task::Open, vec![para("open task")]),
+                    ListItem::task(Task::Done, vec![para("done task")]),
+                ],
+            },
+            Block::List {
+                kind: ListKind::Ordered { start: 7 },
+                items: vec![
+                    ListItem::new(vec![para("seventh")]),
+                    ListItem::new(vec![para("eighth")]),
+                ],
+            },
+        ]);
+        for rendered in both(&document) {
+            assert_eq!(
+                rendered,
+                "- [ ] open task\n- [x] done task\n\n7. seventh\n8. eighth"
+            );
+        }
+    }
+
+    #[test]
+    fn a_nested_list_sits_under_its_item_without_a_blank_line() {
+        let document = doc(vec![Block::List {
+            kind: ListKind::NUMBERED,
+            items: vec![
+                ListItem::new(vec![para("first")]),
+                ListItem::new(vec![
+                    para("second"),
+                    Block::List {
+                        kind: ListKind::Bullet,
+                        items: vec![ListItem::new(vec![para("nested")])],
+                    },
+                ]),
+            ],
+        }]);
+        for rendered in both(&document) {
+            assert_eq!(rendered, "1. first\n2. second\n    - nested");
+        }
+    }
+
+    #[test]
+    fn a_code_block_is_fenced_with_its_language() {
+        let document = doc(vec![Block::Code {
+            language: Language::parse("rust"),
+            text: "fn main() {}\n".to_owned(),
+        }]);
+        for rendered in both(&document) {
+            assert_eq!(rendered, "```rust\nfn main() {}\n```");
+        }
+        let unnamed = doc(vec![Block::Code {
+            language: None,
+            text: "a\nb".to_owned(),
+        }]);
+        assert_eq!(unnamed.to_text(), "```\na\nb\n```");
+    }
+
+    #[test]
+    fn a_code_line_that_looks_like_a_quote_is_stuffed_on_the_wire() {
+        let document = doc(vec![Block::Code {
+            language: None,
+            text: ">not a quote\nFrom here".to_owned(),
+        }]);
+        assert_eq!(
+            document.to_flowed_text(),
+            "```\n >not a quote\n From here\n```"
+        );
+    }
+
+    #[test]
+    fn a_table_is_a_padded_pipe_table() {
+        let document = doc(vec![Block::Table(Table::new(
+            vec![
+                Alignment::Left,
+                Alignment::Right,
+                Alignment::Center,
+                Alignment::None,
+            ],
+            vec![
+                vec![text("Item")],
+                vec![text("Qty")],
+                vec![text("c")],
+                vec![text("d")],
+            ],
+            vec![vec![
+                vec![text("Widget")],
+                vec![text("3")],
+                vec![text("mid")],
+                vec![],
+            ]],
+        ))]);
+        for rendered in both(&document) {
+            assert_eq!(
+                rendered,
+                "| Item   | Qty |  c  | d |\n\
+                 |:-------|----:|:---:|---|\n\
+                 | Widget |   3 | mid |   |"
+            );
+        }
+    }
+
+    #[test]
+    fn a_quote_keeps_its_marker_on_the_line_between_its_blocks() {
+        let document = doc(vec![Block::Quote(vec![
+            para("quoted"),
+            Block::Quote(vec![para("nested quote")]),
+        ])]);
+        assert_eq!(document.to_flowed_text(), "> quoted\n>\n>> nested quote");
+    }
+
+    #[test]
+    fn a_remote_image_is_its_words_and_its_address() {
+        let document = doc(vec![Block::Paragraph(vec![Inline::RemoteImage {
+            href: WebHref::parse("https://example.com/x.png").unwrap(),
+            alt: "chart".to_owned(),
+        }])]);
+        for rendered in both(&document) {
+            assert_eq!(rendered, "chart <https://example.com/x.png>");
+        }
+    }
+
+    #[test]
+    fn the_search_text_drops_every_marker() {
+        let document = doc(vec![
+            Block::Heading {
+                level: HeadingLevel::One,
+                inlines: vec![text("Plan")],
+            },
+            Block::Paragraph(vec![Inline::Strikethrough(vec![text("gone")])]),
+            Block::List {
+                kind: ListKind::Bullet,
+                items: vec![ListItem::task(Task::Done, vec![para("done")])],
+            },
+            Block::Code {
+                language: Language::parse("rust"),
+                text: "fn x()".to_owned(),
+            },
+            Block::Table(Table::new(
+                vec![],
+                vec![vec![text("a")], vec![text("b")]],
+                vec![vec![vec![text("1")], vec![text("2")]]],
+            )),
+            Block::Paragraph(vec![Inline::RemoteImage {
+                href: WebHref::parse("https://example.com/x.png").unwrap(),
+                alt: "chart".to_owned(),
+            }]),
+        ]);
+        let search = document.to_search_text();
+        for marker in ["====", "~~", "[x]", "```", "|", "rust", "example.com"] {
+            assert!(!search.contains(marker), "{marker:?} in {search:?}");
+        }
+        for word in ["Plan", "gone", "done", "fn x()", "a b", "1 2", "chart"] {
+            assert!(search.contains(word), "{word:?} not in {search:?}");
+        }
+    }
+
+    #[test]
+    fn a_remote_image_is_offered_then_attached_or_sent_as_a_link() {
+        let href = WebHref::parse("https://example.com/x.png").unwrap();
+        let mut document = Document {
+            blocks: vec![Block::Paragraph(vec![
+                text("see "),
+                Inline::RemoteImage {
+                    href: href.clone(),
+                    alt: "x".to_owned(),
+                },
+            ])],
+        };
+        assert_eq!(
+            document.remote_images(),
+            vec![(href.clone(), "x".to_owned())]
+        );
+        let mut linked = document.clone();
+        assert!(linked.unlink_remote(&href));
+        assert!(linked.remote_images().is_empty());
+        assert!(
+            matches!(&linked.blocks[0], Block::Paragraph(i) if matches!(&i[1], Inline::Link { .. }))
+        );
+        let cid = ContentId::parse("x@postio.invalid").unwrap();
+        assert!(document.attach_remote(&href, &cid));
+        assert!(document.remote_images().is_empty());
+        assert!(matches!(&document.blocks[0], Block::Paragraph(i)
+            if matches!(&i[1], Inline::Image { alt, .. } if alt == "x")));
+        assert!(!document.attach_remote(&href, &cid), "only once");
     }
 }

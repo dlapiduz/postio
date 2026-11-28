@@ -1,27 +1,3 @@
-//! One binary for `postio-session`'s integration tests.
-//!
-//! Each file in `tests/` gets its own executable from cargo, and each links
-//! this workspace's dependency stack whether it uses it or not. That is where
-//! the test time goes: 125 integration targets across 18 crates (#1128).
-//! The classic app's crates were consolidated first; this is the same
-//! pass over the leaves.
-//!
-//! Nothing here needs a display, so unlike a suite that needs a display, this
-//! keeps libtest's ordinary harness and its thread pool. The cases already ran
-//! in parallel within each old binary and now do so across all of them, which
-//! is the same guarantee and one link.
-//!
-//! **A case that needs its own process does not belong here.** None of these
-//! set a process-global -- no `set_var`, no crate attributes -- and that was
-//! checked rather than assumed. A test that grows one has to move back out, or
-//! it will change what its neighbours see.
-//!
-//! A case that only *reads* something the process shares -- a count every
-//! thread adds to, a slot the last session to open filled, a log callsite --
-//! is no setter, and still sees its neighbours under `cargo test`. It starts
-//! with `postio_test_support::alone!`, which gives it a process of its own
-//! wherever it does not already have one (#1976).
-
 mod attaching;
 mod attachment_extraction;
 mod attachment_index_pass;
@@ -31,10 +7,13 @@ mod body_failed_reading;
 mod body_index_pass;
 mod checkup;
 mod cid_scoping;
+mod classify_report;
 mod correlation;
+mod damaged_body_reading;
 mod drag_reclaim;
 mod event_fanout;
 mod focus_contacts;
+mod formatted_send;
 mod handoff;
 mod header_index_pass;
 mod header_repair;
@@ -47,6 +26,7 @@ mod reachability;
 mod reading_cost;
 mod reclaim;
 mod reindex_account;
+mod remote_image;
 mod search_budget;
 mod search_execution;
 mod search_passages;

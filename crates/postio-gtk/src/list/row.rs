@@ -1,23 +1,9 @@
-//! One row of Focus's list, drawn in one `snapshot()`.
-//!
-//! Nested boxes per row are the usual reason a GTK list feels slow
-//! (`/gtk-design` §4), and a jump rebinds GTK's whole resident window, about
-//! 205 rows, in one frame (spike S3, T009). So a row is one widget that lays
-//! out its text with Pango and draws it, and binding one is replacing what it
+//! One row of Focus's list, drawn in one `snapshot()`: nested boxes per row are the usual reason a
+//! GTK list feels slow, and a jump rebinds
+//! GTK's whole resident window (about 205 rows) in one frame, so binding one is replacing what it
 //! holds.
-//!
-//! # The one-line row (contracts/focus-surface.md, "Rows")
-//!
-//! Left to right: the gutter (24 px), the sender (from x = 56), the subject
-//! with up to two label pills and then the first line, dimmed; and on the
-//! right the attachment mark, the count badge and the time. Unread is bold.
-//! Everything is drawn from the row's data as it arrived: the sender, the
-//! subject and the first line verbatim (FR-011), and never read from a
-//! message body (FR-020).
-//!
-//! At a narrow width the first line gives way first, then the labels,
-//! before the sender, the subject and the time (spec Edge Cases, "Long
-//! text"); nothing wraps, and the height never changes (FR-013).
+//! Drawn from the row's own data, never a message body. At a narrow width the first line gives way
+//! first, then the labels; nothing wraps and the height never changes.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -36,36 +22,20 @@ use super::model::RowObject;
 use postio_ui::focus_list::FocusRow;
 use postio_ui::thread_list::ChildRowView;
 
-/// What a row drew in its last snapshot: every text it laid out, in order,
-/// each label pill with its colour, and whether it was drawn bold. What a
-/// person sees, for a test to read back.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Drawn {
-    /// Every text laid out, in the order drawn.
     pub texts: Vec<String>,
-    /// Each label pill: its name and its dot's colour.
     pub pills: Vec<(String, gdk::RGBA)>,
-    /// Whether the sender and subject were bold: an unread conversation.
     pub bold: bool,
-    /// Whether the row drew itself selected: the neutral ground and the
-    /// checked box.
     pub picked: bool,
-    /// Whether the unread dot stood in the gutter. A picked row never draws
-    /// it: the checked box takes its place.
+    /// A picked row never draws it: the checked box takes its place.
     pub dot: bool,
-    /// The ink the row drew its text in.
     pub ink: gdk::RGBA,
-    /// The accent a marker was drawn in, when the row has one.
     pub accent: Option<gdk::RGBA>,
-    /// Each answering action drawn on the second line: its command, its
-    /// words and where its button is (x, y, width, height), so a click there
-    /// runs what its key runs.
     pub actions: Vec<(postio_core::CommandId, String, [f32; 4])>,
 }
 
 impl Drawn {
-    /// Where the action button saying `words` was drawn: its centre, in the
-    /// row's coordinates.
     pub fn action(&self, words: &str) -> Option<(f32, f32)> {
         self.actions
             .iter()
@@ -73,7 +43,6 @@ impl Drawn {
             .map(|(_, _, [x, y, width, height])| (x + width / 2.0, y + height / 2.0))
     }
 
-    /// The action whose button covers `x`, `y`, if one does.
     pub fn action_at(&self, x: f32, y: f32) -> Option<postio_core::CommandId> {
         self.actions
             .iter()
@@ -99,75 +68,47 @@ impl Default for Drawn {
     }
 }
 
-/// A one-line row's height, in pixels: the design's (research R3).
 pub const ONE_LINE: i32 = 40;
 
-/// A two-line row's height: a conversation with a marker.
 pub const TWO_LINES: i32 = 72;
 
-/// The space the right edge keeps.
 pub(super) const TRAILING: f32 = postio_ui::focus_row::ROW_TRAILING;
-/// The gap between two things on the line.
 pub(super) const GAP: f32 = postio_ui::focus_row::COLUMN_GAP;
 
-/// Where the subject column starts in a row `width` pixels wide: the
-/// sender's column narrows in a list beside the reading pane (T232).
 pub fn subject_x(width: i32) -> f32 {
     postio_ui::focus_row::row_columns(width as f32).subject_x
 }
-/// A label pill's height, its dot, and the room around its name.
 const PILL_HEIGHT: f32 = 20.0;
 const PILL_DOT: f32 = 6.0;
 const PILL_PAD: f32 = 7.0;
-/// The attachment mark's size.
 pub(super) const ICON: f32 = 16.0;
 /// Below this, a first line is not worth drawing: it would be a letter.
 const LEAST_FIRST_LINE: f32 = 40.0;
-/// Where a two-line row's lines sit (their centres), from screen 01.
 const FIRST_LINE: f32 = 22.0;
 const SECOND_LINE: f32 = 51.0;
-/// The unread dot in the gutter.
 pub(super) const GUTTER_CENTRE: f32 = 30.0;
 
-/// How far either side of the gutter's centre a press still hits the
-/// selection box.
-/// Where a thread row's chevron sits: right of the unread dot, left of the
-/// sender.
 pub const CHEVRON_X: f32 = 38.0;
 const GUTTER_HIT: f32 = 14.0;
 pub(super) const DOT: f32 = 7.0;
-/// An action's button on the second line, and the keycap in it.
 const ACTION_HEIGHT: f32 = 24.0;
 const ACTION_PAD: f32 = 9.0;
 pub(super) const KEYCAP_PAD: f32 = 4.0;
 
-/// The keymap a list's rows read their keycaps from, shared by every row
-/// and replaced when `[keys]` changes.
 pub type SharedKeymap = Rc<RefCell<Keymap>>;
 
-/// What a click on a row's drawn action runs: the command, for the row's
-/// item.
 pub type ActionHandler = Rc<dyn Fn(&FocusRow, postio_core::CommandId)>;
 
-/// How a modified click on a row's body picks it (T198).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pick {
-    /// Ctrl-click: toggle this row, as `x` does.
     Toggle,
-    /// Shift-click: extend from the anchor to this row, as `Shift`+`j`/`k` do.
     Range,
 }
 
-/// Run when a modified click picks a row.
 pub type PickHandler = Rc<dyn Fn(&FocusRow, Pick)>;
 
-/// Run when a thread row's chevron is clicked: the row, and whether its
-/// thread is open now.
 pub type ChevronHandler = Rc<dyn Fn(&FocusRow, bool)>;
 
-/// The addresses that are "you", which a thread row's participants say as
-/// "you": the accounts' own and their identities'. The list shares one with
-/// every row.
 pub type SharedMe = Rc<RefCell<Vec<postio_model::EmailAddress>>>;
 
 mod imp {
@@ -184,16 +125,12 @@ mod imp {
         pub on_pick: RefCell<Option<PickHandler>>,
         pub on_chevron: RefCell<Option<ChevronHandler>>,
         pub me: RefCell<Option<SharedMe>>,
-        /// Modifiers counted as held on top of the click's own event: the
-        /// seam a headless test drives a Ctrl- or Shift-click through.
+        /// Modifiers counted as held on top of the click's own event: the seam a headless test
+        /// drives a Ctrl- or Shift-click through.
         pub held: std::cell::Cell<Option<gdk::ModifierType>>,
         pub capture: RefCell<Option<Rc<std::cell::Cell<bool>>>>,
-        /// What the row says while it is a child of the open thread, and
-        /// whether it is the last of them.
         pub child: RefCell<Option<(ChildRowView, bool)>>,
-        /// The thread this row stands for is open under it.
         pub expanded: std::cell::Cell<bool>,
-        /// The cursor is on this row.
         pub here: std::cell::Cell<bool>,
     }
 
@@ -212,10 +149,6 @@ mod imp {
     impl ObjectImpl for RowWidget {
         fn constructed(&self) {
             self.parent_constructed();
-            // The answering actions on the second line are buttons a person
-            // can press, as the keys beside them say (constitution II): a
-            // press on one runs its command for this row, and nothing
-            // else takes the click.
             let click = gtk::GestureClick::new();
             click.connect_pressed(glib::clone!(
                 #[weak(rename_to = row)]
@@ -225,8 +158,6 @@ mod imp {
                         gesture.set_state(gtk::EventSequenceState::Claimed);
                         return;
                     }
-                    // Ctrl-click and Shift-click pick; a plain click is the
-                    // list's, and moves the cursor.
                     let held = gesture.current_event_state()
                         | row
                             .imp()
@@ -273,8 +204,8 @@ mod imp {
             self.obj().draw(snapshot);
         }
 
-        /// The row's height follows the text scale, and a change to it is
-        /// a system setting: say so, or the measured height is kept.
+        /// The row's height follows the text scale, and a change to it is a system setting: say so,
+        /// or the measured height is kept.
         fn system_setting_changed(&self, setting: &gtk::SystemSetting) {
             self.parent_system_setting_changed(setting);
             if matches!(
@@ -288,7 +219,6 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// One row of Focus's list.
     pub struct RowWidget(ObjectSubclass<imp::RowWidget>)
         @extends gtk::Widget,
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
@@ -300,10 +230,6 @@ impl Default for RowWidget {
     }
 }
 
-/// The colours a row draws in, read from its own style: the ink, and the
-/// quieter steps libadwaita takes of it; and the accent, from
-/// `AdwStyleManager` -- for a marker, the one thing on a row FR-091 gives
-/// it -- whose hue the label colours keep away from.
 pub(super) struct Palette {
     pub(super) ink: gdk::RGBA,
     pub(super) dim: gdk::RGBA,
@@ -311,7 +237,6 @@ pub(super) struct Palette {
     pub(super) raised: gdk::RGBA,
     pub(super) accent: gdk::RGBA,
     pub(super) accent_hue: f64,
-    /// The window's own ground: what text on an ink-filled shape is drawn in.
     pub(super) ground: gdk::RGBA,
 }
 
@@ -360,29 +285,23 @@ pub(super) fn rgba(colour: Rgb) -> gdk::RGBA {
 }
 
 impl RowWidget {
-    /// Read keycaps from `keymap`, which the list shares with every row.
     pub fn set_keymap(&self, keymap: SharedKeymap) {
         self.imp().keymap.replace(Some(keymap));
         self.announce();
         self.queue_draw();
     }
 
-    /// Offer Task on a to-do while `capture` says a vault is configured;
-    /// the list shares it with every row.
     pub fn set_capture(&self, capture: Rc<std::cell::Cell<bool>>) {
         self.imp().capture.replace(Some(capture));
         self.announce();
         self.queue_draw();
     }
 
-    /// Draw the selection's box from `picked`, which the list shares with
-    /// every row.
     pub fn set_selection(&self, picked: postio_ui::selection::SelectionState) {
         self.imp().picked.replace(Some(picked));
         self.queue_draw();
     }
 
-    /// Whether this row is in the selection: what `e` would archive.
     pub fn is_picked(&self) -> bool {
         let Some(id) = self.imp().item.borrow().as_ref().map(FocusRow::id) else {
             return false;
@@ -394,7 +313,6 @@ impl RowWidget {
             .is_some_and(|picked| picked.contains(id))
     }
 
-    /// Show what `row` stands for, and follow it as it changes.
     pub fn bind(&self, row: &RowObject) {
         self.unbind();
         let handler = row.connect_changed({
@@ -409,27 +327,21 @@ impl RowWidget {
         self.show(row);
     }
 
-    /// The cursor is on this row, or has left it: a child shows the keys
-    /// that act on it while it is.
     pub fn set_cursor_here(&self, here: bool) {
         if self.imp().here.replace(here) != here {
             self.queue_draw();
         }
     }
 
-    /// Run `handler` when a thread row's chevron is pressed.
     pub fn set_on_chevron(&self, handler: ChevronHandler) {
         self.imp().on_chevron.replace(Some(handler));
     }
 
-    /// Read "you" from `me`, which the list shares with every row.
     pub fn set_identities(&self, me: SharedMe) {
         self.imp().me.replace(Some(me));
         self.queue_draw();
     }
 
-    /// A press at `x`, `y` on a thread row's chevron: ask for it to open or
-    /// fold. Whether it hit.
     fn press_chevron(&self, x: f32, y: f32) -> bool {
         let Some(item) = self.item() else {
             return false;
@@ -454,12 +366,10 @@ impl RowWidget {
         }
     }
 
-    /// Whether the cursor is on this row.
     pub fn is_cursor_here(&self) -> bool {
         self.imp().here.get()
     }
 
-    /// What this row says while it is a child of the open thread.
     pub fn child(&self) -> Option<ChildRowView> {
         self.imp()
             .child
@@ -468,7 +378,6 @@ impl RowWidget {
             .map(|(view, _)| view.clone())
     }
 
-    /// Whether the row's thread is open under it.
     pub fn is_expanded(&self) -> bool {
         self.imp().expanded.get()
     }
@@ -477,14 +386,12 @@ impl RowWidget {
         self.imp().drawn.replace(drawn);
     }
 
-    /// Stop following the row this widget was showing.
     pub fn unbind(&self) {
         if let Some((row, handler)) = self.imp().bound.take() {
             row.disconnect(handler);
         }
     }
 
-    /// What this row says, as a screen reader hears it and a test reads it:
     /// "Loading" while its page has not arrived.
     pub fn spoken(&self) -> String {
         if let Some((child, _)) = self.imp().child.borrow().as_ref() {
@@ -497,9 +404,8 @@ impl RowWidget {
             .map_or_else(|| "Loading".to_owned(), spoken)
     }
 
-    /// Say what the row is to a screen reader: its name, and the keys of the
-    /// marker's actions as its shortcuts (FR-096) -- the caps drawn beside
-    /// them are pixels, and say nothing.
+    /// The caps drawn beside the marker's actions are pixels and say nothing, so their keys go as
+    /// shortcuts.
     fn announce(&self) {
         self.update_property(&[gtk::accessible::Property::Label(&self.spoken())]);
         let keys = self.action_keys();
@@ -510,8 +416,6 @@ impl RowWidget {
         }
     }
 
-    /// The marker's actions' keys, in the ARIA spelling, space-separated as
-    /// `aria-keyshortcuts` lists alternatives: empty with no marker.
     fn action_keys(&self) -> String {
         let Some(line) = self.marker_line() else {
             return String::new();
@@ -529,7 +433,6 @@ impl RowWidget {
             .join(" ")
     }
 
-    /// The second line the row's marker draws, when it has one.
     fn marker_line(&self) -> Option<postio_ui::focus_row::MarkerLine> {
         let item = self.imp().item.borrow().clone()?;
         let row = item.as_conversation()?;
@@ -546,17 +449,12 @@ impl RowWidget {
         )
     }
 
-    /// What the row drew in its last snapshot.
     pub fn drawn(&self) -> Drawn {
         self.imp().drawn.borrow().clone()
     }
 
-    /// Run what a click on an action at `x`, `y` runs; whether one was
-    /// there. Public, as the window's `handle_key` is, so a test presses
-    /// the button a person presses without synthesizing a pointer event.
+    /// Public so a test presses the button a person presses without synthesizing a pointer event.
     pub fn press_at(&self, x: f32, y: f32) -> bool {
-        // The gutter holds the selection box: a press there toggles the
-        // row's selection, the click pair of `x` (T194).
         let in_gutter = (GUTTER_CENTRE - GUTTER_HIT..=GUTTER_CENTRE + GUTTER_HIT).contains(&x);
         let Some(command) = self.imp().drawn.borrow().action_at(x, y).or(in_gutter
             .then_some(postio_core::CommandId::ToggleSelection)
@@ -577,24 +475,20 @@ impl RowWidget {
         true
     }
 
-    /// Run `handler` when a Ctrl- or Shift-click picks the row.
     pub fn set_on_pick(&self, handler: PickHandler) {
         self.imp().on_pick.replace(Some(handler));
     }
 
-    /// Count `modifiers` as held for the clicks that follow: how a test
-    /// gives the row's real `GestureClick` a Ctrl or Shift it cannot read
-    /// from a synthesized press.
+    /// How a test gives the row's real `GestureClick` a Ctrl or Shift it cannot read from a
+    /// synthesized press.
     pub fn hold_modifiers(&self, modifiers: gdk::ModifierType) {
         self.imp().held.set(Some(modifiers));
     }
 
-    /// Run `handler` when one of the row's drawn actions is pressed.
     pub fn set_on_action(&self, handler: ActionHandler) {
         self.imp().on_action.replace(Some(handler));
     }
 
-    /// The item shown, if its page has arrived.
     pub fn item(&self) -> Option<FocusRow> {
         self.imp().item.borrow().clone()
     }
@@ -613,7 +507,6 @@ impl RowWidget {
         self.queue_draw();
     }
 
-    /// The row's height, fixed by its kind (FR-013).
     pub fn height(&self) -> i32 {
         if self.imp().child.borrow().is_some() {
             return self.scaled(super::child::CHILD_HEIGHT).round() as i32;
@@ -624,10 +517,7 @@ impl RowWidget {
         }
     }
 
-    /// How much bigger than 100% the text is: `gtk-xft-dpi` over
-    /// the 96 dpi that `ONE_LINE` and `TWO_LINES` are drawn for. Never below
-    /// 1, so a small-text setting does not shrink a row under its target
-    /// (PRODUCT.md section 20: rows grow with the type).
+    /// Never below 1, so a small-text setting does not shrink a row under its target.
     fn text_scale(&self) -> f32 {
         // `gtk-xft-dpi` is 1024ths of a dot per inch; unset (-1) is 96.
         let dpi = self.settings().gtk_xft_dpi();
@@ -653,12 +543,9 @@ impl RowWidget {
         self.scaled(SECOND_LINE)
     }
 
-    /// A layout of `text` in the row's font, `bold` or not, `scale` of its
-    /// size.
     fn layout(&self, text: &str, bold: bool, scale: f64) -> pango::Layout {
         let layout = self.create_pango_layout(Some(text));
-        // Text from mail is data, never markup: set as plain text, with its
-        // weight and size as attributes rather than tags inside it.
+        // Text from mail is data, never markup: plain text, with weight and size as attributes.
         let attributes = pango::AttrList::new();
         if bold {
             attributes.insert(pango::AttrInt::new_weight(pango::Weight::Bold));
@@ -672,8 +559,6 @@ impl RowWidget {
         layout
     }
 
-    /// Draw `layout` at `x`, vertically centred on `middle`, within `room`
-    /// pixels. Answers how wide it drew.
     pub(super) fn put(
         &self,
         snapshot: &gtk::Snapshot,
@@ -719,8 +604,6 @@ impl RowWidget {
             self.one_line() / 2.0
         };
         let bold = summary.has_unread();
-        // A thread of two or more says who took part, what the newest said
-        // and how much of it is new; its chevron says whether it is open.
         let thread = (summary.message_count > 1).then(|| {
             postio_ui::focus_row::ThreadRowView::new(
                 summary,
@@ -745,10 +628,8 @@ impl RowWidget {
         if drawn.picked {
             self.draw_picked(snapshot, &palette, middle);
         } else if bold {
-            // Unread has the accent dot as well as the bold, as the search
-            // results do; a marked row says so on its second line. The
-            // checked box stands where the dot would, as it stands where a
-            // digest's stack would: both at once drew the check over it.
+            // The checked box stands where the dot would, as it stands where a digest's stack
+            // would: both at once drew the check over it.
             let dot = graphene::Rect::new(GUTTER_CENTRE - DOT / 2.0, middle - DOT / 2.0, DOT, DOT);
             snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(dot, DOT / 2.0));
             snapshot.append_color(&palette.accent, &dot);
@@ -764,8 +645,8 @@ impl RowWidget {
             self.draw_icon(snapshot, name, CHEVRON_X, middle - ICON / 2.0, &palette.dim);
         }
 
-        // The trailing column first, from the right edge in, so the middle
-        // knows how much room it has: the time, the count, the attachment.
+        // The trailing column first, from the right edge in, so the middle knows how much room it
+        // has.
         let time = postio_ui::row::timestamp(summary.last_at, postio_ui::clock::now());
         let time_layout = self.layout(&time, bold, 1.0);
         let (time_width, _) = time_layout.pixel_size();
@@ -779,9 +660,6 @@ impl RowWidget {
             &palette.ink,
         );
         let mut trailing_texts = vec![time];
-        // A draft on its way or stopped says which (T239): dim while it is
-        // on its way, in ink once it needs the person. A draft being
-        // written says nothing more; its folder already says it.
         if let Some(state) = summary
             .representative
             .send_state
@@ -827,8 +705,7 @@ impl RowWidget {
                 boxed,
                 word_height as f32 + 6.0,
             );
-            // Filled in the row's ink, not the accent (the accent is
-            // reserved): its words are in the ink's opposite.
+            // Filled in the row's ink, not the accent (the accent is reserved).
             snapshot.push_rounded_clip(&gtk::gsk::RoundedRect::from_rect(
                 frame,
                 (word_height as f32 + 6.0) / 2.0,
@@ -845,8 +722,6 @@ impl RowWidget {
             );
             trailing_texts.push(new);
         }
-        // "muted", or "muted · 1" once replies have come since: dim, at the
-        // right where the design draws it.
         if let Some(badge) = thread
             .as_ref()
             .and_then(|thread| thread.muted_badge.clone())
@@ -866,7 +741,6 @@ impl RowWidget {
         }
         let end = trailing - GAP;
 
-        // The sender, then the subject, each as it arrived.
         let sender = match thread.as_ref() {
             Some(thread) if summary.representative.send_state.is_none() => {
                 thread.participants.clone()
@@ -876,8 +750,6 @@ impl RowWidget {
         let columns = postio_ui::focus_row::row_columns(width);
         let sender_layout = self.layout(&sender, bold, 1.0);
         let sender_room = columns.sender_width.min(end - columns.sender_x);
-        // The count of a thread sits right after who took part, in the
-        // participants' column (design SPEC 2, screen 01).
         let count = count_badge(summary.message_count);
         let badge = count.as_ref().map(|count| self.layout(count, false, 0.8));
         let badge_box = badge.as_ref().map(|badge| {
@@ -922,7 +794,6 @@ impl RowWidget {
         x += self.put(snapshot, &subject_layout, x, middle, end - x, &palette.ink);
         drawn.texts.push(subject);
 
-        // Up to two pills, while they fit.
         for label in row.labels.iter().take(MAX_PILLS) {
             let name = self.layout(&label.name, false, 0.85);
             let (name_width, _) = name.pixel_size();
@@ -956,7 +827,6 @@ impl RowWidget {
             x += pill;
         }
 
-        // The first line, dimmed, in whatever room is left.
         let latest = thread.as_ref().map(|thread| thread.latest_line.as_str());
         if let Some(preview) = latest
             .filter(|line| !line.is_empty())
@@ -981,8 +851,6 @@ impl RowWidget {
         self.imp().drawn.replace(drawn);
     }
 
-    /// The second line of a marked row: the kind chip, the date, the quoted sentence, and on the right the
-    /// actions that answer it with their keys -- or what is true instead.
     fn draw_marker(
         &self,
         snapshot: &gtk::Snapshot,
@@ -999,10 +867,14 @@ impl RowWidget {
         let line = marker_line(marker, postio_ui::clock::now().to_utc(), &chrono::Local)
             .capturing(capture);
         let width = self.width() as f32;
-        drawn.accent = Some(palette.accent);
+        let mark = if line.automated {
+            palette.dim
+        } else {
+            drawn.accent = Some(palette.accent);
+            palette.accent
+        };
 
-        // The actions first, from the right edge in, so the quote knows its
-        // room.
+        // The actions first, from the right edge in, so the quote knows its room.
         let keymap = self.imp().keymap.borrow().clone();
         let mut right = width - TRAILING;
         let mut actions = Vec::new();
@@ -1095,8 +967,6 @@ impl RowWidget {
             drawn.texts.push(status.to_owned());
         }
 
-        // The chip, the date and the quote, left to right, in the accent:
-        // under the subject, or under the sender in a narrow list (T232).
         let mut x = postio_ui::focus_row::row_columns(width).marker_x;
         let chip = self.layout(line.chip, true, 0.85);
         let (chip_width, chip_height) = chip.pixel_size();
@@ -1110,7 +980,7 @@ impl RowWidget {
         snapshot.append_border(
             &gtk::gsk::RoundedRect::from_rect(frame, 4.0),
             &[1.0; 4],
-            &[palette.accent; 4],
+            &[mark; 4],
         );
         self.put(
             snapshot,
@@ -1118,7 +988,7 @@ impl RowWidget {
             x + 6.0,
             self.second_line(),
             chip_width as f32,
-            &palette.accent,
+            &mark,
         );
         drawn.texts.push(line.chip.to_owned());
         x += boxed + 10.0;
@@ -1130,9 +1000,23 @@ impl RowWidget {
                 x,
                 self.second_line(),
                 (right - x).max(0.0),
-                &palette.accent,
+                &mark,
             ) + 10.0;
             drawn.texts.push(date.clone());
+        }
+        if let Some(note) = &line.note
+            && right - x >= LEAST_FIRST_LINE
+        {
+            let layout = self.layout(note, false, 0.95);
+            x += self.put(
+                snapshot,
+                &layout,
+                x,
+                self.second_line(),
+                (right - x).max(0.0),
+                &palette.ink,
+            ) + 10.0;
+            drawn.texts.push(note.clone());
         }
         if let Some(quote) = &line.quote
             && right - x >= LEAST_FIRST_LINE
@@ -1142,14 +1026,7 @@ impl RowWidget {
             let attributes = layout.attributes().unwrap_or_default();
             attributes.insert(pango::AttrInt::new_style(pango::Style::Italic));
             layout.set_attributes(Some(&attributes));
-            self.put(
-                snapshot,
-                &layout,
-                x,
-                self.second_line(),
-                right - x,
-                &palette.accent,
-            );
+            self.put(snapshot, &layout, x, self.second_line(), right - x, &mark);
             drawn.texts.push(quoted);
         }
         for said in actions.into_iter().rev() {
@@ -1157,7 +1034,6 @@ impl RowWidget {
         }
     }
 
-    /// A layout of `text` in the monospace face keys are set in (FR-093).
     fn mono(&self, text: &str, scale: f64) -> pango::Layout {
         let layout = self.layout(text, false, scale);
         let attributes = layout.attributes().unwrap_or_default();
@@ -1166,12 +1042,7 @@ impl RowWidget {
         layout
     }
 
-    /// Draw the symbolic icon `name`, `ICON` pixels square, at `x`, `y`, in
-    /// `colour`.
-    /// A digest's row (T136): one line, bold, standing for everything it
-    /// holds -- the stack in the gutter, "Weekly · digest", "Newsletters ·
-    /// 14 messages", who it is from or its summary's opening, its count and
-    /// when it came due.
+    /// A digest's row: one line, bold, standing for everything it holds.
     fn draw_digest(&self, snapshot: &gtk::Snapshot, digest: &postio_ui::focus_list::Digest) {
         let palette = Palette::of(self);
         let width = self.width() as f32;
@@ -1183,7 +1054,6 @@ impl RowWidget {
             ..Drawn::default()
         };
         if drawn.picked {
-            // The checked box stands where the stack would.
             self.draw_picked(snapshot, &palette, middle);
         } else {
             self.draw_icon(
@@ -1274,9 +1144,7 @@ impl RowWidget {
         self.imp().drawn.replace(drawn);
     }
 
-    /// A selected row's mark, whatever the row stands for: a neutral ground
-    /// and a checked box in the gutter, never the accent, which is the
-    /// cursor's (FR-091). The cursor's ring is drawn over it, so a selected
+    /// Never the accent, which is the cursor's. The cursor's ring is drawn over it, so a selected
     /// row under the cursor still looks selected.
     fn draw_picked(&self, snapshot: &gtk::Snapshot, palette: &Palette, middle: f32) {
         snapshot.append_color(
@@ -1315,9 +1183,7 @@ impl RowWidget {
         snapshot.restore();
     }
 
-    /// A row whose page has not landed: two quiet bars where the sender and
-    /// the subject will be, drawn from nothing but the row's own size, so a
-    /// jump's 205 binds cost no read (spike S3).
+    /// Drawn from nothing but the row's own size, so a jump's 205 binds cost no read.
     fn draw_skeleton(&self, snapshot: &gtk::Snapshot) {
         let mut shade = self.color();
         shade.set_alpha(shade.alpha() * 0.08);
@@ -1333,9 +1199,6 @@ impl RowWidget {
     }
 }
 
-/// What a row says, in the order a screen reader should say it: the sender,
-/// the subject, the first line, whether it is unread, and its marker -- the
-/// kind, the day, the sentence verbatim, or what is true instead (FR-096).
 pub fn spoken(item: &FocusRow) -> String {
     let Some(row) = item.as_conversation() else {
         let FocusRow::Digest(digest) = item else {
@@ -1370,7 +1233,7 @@ pub fn spoken(item: &FocusRow) -> String {
     }
     if let Some(marker) = &summary.marker {
         let line = marker_line(marker, postio_ui::clock::now().to_utc(), &chrono::Local);
-        let mut said = line.chip.to_owned();
+        let mut said = line.spoken.to_owned();
         if let Some(date) = &line.date {
             said.push(' ');
             said.push_str(date);

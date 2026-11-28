@@ -25,12 +25,10 @@ can_redo                          # crates/postio-body/src/edit.rs:118
 check_budget                      # crates/postio-core/src/perf_budget.rs:65
 closing_after                     # crates/postio-account/src/imap/transport.rs:634
 conformance_cases                 # crates/postio-core/src/aim.rs:346
-dispatch_ext                      # crates/postio-core/src/dispatch.rs:458
 dry_run                           # crates/postio-contact-sync/src/lib.rs:664 -- the gate's read-only entry; the host plans through `plan` today, and the confirmed write path that would call it is off (CONTACT_SYNC_WRITES) until the maintainer reviews a dry run
 extend_selection_to               # crates/postio-core/src/state.rs:562
 extensions_to_enable              # crates/postio-account/src/imap/dispatch.rs:197
 failing_tls                       # crates/postio-account/src/imap/transport.rs:618
-fts_match                         # crates/postio-search/src/query.rs:417
 granting                          # crates/postio-contact-sync/src/lib.rs:738 -- the fake address book's answer to the permission prompt, for the gate's tests and the Swift fakes' Rust twin
 group_mail_query                  # crates/postio-ui/src/contacts.rs:27 -- the Contacts surface for Focus (specs/011-focus-contacts) is its caller
 group_rows                        # crates/postio-storage/src/repository/contacts.rs:1059 -- the Contacts surface for Focus (specs/011-focus-contacts) is its caller
@@ -47,7 +45,6 @@ is_clean                          # crates/postio-model/src/message.rs:128
 is_destructive                    # crates/postio-core/src/command.rs:832
 is_discarded                      # crates/postio-account/src/imap/pool.rs:719
 is_everything                     # crates/postio-core/src/state.rs:127
-is_ext                            # crates/postio-core/src/action.rs:176
 is_from                           # crates/postio-core/src/invocation.rs:163
 is_full                           # crates/postio-model/src/sync.rs:193
 is_highlighted                    # crates/postio-search/src/highlight.rs:59
@@ -67,7 +64,6 @@ message_page                      # crates/postio-runtime/src/store/local.rs -- 
 needing_backfill                  # crates/postio-storage/src/repository/messages.rs:1384
 normalized_subject                # crates/postio-model/src/message.rs:313
 on_data_body                      # crates/postio-smtp/src/transport.rs:436
-on_ext                            # crates/postio-core/src/dispatch.rs:322
 on_generated                      # crates/postio-account/src/imap/transport.rs:498
 open_composer                     # crates/postio-core/src/state.rs:620
 open_flagged                      # crates/postio-core/src/state.rs:522
@@ -106,4 +102,5 @@ with_connect_timeout              # crates/postio-account/src/imap/settings.rs:1
 with_html                         # crates/postio-model/src/account.rs:188
 with_internal_date                # crates/postio-account/src/backend/message.rs:638
 with_user_names                   # crates/postio-ui/src/reader/header.rs:162 -- the To and Cc names of the reader header (FR-032); the Mac window reads the sender the list statement already names
-reopen                            # crates/postio-account/src/secret.rs -- MemorySecretStore test support: other crates' suites reopen the same keyring to stand for a restart; no production code reopens one
+fail_next                         # crates/postio-dav/src/fake.rs -- sync's calendar cases (specs/017-calendar T034) queue faults with it
+sync_account                      # crates/postio-sync/src/caldav.rs -- the host's poll (specs/017-calendar T034, wired with T036's account switch) calls it

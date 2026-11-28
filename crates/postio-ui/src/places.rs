@@ -1,33 +1,21 @@
-//! The places Focus can go -- mailboxes, the person's folders, labels, the
-//! Outbox and Filtered -- how they are ranked, filtered and sectioned, with
-//! no toolkit in it.
-//!
-//! The folders popover lists [`Entry`]s from [`listed`]; the command bar's
-//! "Go to" rows are the same mailboxes and labels as [`Place`]s. Both read
-//! one rule for what a mailbox is called, where it sorts and which key goes
-//! straight to it.
+//! The places Focus can go (mailboxes, folders, labels, Outbox, Filtered), ranked and sectioned
+//! with no toolkit;
+//! the folders popover and the command bar's "Go to" rows read one rule.
 
 use postio_core::{ActionId, CommandId};
 use postio_model::{Label, Mailbox, MailboxId, MailboxRole};
 
 use crate::finder::{Destination, Place, PlaceKind};
 
-/// What the Outbox is called, in the list and the header.
 pub const OUTBOX: &str = "Outbox";
 
-/// The placeholder over the places' filter.
 pub const FILTER_PLACEHOLDER: &str = "Go to folder or label";
 
-/// The line under the places while `highlighted` is the row under the
-/// highlight: what Return does, and the words that do the same in the
-/// command bar.
 pub fn footer(highlighted: Option<&Entry>) -> String {
     let Some(entry) = highlighted else {
         return "Esc close".to_owned();
     };
     let name = &entry.name;
-    // The command bar's `in:` completes folders and labels; the views have
-    // no `in:` of their own.
     if entry.command.is_some() || matches!(entry.destination, Destination::Outbox(_)) {
         format!("\u{21b5} open {name} \u{b7} Esc close")
     } else {
@@ -35,19 +23,14 @@ pub fn footer(highlighted: Option<&Entry>) -> String {
     }
 }
 
-/// Which section a place is listed under, in the order they appear.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Section {
-    /// Mailboxes with a role, with their direct keys.
     Mailboxes,
-    /// The person's own folders.
     Folders,
-    /// Labels.
     Labels,
 }
 
 impl Section {
-    /// The section's heading.
     pub fn title(self) -> &'static str {
         match self {
             Section::Mailboxes => "Mailboxes",
@@ -57,41 +40,27 @@ impl Section {
     }
 }
 
-/// What sits before a place's name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mark {
-    /// A mailbox's mark, by its role.
     Role(MailboxRole),
-    /// A label's dot, in its stored colour if it has one.
     Dot(Option<String>),
 }
 
-/// One place the list shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    /// Its section.
     pub section: Section,
-    /// Where it sorts within its section: a mailbox's role order.
     pub rank: usize,
-    /// Its name.
     pub name: String,
-    /// What it says on the right: its count, or "186 today".
     pub count: Option<String>,
-    /// The command that goes there directly, whose key its row shows.
     pub go: Option<CommandId>,
-    /// Run this command rather than go to [`Self::destination`]: a place
-    /// that is a view of its own, like Filtered.
+    /// Run this command rather than go to `destination`: a place that is a view of its own.
     pub command: Option<CommandId>,
-    /// Where it takes the list.
     pub destination: Destination,
-    /// How it is marked.
     pub mark: Mark,
-    /// Why its last sync pass failed, while that is the latest word about
-    /// it (#1731): the row carries a warning, and this is its tooltip.
+    /// Why its last sync pass failed (#1731); the row carries a warning and this is its tooltip.
     pub failure: Option<String>,
 }
 
-/// The entry for a mailbox: a folder of the person's own or one with a role.
 pub fn mailbox_entry(mailbox: &Mailbox) -> Entry {
     let (section, rank) = match mailbox.role {
         MailboxRole::Regular => (Section::Folders, 0),
@@ -110,9 +79,8 @@ pub fn mailbox_entry(mailbox: &Mailbox) -> Entry {
     }
 }
 
-/// The entry for an account's Outbox, which the caller lists only while
-/// `waiting` is more than nothing: a view over Drafts, with no mailbox row
-/// of its own.
+/// A view over Drafts with no mailbox row of its own; the caller lists it only while `waiting` is
+/// more than nothing.
 pub fn outbox_entry(account: postio_model::AccountId, waiting: u32) -> Entry {
     Entry {
         section: Section::Mailboxes,
@@ -127,9 +95,6 @@ pub fn outbox_entry(account: postio_model::AccountId, waiting: u32) -> Entry {
     }
 }
 
-/// The entry for a label.
-///
-/// `count` is how many conversations carry it, when that is known.
 pub fn label_entry(label: &Label, count: Option<u32>) -> Entry {
     Entry {
         section: Section::Labels,
@@ -144,8 +109,6 @@ pub fn label_entry(label: &Label, count: Option<u32>) -> Entry {
     }
 }
 
-/// The entry for Filtered, listed while filtering is on, with how many it
-/// held back today. It runs `GoToFiltered` rather than going to a place.
 pub fn filtered_entry(today: u32) -> Entry {
     Entry {
         section: Section::Mailboxes,
@@ -160,10 +123,7 @@ pub fn filtered_entry(today: u32) -> Entry {
     }
 }
 
-/// The entry for Snoozed or Flagged -- `role` says which -- with how many
-/// conversations its view lists, when that is known. A view over mail filed
-/// elsewhere, not a folder with an id of its own, so it runs the command its
-/// key runs, which lists the same cross-account view.
+/// A view over mail filed elsewhere, not a folder with an id, so it runs the command its key runs.
 pub fn view_entry(role: MailboxRole, count: Option<u32>) -> Entry {
     let (name, command) = match role {
         MailboxRole::Snoozed => ("Snoozed", CommandId::GoToSnoozed),
@@ -182,8 +142,6 @@ pub fn view_entry(role: MailboxRole, count: Option<u32>) -> Entry {
     }
 }
 
-/// The entries for Snoozed and Flagged, uncounted: listed always, whatever
-/// the accounts' mailboxes say, until a read has counted them.
 pub fn view_entries() -> Vec<Entry> {
     [MailboxRole::Snoozed, MailboxRole::Flagged]
         .into_iter()
@@ -191,10 +149,6 @@ pub fn view_entries() -> Vec<Entry> {
         .collect()
 }
 
-/// The places to list: every entry, Snoozed and Flagged (the views, unless a
-/// server's own mailbox with that role already has the row), and Filtered
-/// while it is one, whose name contains `wanted`, case aside, by section,
-/// rank, then name.
 pub fn listed(all: &[Entry], filtered: Option<&Entry>, wanted: &str) -> Vec<Entry> {
     let wanted = wanted.to_lowercase();
     let views: Vec<Entry> = view_entries()
@@ -212,7 +166,6 @@ pub fn listed(all: &[Entry], filtered: Option<&Entry>, wanted: &str) -> Vec<Entr
     shown
 }
 
-/// The command bar's place for a mailbox.
 pub fn mailbox_place(mailbox: &Mailbox) -> Place {
     Place {
         kind: if mailbox.role == MailboxRole::Regular {
@@ -227,7 +180,6 @@ pub fn mailbox_place(mailbox: &Mailbox) -> Place {
     }
 }
 
-/// The command bar's place for a label.
 pub fn label_place(label: &Label) -> Place {
     Place {
         kind: PlaceKind::Label,
@@ -238,8 +190,6 @@ pub fn label_place(label: &Label) -> Place {
     }
 }
 
-/// The mailboxes that have a key of their own, in the order their commands
-/// are listed.
 pub fn direct_commands() -> Vec<CommandId> {
     [
         MailboxRole::Inbox,
@@ -257,12 +207,10 @@ pub fn direct_commands() -> Vec<CommandId> {
     .collect()
 }
 
-/// Where a mailbox of `role` sorts: the order the places are listed in.
 pub fn role_rank(role: MailboxRole) -> usize {
     match role {
         MailboxRole::Inbox => 0,
         MailboxRole::Drafts => 1,
-        // What Drafts sent on its way, listed under it.
         MailboxRole::Outbox => 1,
         MailboxRole::Sent => 2,
         MailboxRole::Snoozed => 3,
@@ -271,7 +219,6 @@ pub fn role_rank(role: MailboxRole) -> usize {
     }
 }
 
-/// The command that goes to a mailbox of `role` directly.
 pub fn go_to(role: MailboxRole) -> Option<CommandId> {
     Some(match role {
         MailboxRole::Inbox => CommandId::GoToInbox,
@@ -287,8 +234,6 @@ pub fn go_to(role: MailboxRole) -> Option<CommandId> {
     })
 }
 
-/// What a mailbox is called here: "Inbox" for an inbox, whatever the server
-/// names it ("INBOX"), and its own name otherwise.
 pub fn place_name(mailbox: &Mailbox) -> String {
     match mailbox.role {
         MailboxRole::Inbox => "Inbox".to_owned(),
@@ -296,19 +241,14 @@ pub fn place_name(mailbox: &Mailbox) -> String {
     }
 }
 
-/// A list `g c` can cycle to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
-    /// Focus's own inbox: every account's, filtered as Focus files it.
     Focus,
-    /// One account's inbox, as the server has it.
     Inbox(MailboxId),
 }
 
-/// The scope after `here` for `g c` (`next_scope`): Focus's inbox, then each
-/// account's inbox in turn, then round again. With one account's inbox
-/// there is only the one list, and it is Focus's. `here` is `None` when the
-/// list shows something else (a folder, Flagged): the cycle starts over.
+/// `here` is `None` when the list shows something else: the cycle starts over. With one inbox there
+/// is only Focus's list.
 pub fn next_scope(inboxes: &[MailboxId], here: Option<Scope>) -> Scope {
     if inboxes.len() < 2 {
         return Scope::Focus;
@@ -405,8 +345,6 @@ mod tests {
         assert_eq!(names(listed(&all, None, "REC")), ["Receipts"]);
     }
 
-    /// Every mailbox the popover lists shows the key that goes there, the
-    /// Outbox, Junk and Trash included.
     #[test]
     fn every_role_with_a_row_has_a_key() {
         let junk = mailbox_entry(&mailbox("Junk", MailboxRole::Junk));
@@ -431,8 +369,6 @@ mod tests {
         }
     }
 
-    /// The line under the places says what Return does on the row the
-    /// highlight is on, in that row's own words.
     #[test]
     fn the_footer_describes_the_highlighted_row() {
         let receipts = mailbox_entry(&mailbox("Receipts", MailboxRole::Regular));

@@ -1,10 +1,3 @@
-//! Threads: aggregates, membership, ordering, and the thread list row.
-//!
-//! Written before the repository existed. The bead's acceptance criteria are
-//! "the thread row exposes count and participants without an N+1", "ordering
-//! both directions is tested" and "adding a message updates the denormalized
-//! fields".
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
 
@@ -22,7 +15,6 @@ fn at(seconds: i64) -> DateTime<Utc> {
         .unwrap()
 }
 
-/// One message in `mailbox`, from `sender`, received at `seconds`.
 async fn message(
     connection: &Connection,
     account: AccountId,
@@ -54,10 +46,6 @@ async fn a_thread(connection: &Connection, account: AccountId) -> Thread {
         .expect("create a thread");
     thread
 }
-
-// ---------------------------------------------------------------------------
-// Create, read, delete
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_thread_round_trips_with_its_membership_derived_from_its_messages() {
@@ -143,10 +131,6 @@ async fn deleting_a_thread_leaves_its_messages_alone() {
         "a message outlives the thread it was grouped into; threading can run again"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Acceptance: adding a message updates the denormalized fields
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn adding_a_message_updates_the_threads_aggregates() {
@@ -269,10 +253,6 @@ async fn a_locally_deleted_message_leaves_the_threads_counts() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance: ordering in both directions
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_threads_messages_can_be_read_oldest_or_newest_first() {
     let database = test_support::memory().await;
@@ -332,16 +312,12 @@ async fn reading_a_thread_in_either_direction_never_sorts() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Acceptance: the list row, count and participants, without an N+1
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn the_rows_for_changed_messages_are_their_conversations_and_nothing_else() {
-    // #1607: a flag change names message ids, and the list re-read a whole
-    // 50-row page -- four correlated subqueries per row -- to learn one
-    // conversation's new state. This reads the rows those ids touch, in the
-    // page's own shape, and nothing else, in a bounded number of statements.
+    // #1607: a flag change names message ids, and the list re-read a whole page of correlated
+    // subqueries
+    // to learn one conversation's state; this reads only the rows those ids touch, in bounded
+    // statements.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -366,7 +342,6 @@ async fn the_rows_for_changed_messages_are_their_conversations_and_nothing_else(
         }
     }
     let lone = message(&connection, account.id, inbox, "ada", 9_000).await;
-    // The middle message of the third conversation goes unread.
     let (changed_thread, changed) = members[2 * 3 + 1];
     MessageRepository::new(&connection)
         .set_flags(
@@ -411,8 +386,6 @@ async fn the_rows_for_changed_messages_are_their_conversations_and_nothing_else(
          takes four, and this must not scale with the ids"
     );
 
-    // The representative read seeks the conversations by index and walks
-    // nothing: a folder of sixty thousand must not be read for one flag.
     let plan = ThreadRepository::new(&connection).explain_rows_for(&query, 1, 1);
     let scans = postio_storage::test_support::counting::scans(&connection, &plan).await;
     assert!(
@@ -423,11 +396,9 @@ async fn the_rows_for_changed_messages_are_their_conversations_and_nothing_else(
 
 #[tokio::test]
 async fn conversations_gone_from_a_folder_are_the_ones_with_no_member_left() {
-    // #1607: an archive moved `total_count`, the folder count's witness, so
-    // the next page paid the whole count again -- 786 ms on a real folder.
-    // What the count lost is knowable from the removed ids alone: the
-    // conversations none of whose members are still in the folder, and
-    // every lone message, each of which was its own row.
+    // #1607: an archive moved `total_count`, the count's witness, so the next page paid the whole
+    // count
+    // again; what the count lost is knowable from the removed ids alone.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -451,7 +422,6 @@ async fn conversations_gone_from_a_folder_are_the_ones_with_no_member_left() {
     let messages = MessageRepository::new(&connection);
     let threads = ThreadRepository::new(&connection);
 
-    // One member archived: the conversation is still in the folder.
     messages
         .move_to(&[members[0]], archive)
         .await
@@ -465,7 +435,6 @@ async fn conversations_gone_from_a_folder_are_the_ones_with_no_member_left() {
         "a conversation with members left is still a row"
     );
 
-    // The rest of it archived, and the lone message with it: two rows gone.
     messages
         .move_to(&[members[1], members[2], lone], archive)
         .await
@@ -492,7 +461,6 @@ async fn a_page_of_threads_costs_a_fixed_number_of_queries() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // Twenty threads of three messages each, from three different senders.
     for index in 0..20 {
         let thread = a_thread(&connection, account.id).await;
         for reply in 0..3 {
@@ -666,19 +634,11 @@ async fn the_thread_list_plan_never_sorts() {
                 "{label} / cursor={after}: the list must never scan a table:\n{plan}"
             );
             if base.mailbox.is_some() {
-                // The folder window is ordered over the *representative
-                // message*, on the very index the message list uses — which
-                // is what makes "page k of threads costs what page k of
-                // messages costs" true by construction rather than by
-                // measurement.
                 assert!(
                     plan.contains("idx_messages_list"),
                     "{label} / cursor={after}: the folder window must walk \
                      the message list index:\n{plan}"
                 );
-                // Everything the conversation contributes is a correlated
-                // subquery, and each has to seek the index migration 0012
-                // added rather than walk a whole thread and filter.
                 assert!(
                     plan.contains("idx_messages_thread_mailbox"),
                     "{label} / cursor={after}: the folder slice must seek its \
@@ -694,10 +654,6 @@ async fn the_thread_list_plan_never_sorts() {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Merge, for a late message that links two roots
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn merging_moves_every_message_and_leaves_one_thread() {
@@ -750,20 +706,10 @@ async fn merging_a_thread_into_itself_does_nothing() {
     assert_eq!(stored.message_count, 1);
 }
 
-// ---------------------------------------------------------------------------
-// The folder-scoped thread list (ADR 0015, #306)
-// ---------------------------------------------------------------------------
-//
-// A folder shows one row per conversation. The window is over `threads` and
-// never over messages that are then collapsed — reading rows to throw them
-// away is what breaks flat paging and the windowed-list invariant.
-//
-// Three things about a row are scoped to the folder rather than to the whole
-// conversation: whether the thread appears at all, which message represents
-// it, and how much of it is unread *here*. The total message count is not —
-// the badge means the size of the conversation (ADR 0015 Q2).
+// A folder shows one row per conversation, windowed over `threads`, never over messages collapsed
+// afterwards. Whether the thread appears, which message represents it and how much is unread are
+// scoped to the folder; the total count is not (ADR 0015 Q2).
 
-/// A message in `mailbox`, unread, threaded into `thread`.
 async fn unread_in(
     connection: &Connection,
     account: AccountId,
@@ -813,8 +759,6 @@ async fn a_folder_only_shows_conversations_it_holds_a_message_of() {
 
 #[tokio::test]
 async fn the_row_is_drawn_from_the_newest_message_in_this_folder() {
-    // The representative, and the reason it is scoped: a reply filed in
-    // Archive is not what the Inbox row should be showing.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -842,9 +786,6 @@ async fn the_row_is_drawn_from_the_newest_message_in_this_folder() {
 
 #[tokio::test]
 async fn unread_is_counted_in_this_folder_and_the_total_is_not() {
-    // ADR 0015 Q2, exactly: a thread whose only unread member is in another
-    // folder reads as handled in this one — but the badge still says how big
-    // the conversation is.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -853,7 +794,6 @@ async fn unread_is_counted_in_this_folder_and_the_total_is_not() {
         .id;
 
     let thread = a_thread(&connection, account.id).await;
-    // Two unread here, three unread over there.
     unread_in(&connection, account.id, inbox, thread.id, 10).await;
     unread_in(&connection, account.id, inbox, thread.id, 11).await;
     for second in 20..23 {
@@ -882,7 +822,6 @@ async fn a_folder_with_only_read_messages_of_a_thread_reads_as_handled() {
         .id;
 
     let thread = a_thread(&connection, account.id).await;
-    // `message` marks Seen; `unread_in` does not.
     let read = message(&connection, account.id, inbox, "ada", 10).await;
     ThreadRepository::new(&connection)
         .add_message(thread.id, read.id)
@@ -904,8 +843,6 @@ async fn a_folder_with_only_read_messages_of_a_thread_reads_as_handled() {
 
 #[tokio::test]
 async fn the_account_scoped_list_is_unchanged_by_any_of_this() {
-    // Query views still list messages and the unified thread list still spans
-    // folders; scoping is something a folder asks for, not the new default.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -936,8 +873,6 @@ async fn a_folder_scoped_thread_page_resumes_after_its_cursor() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // A loop rather than `map().collect()`: the body awaits, and a
-    // closure cannot.
     let mut threads: Vec<Thread> = Vec::new();
     for _ in 0..5 {
         threads.push(a_thread(&connection, account.id).await);
@@ -980,8 +915,6 @@ async fn a_folder_scoped_thread_page_resumes_after_its_cursor() {
 
 #[tokio::test]
 async fn a_hidden_message_is_not_what_a_folder_row_shows() {
-    // A message hidden pending a remote delete is not a member anywhere else
-    // either; the scoped representative has to agree.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1009,31 +942,13 @@ async fn a_hidden_message_is_not_what_a_folder_row_shows() {
     assert_eq!(page[0].unread_count, 1);
 }
 
+/// POSTIO-MEASUREMENT: seeds a large folder to compare statement counts across pages, 28 s.
 #[tokio::test]
 async fn thread_paging_stays_flat_over_a_large_folder() {
-    // The claim ADR 0015 rests on: page k of *threads* costs what page k of
-    // messages costs. If the folder scoping had turned the window into
-    // something linear in the size of the mailbox, this is where it shows —
-    // the correlated subqueries are per row of the page, so twenty-five
-    // thousand conversations must not cost more than a handful.
-    //
-    // Counted rather than timed (#100). This used to compare wall-clock
-    // durations and allow the deep page a factor of ten plus 50ms, which is
-    // the width a shared runner forces on a timing assertion — wide enough
-    // that it would not have caught much short of the linear case it names.
-    // Rows produced is the same number on any machine, so it can be held to
-    // the actual claim: a page of fifty costs a page of fifty, ten pages in.
-    //
-    // **Twenty thousand, and it was a hundred.** The assertion is a row count
-    // and a row count does not move with the corpus: what a hundred thousand
-    // bought was seeding time. On this engine that was 227 s alone and a
-    // 240 s timeout under a full-workspace run -- a test already failing the
-    // project's own rule that a case must survive a loaded runner. Five
-    // thousand conversations is still two orders of magnitude past a page of
-    // fifty and still ten pages deep, which is the whole of what the claim
-    // needs. `messages::paging_stays_flat_over_a_hundred_thousand_messages`
-    // keeps the larger corpus for the simpler query, so the scale is still
-    // covered somewhere on the merge path.
+    // The claim ADR 0015 rests on: page k of threads costs what page k of messages costs. Counted,
+    // not
+    // timed (#100), over 20,000 messages: a row count does not move with the corpus, and more
+    // seeding only cost time.
     let database = postio_storage::test_support::temp().await;
     let report = postio_storage::seed::seed_large(&database, 7, 20_000).await;
     let inbox = report
@@ -1059,7 +974,6 @@ async fn thread_paging_stays_flat_over_a_large_folder() {
     let (first, first_page) = read(&query).await;
     assert_eq!(first_page.len(), 50, "a page is a window, never the folder");
 
-    // Ten pages in, which for messages is the same cost as the first.
     let mut cursor = first_page.last().expect("a last row").cursor();
     let mut deep = first;
     for _ in 0..10 {
@@ -1069,11 +983,9 @@ async fn thread_paging_stays_flat_over_a_large_folder() {
         deep = counts;
     }
 
-    // Not exact equality: the correlated subqueries return a row per message
-    // in each thread on the page, so the count moves a little with the shape
-    // of the conversations that happen to be there — 246 and 252 as this
-    // landed. Doubling is far more slack than that needs and still leaves
-    // this two orders of magnitude away from the linear case it rules out.
+    // Not exact equality: the correlated subqueries return a row per message in the page's threads,
+    // so
+    // the count moves with conversation shape. Doubling still rules out the linear case.
     assert!(
         deep.rows <= first.rows * 2,
         "the eleventh page of threads produced {} rows where the first \
@@ -1093,8 +1005,6 @@ async fn thread_paging_stays_flat_over_a_large_folder() {
 
 #[tokio::test]
 async fn a_folder_scoped_count_agrees_with_the_rows_it_would_show() {
-    // The count and the page must mean the same thing by "in this folder", or
-    // the list model's scrollbar promises rows the window cannot produce.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1138,8 +1048,6 @@ async fn a_thread_page_at_an_offset_resumes_where_the_previous_one_stopped() {
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
 
-    // A loop rather than `map().collect()`: the body awaits, and a
-    // closure cannot.
     let mut threads: Vec<Thread> = Vec::new();
     for _ in 0..6 {
         threads.push(a_thread(&connection, account.id).await);
@@ -1175,14 +1083,9 @@ async fn a_thread_page_at_an_offset_resumes_where_the_previous_one_stopped() {
 
 #[tokio::test]
 async fn a_message_belonging_to_no_thread_is_still_a_row() {
-    // The list must never hide mail. Threading runs on everything sync files
-    // and can still fail — `postio-sync`'s send path discards the result with
-    // `let _ =` — and a window built only over `threads` makes every such
-    // message *invisible*: no error, no empty state, just mail that is in the
-    // store and not on screen.
-    //
-    // So the folder window is over the representative *message* rather than
-    // over `threads`, and a message with no thread is a conversation of one.
+    // The list must never hide mail: threading can fail (the send path discards its result), so the
+    // window is over the representative message, and an unthreaded message is a conversation of
+    // one.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1190,8 +1093,6 @@ async fn a_message_belonging_to_no_thread_is_still_a_row() {
     let threaded = a_thread(&connection, account.id).await;
     unread_in(&connection, account.id, inbox, threaded.id, 10).await;
 
-    // Straight into the table, exactly as a message that was never threaded
-    // would sit there.
     let mut orphan = Message::new(account.id, inbox, at(20));
     orphan.subject = Some("Never threaded".to_owned());
     orphan.from = vec![EmailAddress::new(Some("Ada"), "ada@example.com")];
@@ -1225,8 +1126,6 @@ async fn a_message_belonging_to_no_thread_is_still_a_row() {
 
 #[tokio::test]
 async fn two_unthreaded_messages_are_two_rows_rather_than_one() {
-    // The coalesce that lets a null thread id be compared must not make every
-    // unthreaded message look like a member of the same conversation.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (account, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1248,13 +1147,9 @@ async fn two_unthreaded_messages_are_two_rows_rather_than_one() {
 
 #[tokio::test]
 async fn a_folder_is_counted_from_an_index_alone() {
-    // #1607, #1610: the folder count was a correlated probe per message --
-    // 786 ms on a real 60,907-message folder, 260 ms on a seeded one of
-    // 60,000 -- and a first sync of the folder on screen pays it on every
-    // tick, because every tick moves the count's witness. Counted from a
-    // covering index it is 13 ms on the same seeded folder. The plan is the
-    // gate: every step reads an index it is covered by, and nothing reads a
-    // row or runs a subquery per message.
+    // #1607, #1610: the folder count was a correlated probe per message (786 ms on a real folder).
+    // The
+    // plan is the gate: every step reads a covering index and nothing runs a subquery per message.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     let (_, inbox) = test_support::account_with_inbox(&connection).await;
@@ -1279,11 +1174,9 @@ async fn a_folder_is_counted_from_an_index_alone() {
 
 #[tokio::test]
 async fn a_folder_s_page_boundaries_are_where_its_pages_begin() {
-    // #1610: a scrollbar jump deep into a folder was an OFFSET walk over the
-    // window's correlated predicate -- 572 ms to the bottom of a seeded
-    // folder of 17,804 conversations, linear in the depth. The boundaries
-    // are what lets it seek instead, and they are only worth anything if
-    // resuming after one reads exactly the page OFFSET would have.
+    // #1610: a scrollbar jump was an OFFSET walk, linear in depth; boundaries let it seek, and
+    // matter
+    // only if resuming after one reads exactly the page OFFSET would.
     let database = test_support::memory().await;
     let seed = postio_storage::seed::seed_large(&database, 7, 2_000).await;
     let connection = database.connect().await.expect("checkout");
@@ -1510,14 +1403,8 @@ async fn a_conversation_with_no_copies_elsewhere_folds_into_itself() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Mute and split (spec 013 US5, research R3)
-// ---------------------------------------------------------------------------
-//
-// `counting` sees statements and the rows they return. It does not see
-// trigger firings (they run inside the engine), so the budgets below are
-// statements and rows; the mailbox-count triggers are covered by the
-// aggregates being right after each write.
+// `counting` does not see trigger firings, so the budgets below are statements and rows; the
+// mailbox-count triggers are covered by the aggregates being right after each write.
 
 mod mute_and_split {
     use std::collections::HashMap;
@@ -1535,7 +1422,6 @@ mod mute_and_split {
     }
 
     impl Scene<'_> {
-        /// Files a message the way a sync pass does: stored, then threaded.
         async fn file(
             &self,
             rfc: &str,
@@ -1549,8 +1435,6 @@ mod mute_and_split {
                 .map(|id| RfcMessageId::new(format!("<{id}@example.com>")))
                 .collect();
             message.in_reply_to = message.references.last().cloned();
-            // `m…` are one conversation; any other is a subject of its own, so
-            // the subject fallback never joins what a test keeps apart.
             message.subject = Some(if rfc.starts_with('m') {
                 "Re: Harbor API".to_owned()
             } else {
@@ -1609,7 +1493,6 @@ mod mute_and_split {
         }
     }
 
-    /// m1 <- m2 <- m3 <- m4 <- m5, and m6 also answers m3.
     async fn a_conversation(scene: &Scene<'_>) -> (Vec<MessageId>, ThreadId) {
         let (m1, thread) = scene.file("m1", &[], 1).await;
         let (m2, a) = scene.file("m2", &["m1"], 2).await;
@@ -1621,10 +1504,6 @@ mod mute_and_split {
         (vec![m1, m2, m3, m4, m5, m6], thread)
     }
 
-    /// Spec 013 US5: "the row stays in place". A reply archived into a muted
-    /// thread is the newest message of the conversation, and the inbox row is
-    /// drawn from the newest message *in the inbox*, so the page does not move
-    /// the thread up. A guard: it held when written.
     #[tokio::test]
     async fn an_archived_reply_to_a_muted_thread_does_not_move_its_row() {
         let database = test_support::memory().await;
@@ -1686,7 +1565,6 @@ mod mute_and_split {
         let scene = scene(&connection).await;
         let threads = ThreadRepository::new(&connection);
 
-        // Two halves of a conversation, and the later one is muted.
         let (_, early) = scene.file("a1", &[], 1).await;
         let (_, late) = scene.file("b2", &["b1"], 3).await;
         assert_ne!(early, late);
@@ -1694,8 +1572,6 @@ mod mute_and_split {
         assert_eq!(threads.muted(&[late]).await.expect("muted")[&late], 0);
         assert!(threads.muted(&[early]).await.expect("muted").is_empty());
 
-        // The missing parent arrives and links both: the later thread is
-        // absorbed, and the mute follows its claims.
         let (_, merged) = scene.file("b1", &["a1"], 2).await;
         let (_, merged_again) = scene.file("b3", &["a1", "b1", "b2"], 4).await;
         assert_eq!(merged, early, "the older thread survives");
@@ -1706,8 +1582,6 @@ mod mute_and_split {
             "still muted after the merge, under the surviving id"
         );
 
-        // A resync renumbers: the thread is deleted and its messages are
-        // threaded again, under a new id.
         let members = scene.members(early).await;
         threads.delete(early).await.expect("delete");
         let messages = MessageRepository::new(&connection);
@@ -1757,7 +1631,6 @@ mod mute_and_split {
             .expect("two more");
 
         assert_eq!(threads.muted(&[thread]).await.expect("muted")[&thread], 3);
-        // Muting again starts nothing over: the count is the person's.
         threads.mute(thread).await.expect("mute again");
         assert_eq!(threads.muted(&[thread]).await.expect("muted")[&thread], 3);
         threads.unmute(thread).await.expect("unmute");
@@ -1782,7 +1655,6 @@ mod mute_and_split {
         }
         threads.mute(page[2]).await.expect("mute");
         threads.mute(page[5]).await.expect("mute");
-        // Warm: the shape, not a cold statement cache.
         let _ = threads.muted(&page).await.expect("warm");
 
         let mut found = HashMap::new();
@@ -1842,7 +1714,6 @@ mod mute_and_split {
         let connection = database.connect().await.expect("checkout");
         let scene = scene(&connection).await;
         let threads = ThreadRepository::new(&connection);
-        // A mailbox of unrelated conversations beside it.
         for n in 0..30 {
             scene.file(&format!("other{n}"), &[], 100 + n).await;
         }
@@ -1853,10 +1724,9 @@ mod mute_and_split {
         })
         .await;
 
-        // Reads: the message's row (1), the thread's nodes (6), its subject
-        // (1), and the aggregates of the two threads (2). Everything else is
-        // a write, which `counting` does not count (nor trigger firings).
-        // The thirty unrelated conversations beside it are not read.
+        // Reads: the message's row (1), the thread's nodes (6), its subject (1) and the two
+        // threads'
+        // aggregates (2); writes are not counted.
         assert_eq!(
             (counts.statements, counts.rows),
             SPLIT_BUDGET,
@@ -1864,7 +1734,6 @@ mod mute_and_split {
         );
     }
 
-    /// (statements, rows) a split of a six-message thread costs.
     const SPLIT_BUDGET: (usize, usize) = (5, 10);
 
     #[tokio::test]
@@ -1876,7 +1745,6 @@ mod mute_and_split {
         let (ids, original) = a_conversation(&scene).await;
         let split = threads.split(ids[3]).await.expect("split");
 
-        // Its References still run through the original: m1 .. m3, then m4.
         let (reply, joined) = scene.file("m7", &["m1", "m2", "m3", "m4"], 7).await;
 
         assert_eq!(joined, split, "the nearest link's thread");
@@ -1886,7 +1754,6 @@ mod mute_and_split {
             !scene.claims(split).await.contains(&"m3".to_owned()),
             "joining the split does not steal the original's claims"
         );
-        // A reply to the original goes on joining the original.
         let (_, stays) = scene.file("m8", &["m1", "m2", "m3"], 8).await;
         assert_eq!(stays, original);
     }
@@ -1962,10 +1829,6 @@ async fn the_muted_lookup_reads_the_mutes_and_seeks_the_links_by_their_key() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Spec 013 T085: the edge cases of a thread across folders
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_thread_across_archive_sent_and_the_inbox_counts_every_message_on_its_inbox_row() {
     let database = test_support::memory().await;
@@ -2002,10 +1865,9 @@ async fn a_thread_across_archive_sent_and_the_inbox_counts_every_message_on_its_
     assert_eq!(members.len(), 5, "and every one of them is a child");
 }
 
-/// A draft the server holds is a message of its thread to the threading, and
-/// it is listed in Drafts. Archiving the thread acts on the messages
-/// `ThreadRepository::messages` names, so it must not name the draft: the
-/// draft stays in Drafts (spec 013, edge cases).
+/// Archiving a thread acts on `ThreadRepository::messages`, so it must not name a draft of the
+/// thread;
+/// the draft stays in Drafts.
 #[tokio::test]
 async fn the_messages_a_thread_verb_acts_on_leave_a_draft_of_the_thread_out() {
     let database = test_support::memory().await;

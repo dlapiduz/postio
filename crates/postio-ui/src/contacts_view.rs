@@ -1,10 +1,4 @@
-//! The Contacts view's words and shapes, without a toolkit
-//! (specs/011-focus-contacts S7, handoff screens 01 to 03).
-//!
-//! The strip with its tabs, the review line, a row of the list, the card
-//! (a person's, and a newsletter's), and the footer are decided here: what
-//! each says, in what order, and what the Mac may and may not draw. A toolkit
-//! draws what these return and adds no word of its own.
+//! The Contacts view's words and shapes without a toolkit; a toolkit adds no word of its own.
 
 use chrono::{DateTime, Datelike, Local, Utc, Weekday};
 use postio_core::{CommandId, Keymap};
@@ -16,7 +10,6 @@ use postio_model::{
 use crate::contact_popover::{Avatar, Tile, avatar, first_name, reply_word};
 use crate::hints::Hint;
 
-/// A count with its thousands separated: `1,533`.
 pub fn thousands(n: u32) -> String {
     let digits = n.to_string();
     let mut out = String::new();
@@ -29,7 +22,6 @@ pub fn thousands(n: u32) -> String {
     out
 }
 
-/// A tab's title.
 pub fn tab_title(tab: ContactTab) -> &'static str {
     match tab {
         ContactTab::All => "All",
@@ -40,61 +32,38 @@ pub fn tab_title(tab: ContactTab) -> &'static str {
     }
 }
 
-/// One tab in the strip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TabView {
-    /// Which.
     pub tab: ContactTab,
-    /// "People".
     pub title: String,
-    /// "612"; `None` for All, whose count is the strip's total.
+    /// `None` for All, whose count is the strip's total.
     pub count: Option<String>,
-    /// Whether it is the one chosen.
     pub on: bool,
 }
 
-/// The "Worth a look" line over the list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewLine {
-    /// "Worth a look:".
     pub lead: String,
-    /// "3 sets of contacts may be the same person · 2 addresses bounced recently".
     pub text: String,
-    /// "Review".
     pub button: String,
-    /// Its key.
     pub key: Option<String>,
-    /// Whether the review exists yet: the button is dimmed until it does.
     pub enabled: bool,
 }
 
-/// The strip over the list: the title, the tabs, the filter and New contact.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StripView {
-    /// "Contacts".
     pub title: String,
-    /// The key that comes here, `g c`.
     pub key: Option<String>,
-    /// "1,533".
     pub total: String,
-    /// The five tabs.
     pub tabs: Vec<TabView>,
-    /// "Filter contacts".
     pub filter_placeholder: String,
-    /// The filter's key.
     pub filter_key: Option<String>,
-    /// "New contact".
     pub new_label: String,
-    /// Its key.
     pub new_key: Option<String>,
-    /// Whether New contact does anything yet.
     pub new_enabled: bool,
-    /// The review line, hidden when there is nothing to review.
     pub review: Option<ReviewLine>,
 }
 
-/// "3 sets of contacts may be the same person · 2 addresses bounced recently · 5
-/// people you write to often aren't saved"; empty with nothing to say.
 pub fn review_text(review: &ReviewSummary) -> String {
     let plural = |n: u32, one: &str, many: &str| -> String {
         let count = if n >= postio_model::REVIEW_CAP {
@@ -129,7 +98,6 @@ pub fn review_text(review: &ReviewSummary) -> String {
     parts.join(" · ")
 }
 
-/// The strip for `overview`, with `tab` chosen.
 pub fn strip(overview: &ContactsOverview, tab: ContactTab, keymap: &Keymap) -> StripView {
     let review_words = review_text(&overview.review);
     StripView {
@@ -158,15 +126,11 @@ pub fn strip(overview: &ContactsOverview, tab: ContactTab, keymap: &Keymap) -> S
             key: keymap
                 .binding(CommandId::ContactsSuggestions)
                 .map(str::to_owned),
-            // The review can be asked for at any time: the queue is read
-            // when it is opened.
             enabled: true,
         }),
     }
 }
 
-/// The letter a row's sort key files it under: its first letter, uppercased,
-/// or `#` for a name that starts with anything else.
 pub fn letter_of(sort_key: &str) -> char {
     sort_key
         .chars()
@@ -176,8 +140,6 @@ pub fn letter_of(sort_key: &str) -> char {
         .unwrap_or('#')
 }
 
-/// The tag pill on a row: where their mail is sent, or how it is drawn.
-/// One at most, the most telling first.
 pub fn tag_of(row: &ContactListRow) -> Option<String> {
     match row.arrival {
         Some(ContactArrival::Filtered) => Some("filtered".to_owned()),
@@ -191,8 +153,6 @@ pub fn tag_of(row: &ContactListRow) -> Option<String> {
     }
 }
 
-/// How long ago, on a row or a tile: `today`, a weekday inside the week, a
-/// day and month inside the year, else a month and year.
 pub fn when_word(at: Option<DateTime<Utc>>, now: DateTime<Local>) -> String {
     let Some(at) = at else {
         return String::new();
@@ -211,8 +171,6 @@ fn noun(n: u32, one: &str, many: &str) -> String {
     format!("{} {}", thousands(n), if n == 1 { one } else { many })
 }
 
-/// The right-hand line of a row: `431 messages`, `list · 112 messages`,
-/// `newsletter · 48 issues`.
 pub fn count_line(row: &ContactListRow) -> String {
     match row.kind {
         ContactKind::Person => noun(row.messages, "message", "messages"),
@@ -227,31 +185,20 @@ pub fn count_line(row: &ContactListRow) -> String {
     }
 }
 
-/// One row of the list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowView {
-    /// Whether the person is marked for a merge.
     pub marked: bool,
-    /// The person.
     pub id: postio_model::ContactId,
-    /// The avatar.
     pub avatar: Avatar,
-    /// The name.
     pub name: String,
-    /// The tag pill beside it.
     pub tag: Option<String>,
-    /// The primary address, with `+2` for the rest.
     pub address: String,
-    /// When they were last in touch.
     pub when: String,
-    /// What the mail adds up to.
     pub count_line: String,
-    /// The letter heading above this row when it starts one.
     pub letter: Option<char>,
 }
 
-/// A row, with its letter heading when it follows a row under another letter
-/// (`before` is that row's sort key; `None` for the first row of the list).
+/// `before` is the previous row's sort key; `None` for the first row.
 pub fn row(row: &ContactListRow, before: Option<&str>, now: DateTime<Local>) -> RowView {
     let letter = letter_of(&row.sort_key);
     let address = match (&row.preferred, row.address_count) {
@@ -275,88 +222,56 @@ pub fn row(row: &ContactListRow, before: Option<&str>, now: DateTime<Local>) -> 
     }
 }
 
-/// A button along the card's head.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardButton {
-    /// "Write".
     pub label: String,
-    /// The command it runs.
     pub command: CommandId,
-    /// Its key as bound.
     pub key: Option<String>,
-    /// The filled one.
     pub primary: bool,
-    /// Whether it does anything yet.
     pub enabled: bool,
 }
 
-/// One address on the card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddressLine {
-    /// The address.
     pub address: String,
-    /// The star: replies go here.
     pub primary: bool,
-    /// "primary · replies go here", "last used March 2025 · 6 messages".
     pub note: String,
-    /// "bounced 2 Sep", drawn in orange.
     pub bounced: Option<String>,
-    /// Whether it can be split off into a person of its own: the person has
-    /// more than one address.
     pub can_split: bool,
 }
 
-/// One switch under "How mail from X arrives".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchLine {
-    /// "Notify me when Ada writes".
     pub title: String,
-    /// "A quiet badge, even when Focus is in the background".
     pub note: String,
-    /// Whether it is on.
     pub on: bool,
-    /// What a click on it changes; `None` for a line that says something the
-    /// arrival control changes (a newsletter's digest).
+    /// `None` for a line the arrival control changes (a newsletter's digest).
     pub switch: Option<postio_model::CardSwitch>,
 }
 
-/// The twelve-month strip.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonthStrip {
     /// Twelve heights, oldest first, 0.0 to 1.0 of the tallest month.
     pub bars: Vec<f32>,
-    /// "Oct 2025".
     pub from: String,
-    /// "messages per month".
     pub caption: String,
-    /// "Sep 2026".
     pub to: String,
 }
 
-/// One line of "Open between you" or "Recent issues".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CardLine {
-    /// "Waiting on you", "Issue", a date.
     pub label: String,
-    /// What it is.
     pub text: String,
-    /// "opened", "not opened".
     pub state: String,
-    /// Whether the move is the user's: the label is in the accent.
     pub yours: bool,
 }
 
-/// A file chip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileChipView {
-    /// `XLSX`, `PDF`.
     pub kind: String,
-    /// "Atlas-Q3-budget.xlsx".
     pub name: String,
 }
 
-/// What the words call this machine: "this Mac" where the keys are the
-/// Mac's, "this computer" elsewhere.
 pub fn this_computer(keymap: &Keymap) -> &'static str {
     if keymap.platform() == Some(postio_config::paths::Platform::Apple) {
         "this Mac"
@@ -365,55 +280,31 @@ pub fn this_computer(keymap: &Keymap) -> &'static str {
     }
 }
 
-/// A person's or a newsletter's card, drawn whole.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CardView {
-    /// The person.
     pub id: postio_model::ContactId,
-    /// The avatar, drawn at 64.
     pub avatar: Avatar,
-    /// The name.
     pub name: String,
-    /// "Person · Finance lead, Northwind Partners · saved · groups: Atlas core".
     pub role: String,
-    /// The head's buttons.
     pub buttons: Vec<CardButton>,
-    /// "Addresses".
     pub addresses_title: String,
-    /// The addresses, the preferred first.
     pub addresses: Vec<AddressLine>,
-    /// "Also seen as “A. Moreno” and “Ada M.” in headers".
     pub also_seen: Option<String>,
-    /// "How mail from Ada arrives".
     pub arrival_title: String,
-    /// Inbox, Digest, Filtered out.
     pub arrival: Vec<crate::contact_popover::ArrivalOption>,
-    /// The switches.
     pub switches: Vec<SwitchLine>,
-    /// "Notes".
     pub notes_title: String,
-    /// The note's text.
     pub notes: Option<String>,
-    /// "Kept on this Mac."
     pub notes_foot: String,
-    /// "Your mail together", "Its mail".
     pub stats_title: String,
-    /// Four tiles.
     pub tiles: Vec<Tile>,
-    /// The strip under them.
     pub months: MonthStrip,
-    /// "Open between you", "Recent issues".
     pub lines_title: String,
-    /// What is open, or the recent issues.
     pub lines: Vec<CardLine>,
-    /// "Recent files from Ada"; `None` for a newsletter.
     pub files_title: Option<String>,
-    /// The chips.
     pub files: Vec<FileChipView>,
 }
 
-/// Whether a kind is one of the people-like ones, whose card is "your mail
-/// together" with Write first; the rest are somebody's mail you read.
 pub fn is_correspondent(kind: ContactKind) -> bool {
     matches!(kind, ContactKind::Person | ContactKind::Company)
 }
@@ -428,7 +319,6 @@ fn kind_word(kind: ContactKind) -> &'static str {
     }
 }
 
-/// The line under the name.
 pub fn role_line(card: &ContactCardRead) -> String {
     let person = &card.person;
     let mut parts = vec![kind_word(person.kind).to_owned()];
@@ -467,7 +357,6 @@ pub fn role_line(card: &ContactCardRead) -> String {
     parts.join(" · ")
 }
 
-/// The three-letter label of a file chip: its extension, else its type.
 pub fn file_kind(name: &str, mime: &str) -> String {
     let from_name = name
         .rsplit_once('.')
@@ -482,9 +371,6 @@ pub fn file_kind(name: &str, mime: &str) -> String {
         .to_uppercase()
 }
 
-/// How often a sender sends, from the dates of what they sent: the word
-/// (`daily`, `weekly`, `monthly`, `every 3 days`) and the weekday they most
-/// often land on, for a weekly one.
 pub fn frequency(recent: &[RecentMessage]) -> Option<(String, Option<Weekday>)> {
     let mut ins: Vec<DateTime<Utc>> = recent
         .iter()
@@ -538,7 +424,6 @@ fn weekday_plural(day: Weekday) -> String {
         .replace("Sun", "Sunday")
 }
 
-/// The card for `card`, as of `now`.
 pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> CardView {
     let person = &card.person;
     let name = person.shown_as().into_owned();
@@ -564,8 +449,6 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
         } else {
             "All messages"
         };
-        // Unsubscribing acts on their newest message, so with none there is
-        // nothing to press and no button to leave dead.
         let mut buttons = vec![button(all, CommandId::ContactShowMail, true, true)];
         if !card.issues.is_empty() {
             buttons.push(button("Unsubscribe", CommandId::Unsubscribe, false, true));
@@ -892,16 +775,12 @@ pub fn card(card: &ContactCardRead, keymap: &Keymap, now: DateTime<Local>) -> Ca
     }
 }
 
-/// The footer: the keys that work here, and the counts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FooterView {
-    /// `j/k move`, `Return all mail with them`.
     pub hints: Vec<Hint>,
-    /// "1,533 contacts · 640 saved".
     pub status: String,
 }
 
-/// The footer for `overview`.
 pub fn footer(overview: &ContactsOverview, keymap: &Keymap) -> FooterView {
     use crate::hints::{hint, pair};
     let hints = [
@@ -1289,7 +1168,6 @@ mod tests {
                 ("Edit", true)
             ]
         );
-        // No message to unsubscribe through: no button that cannot be pressed.
         list.issues.clear();
         let view = card(&list, &keymap(), now());
         assert!(view.buttons.iter().all(|b| b.enabled), "{:?}", view.buttons);
@@ -1316,7 +1194,6 @@ mod tests {
             archive_after_days: Some(30),
             ..ContactSettings::default()
         };
-        // Weekly, on Saturdays: 5 Sep to 26 Sep 2026 are Saturdays.
         news.stats.recent = (0..4)
             .map(|week| RecentMessage {
                 message: MessageId::new(week + 1),

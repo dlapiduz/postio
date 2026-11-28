@@ -10,6 +10,7 @@
 //! it a file of its own in `tests/` and say why at its top.
 
 mod bar;
+mod calendar;
 mod capture;
 mod compose;
 mod contact_edit;
@@ -22,6 +23,7 @@ mod digest;
 mod edge_cases;
 mod feed;
 mod filtered;
+mod footers;
 mod history;
 mod keymap;
 mod keys;

@@ -1,11 +1,6 @@
 import PostioFFI
 import SwiftUI
 
-/// The Edit and New contact form, in the card's place (handoff screen 06):
-/// an accent-tinted bar with Cancel and Save, then the form, labels
-/// right-aligned in a 110 column over fields up to 560 wide. Every word, the
-/// rules for what may be saved and the Esc ladder are the controller's
-/// (`ContactEditViewFfi`); this draws them and reports each change.
 struct ContactEditFormView: View {
     let edit: ContactEditViewFfi
     let model: ContactsModel
@@ -68,8 +63,6 @@ struct ContactEditFormView: View {
         }
     }
 
-    // MARK: the bar
-
     private var bar: some View {
         HStack(spacing: 10) {
             Text(edit.title).font(.system(size: 13, weight: .bold))
@@ -112,8 +105,6 @@ struct ContactEditFormView: View {
         }
         .buttonStyle(.plain)
     }
-
-    // MARK: rows
 
     private func row<Content: View>(_ label: String, @ViewBuilder _ content: () -> Content)
         -> some View

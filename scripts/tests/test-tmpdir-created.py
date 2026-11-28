@@ -58,10 +58,6 @@ def stub(directory: Path, name: str, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
 
-# `/bin/true` on Linux, `/usr/bin/true` on macOS -- and a hardcoded `/bin/true`
-# is why this test reported the runner broken on a Mac (#1151). The runner was
-# fine: it made the directory and exec'd exactly what it was handed, which did
-# not exist. Resolved rather than written, so neither path is spelled here.
 TRUE = shutil.which("true") or "/usr/bin/true"
 
 
@@ -70,14 +66,10 @@ def run(script: Path, tmpdir: Path, root: Path, *, with_sccache: bool) -> int:
     stubs = root / "stubs"
     stubs.mkdir(exist_ok=True)
     if with_sccache:
-        # Reports rather than compiles: this must never touch the real daemon,
-        # which other sessions are building against.
         stub(stubs, "sccache", "#!/usr/bin/env bash\nexec \"$@\"\n")
     environment = dict(os.environ)
     environment["PATH"] = f"{stubs}:/usr/bin:/bin"
     environment["TMPDIR"] = str(tmpdir)
-    # No compositor and no runtime dir: the runner takes a fail-open path, which
-    # is exactly where the directory still has to be made.
     environment["POSTIO_HEADLESS"] = "0"
     environment.pop("XDG_RUNTIME_DIR", None)
     if not with_sccache:
@@ -93,7 +85,6 @@ def run(script: Path, tmpdir: Path, root: Path, *, with_sccache: bool) -> int:
 with tempfile.TemporaryDirectory() as raw:
     root = Path(raw)
 
-    # ── the runner, on its fail-open path ────────────────────────────────
     missing = root / "tree-a" / "target" / "tmp"
     code = run(RUNNER, missing, root, with_sccache=False)
     check(
@@ -103,7 +94,6 @@ with tempfile.TemporaryDirectory() as raw:
     )
     check("the runner still ran the binary", code == 0, f"exit {code}")
 
-    # ── the wrapper, without sccache ─────────────────────────────────────
     missing = root / "tree-b" / "target" / "tmp"
     code = run(WRAPPER, missing, root, with_sccache=False)
     check(
@@ -112,9 +102,6 @@ with tempfile.TemporaryDirectory() as raw:
         f"{missing} still does not exist (exit {code})",
     )
 
-    # ── the wrapper, with sccache: cargo's directory, not the daemon's ───
-    # The branch below replaces TMPDIR with sccache's own scratch, so this is
-    # the case that catches the mkdir being written on the wrong side of it.
     missing = root / "tree-c" / "target" / "tmp"
     code = run(WRAPPER, missing, root, with_sccache=True)
     check(
@@ -123,7 +110,6 @@ with tempfile.TemporaryDirectory() as raw:
         f"{missing} still does not exist (exit {code})",
     )
 
-    # ── fail open: an uncreatable TMPDIR must not stop the run ───────────
     blocker = root / "blocker"
     blocker.write_text("not a directory")
     code = run(RUNNER, blocker / "target" / "tmp", root, with_sccache=False)

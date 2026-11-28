@@ -1,55 +1,20 @@
-//! RFC 3676 `format=flowed`: soft-wrapped plain text a flowed-aware reader
-//! reflows to the window, and any other reader still reads correctly.
-//!
-//! Three rules, in order of how often they matter:
-//!
-//! * **A soft break is a space, then a newline.** Not a marker character —
-//!   the space that already separated two words becomes the break, so
-//!   [`unwrap`] undoes it by deleting exactly the newline and keeping the
-//!   space. That is what makes wrapping and unwrapping exact inverses for
-//!   ordinary prose, rather than an approximation that loses whatever
-//!   whitespace the writer had.
-//! * **The last physical line of a paragraph carries no trailing space.**
-//!   That is a *fixed* line — RFC 3676's word for "this newline is real,
-//!   stop joining here" — and it is how a hard [`Inline::Break`] survives
-//!   the trip.
-//! * **Space-stuffing.** A line whose content would start with a space, a
-//!   `>`, or the five literal characters `From ` is ambiguous — the first
-//!   two collide with a soft-break continuation and a quote marker, the
-//!   third is the decades-old mbox escape. One space is added; every reader,
-//!   flowed-aware or not, strips exactly one on the way back in (RFC 3676
-//!   §4.4), which is why [`unwrap`] does the same unconditionally rather
-//!   than trying to guess whether stuffing actually happened.
-//!
-//! [`Inline::Break`]: crate::document::Inline::Break
+//! RFC 3676 `format=flowed`: a soft break is a space then a newline, so `unwrap` undoes `wrap`
+//! exactly for ordinary prose.
+//! The last line of a paragraph has no trailing space (a fixed line, a hard break).
+//! A line starting with a space, `>` or `From ` gets one space stuffed; `unwrap` strips exactly one
+//! unconditionally (RFC 3676 §4.4).
 
 use std::borrow::Cow;
 
-/// The wrap width the mockup (`04-format-bar-states.png`) shows, inside RFC
-/// 3676 §4.2's conventional 66–78 range.
 pub const WIDTH: usize = 72;
 
-/// Wrap one line of prose — no embedded `\n` — into `format=flowed` text.
-///
-/// `prefix` is quote depth already rendered as `>` markers (empty for
-/// unquoted text); every physical line gets it, and it counts against
-/// `width`, so a deeply quoted line still fits the terminal it names.
-///
-/// Words are split on a single space and rejoined the same way: this is
-/// exact for the prose [`Document`](crate::document::Document) actually
-/// renders, which never emits doubled spaces, but is not a general-purpose
-/// whitespace-preserving wrapper — see the module docs' first rule for why
-/// that restriction is what keeps [`unwrap`] exact rather than lossy.
-///
-/// A single word longer than the budget is never broken mid-word — it is
-/// the one case this cannot keep the terminal's own promise, and the
-/// alternative (finding a shorter word to butcher instead) is worse.
+/// `prefix` is the rendered quote depth and counts against `width`.
+/// Words split on a single space and rejoined, which is what keeps `unwrap` exact for prose with no
+/// doubled spaces.
+/// A word longer than the budget is never broken mid-word.
 pub fn wrap(text: &str, prefix: &str, width: usize) -> String {
-    // Every line but the last carries a trailing soft-break space once
-    // rendered, which is a column the reader actually sees -- reserved here
-    // unconditionally, since which line will turn out to be the last is not
-    // known until the whole paragraph has been filled. The true last line
-    // ends up, at most, one column shorter than it strictly had to be.
+    // Every line but the last carries a trailing soft-break space, reserved for all since the last
+    // is unknown until filled.
     let budget = width
         .saturating_sub(prefix.chars().count())
         .saturating_sub(1)
@@ -88,13 +53,7 @@ pub fn wrap(text: &str, prefix: &str, width: usize) -> String {
     out
 }
 
-/// The inverse of [`wrap`]: `format=flowed` text back to the one line it
-/// came from.
-///
-/// `prefix` must be the same quote-depth string `wrap` was given — it is
-/// stripped from every physical line before the rest runs. Exact for
-/// anything `wrap` produced; see the module docs for the two rules that
-/// make it so.
+/// `prefix` must be the one `wrap` was given. Exact for anything `wrap` produced.
 pub fn unwrap(flowed: &str, prefix: &str) -> String {
     flowed
         .split('\n')
@@ -106,16 +65,8 @@ pub fn unwrap(flowed: &str, prefix: &str) -> String {
         .concat()
 }
 
-/// Adds the one space RFC 3676 §4.3 asks for when `line`'s first character
-/// would otherwise be read as a soft-break continuation, a quote marker, or
-/// the mbox `From ` escape.
-///
-/// Public under a name that says what it is *for* rather than what [`wrap`]
-/// uses it for: a caller emitting a line this module never wrapped —
-/// [`crate::document`]'s `Block::Pre`, which shares the wire with flowed
-/// text but must never be reflowed — still needs the exact same escaping,
-/// since the ambiguity is about what the byte stream looks like, not about
-/// how any particular line got there.
+/// Public for lines this module never wrapped, such as a `Block::Code`, which need the same
+/// escaping.
 pub fn stuff_for_display(line: &str) -> Cow<'_, str> {
     stuff(line)
 }
@@ -203,8 +154,6 @@ mod tests {
 
     #[test]
     fn a_quote_prefix_counts_against_the_width() {
-        // At width 10 with a two-character prefix, the content budget is 8:
-        // "eight" (5) plus " nine" (5) is 10, over budget, so it wraps.
         let wrapped = wrap("eight nine", "> ", 10);
         assert_eq!(wrapped, "> eight \n> nine");
     }

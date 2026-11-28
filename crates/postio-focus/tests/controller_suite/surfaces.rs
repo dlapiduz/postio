@@ -1,13 +1,4 @@
-//! The surfaces over the list and the open message, from the controller's
-//! side (specs/009-focus-macos T054, T056, T058; contract invariants 5-7).
-//!
-//! What GTK's window did in `handle_key`, `key_context` and `reading_key`,
-//! asserted here so both frontends get it: the keys are the top surface's,
-//! Back closes what is on top before it touches the list, `j`/`k` in the
-//! open message step the list behind it, a key the message does not own is
-//! the list's (#1754), and the Mac keeps one secondary window at a time.
-
-use crate::search_support::shown;
+use crate::search_support::{shown, shown_but_the_footer};
 use postio_config::paths::Platform;
 use postio_core::{Command, CommandId, MessageTarget};
 use postio_focus::{
@@ -17,7 +8,6 @@ use postio_focus::{
 use postio_model::{MessageId, ThreadId};
 use postio_ui::keymap::KeyContext;
 
-/// A list of conversations; `drafts` are rows that open in the composer.
 struct List {
     rows: Vec<RowFacts>,
 }
@@ -92,7 +82,6 @@ fn run(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effe
     focus.handle_on(Input::Command(command), rows)
 }
 
-/// The list landed with the cursor on its first row, and `Return` opened it.
 fn reading(focus: &mut FocusController, rows: &List) -> Vec<Effect> {
     let _ = focus.landed(rows, true);
     run(focus, CommandId::OpenMessage, rows)
@@ -123,13 +112,12 @@ fn a_draft_opens_to_be_written_not_read() {
     let mut focus = mac();
     let effects = reading(&mut focus, &rows);
     assert_eq!(
-        shown(&effects),
+        shown_but_the_footer(&effects),
         vec![Intent::Composer {
             kind: postio_focus::ComposerKind::Draft,
             message: Some(MessageId::new(100))
         }]
     );
-    // The composer is the controller's surface now (slice 7).
     assert_eq!(
         focus.key_context(),
         KeyContext::Composer,
@@ -334,11 +322,77 @@ fn archive_in_the_message_moves_on_to_the_row_that_took_its_place() {
         )),
         "the archive is sent"
     );
-    // The list re-reads without the archived row.
     let after = rows.without(100);
     let effects = focus.landed(&after, false);
     assert_eq!(opened(&effects), Some(MessageId::new(101)), "the next one");
     assert_eq!(focus.key_context(), KeyContext::Reader, "still reading");
+}
+
+#[test]
+fn clearing_a_lists_mail_that_takes_the_open_message_moves_on_like_archive() {
+    let rows = List::of(4, &[]);
+    for mut focus in [linux(), mac()] {
+        let _ = reading(&mut focus, &rows);
+        let cleared = vec![MessageId::new(100), MessageId::new(102)];
+        let _ = focus.handle_on(
+            Input::Post(Command::Archive {
+                target: MessageTarget::Messages(cleared),
+            }),
+            &rows,
+        );
+        let effects = focus.landed(&rows.without(100).without(102), false);
+        assert_eq!(opened(&effects), Some(MessageId::new(101)), "the next one");
+        assert_eq!(focus.key_context(), KeyContext::Reader, "still reading");
+    }
+}
+
+#[test]
+fn a_removal_in_the_message_steps_past_a_digest_to_the_next_message() {
+    let mut rows = List::of(4, &[]);
+    rows.rows[1].digest = true;
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let _ = run(&mut focus, CommandId::Delete, &rows);
+    let effects = focus.landed(&rows.without(100), false);
+    assert_eq!(
+        opened(&effects),
+        Some(MessageId::new(102)),
+        "a digest is no message to read: {:?}",
+        shown(&effects)
+    );
+    assert_eq!(focus.key_context(), KeyContext::Reader, "still reading");
+}
+
+#[test]
+fn removing_the_last_message_before_only_digests_closes_the_message() {
+    let mut rows = List::of(3, &[]);
+    rows.rows[1].digest = true;
+    rows.rows[2].digest = true;
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let _ = run(&mut focus, CommandId::Archive, &rows);
+    let effects = focus.landed(&rows.without(100), false);
+    assert!(
+        shown(&effects).contains(&Intent::CloseSurface(SurfaceKind::Message)),
+        "nothing left to read: {:?}",
+        shown(&effects)
+    );
+}
+
+#[test]
+fn clearing_mail_the_open_message_is_not_among_leaves_it_open() {
+    let rows = List::of(4, &[]);
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let _ = focus.handle_on(
+        Input::Post(Command::Delete {
+            target: MessageTarget::Messages(vec![MessageId::new(102)]),
+        }),
+        &rows,
+    );
+    let effects = focus.landed(&rows.without(102), false);
+    assert_eq!(opened(&effects), None, "the open message stayed");
+    assert_eq!(focus.reading(), Some(MessageId::new(100)));
 }
 
 #[test]
@@ -446,8 +500,6 @@ fn back_closes_a_dialog_and_the_key_map_closes_on_its_own_key() {
         shown(&run(&mut focus, CommandId::Back, &rows)),
         vec![Intent::CloseSurface(SurfaceKind::Capture)]
     );
-    // The composer's Back is the controller's since slice 7: it closes the
-    // composer, keeping the draft.
     let _ = focus.handle_on(Input::SurfaceOpened(SurfaceKind::Composer), &rows);
     assert!(focus.answers(CommandId::Back));
     assert_eq!(
@@ -459,11 +511,6 @@ fn back_closes_a_dialog_and_the_key_map_closes_on_its_own_key() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Slice 6 (T058, T059): the reader, as GTK adopts it.
-// ---------------------------------------------------------------------------
-
-/// The timer an effect list sets, when it sets one.
 fn timer_of(effects: &[Effect]) -> Option<u64> {
     effects.iter().find_map(|effect| match effect {
         Effect::Timer { token, .. } => Some(*token),
@@ -593,17 +640,13 @@ fn first_and_last_in_the_message_show_the_first_and_last_message() {
 
 #[test]
 fn the_cursor_moving_under_an_open_message_shows_its_row() {
-    // Beside the list, a click moves the cursor and the pane follows.
     let rows = List::of(4, &[2]);
     let mut focus = linux();
     let _ = reading(&mut focus, &rows);
     let _ = focus.handle_on(Input::Point(1), &rows);
     let effects = focus.handle_on(Input::Follow, &rows);
     assert_eq!(opened(&effects), Some(MessageId::new(101)));
-    // Already showing: nothing to read again.
     assert!(shown(&focus.handle_on(Input::Follow, &rows)).is_empty());
-    // A draft is written, not read: passing over one closes the pane's
-    // message and opens no composer.
     let _ = focus.handle_on(Input::Point(2), &rows);
     let effects = focus.handle_on(Input::Follow, &rows);
     assert!(
@@ -703,4 +746,55 @@ fn dismissing_the_marker_in_the_message_is_for_the_message() {
         vec![(MessageTarget::Messages(vec![MessageId::new(101)]), true)],
         "the open message, not the selected first row"
     );
+}
+
+fn cursor_at(effects: &[Effect]) -> Option<u32> {
+    shown(effects)
+        .into_iter()
+        .rev()
+        .find_map(|intent| match intent {
+            Intent::Cursor { position, .. } => Some(position),
+            _ => None,
+        })
+}
+
+#[test]
+fn j_in_the_message_steps_past_a_digest_to_the_next_message_and_k_back() {
+    let mut rows = List::of(4, &[]);
+    rows.rows[1].digest = true;
+    for mut focus in [linux(), mac()] {
+        let _ = reading(&mut focus, &rows);
+        let effects = run(&mut focus, CommandId::NextMessage, &rows);
+        assert_eq!(
+            (opened(&effects), cursor_at(&effects)),
+            (Some(MessageId::new(102)), Some(2)),
+            "the window and the cursor go on to the message past the digest: {:?}",
+            shown(&effects)
+        );
+        let effects = run(&mut focus, CommandId::PrevMessage, &rows);
+        assert_eq!(
+            (opened(&effects), cursor_at(&effects)),
+            (Some(MessageId::new(100)), Some(0)),
+            "and k steps back past it: {:?}",
+            shown(&effects)
+        );
+        assert_eq!(focus.key_context(), KeyContext::Reader, "still reading");
+    }
+}
+
+#[test]
+fn j_in_the_message_with_only_digests_below_stays_on_the_message() {
+    let mut rows = List::of(3, &[]);
+    rows.rows[1].digest = true;
+    rows.rows[2].digest = true;
+    let mut focus = linux();
+    let _ = reading(&mut focus, &rows);
+    let effects = run(&mut focus, CommandId::NextMessage, &rows);
+    assert_eq!(
+        (opened(&effects), cursor_at(&effects)),
+        (None, None),
+        "no message below: nothing moves {:?}",
+        shown(&effects)
+    );
+    assert_eq!(focus.reading(), Some(MessageId::new(100)));
 }

@@ -1,32 +1,15 @@
-//! The write gate hands the lock to a person before a backfill. #425.
-//!
-//! `postio-session/tests/interactive_write.rs` is the end-to-end claim — an
-//! archive keystroke does not queue behind a first sync. This is the property
-//! underneath it, stated where it can be asserted without a mail server: that
-//! priority, not arrival order, decides who writes next.
-//!
-//! That is the whole reason the gate exists. SQLite's own answer to two
-//! writers is `busy_timeout`, which is a retry loop with no ordering in it at
-//! all — so "the interactive writer goes first" is not something the database
-//! can be asked for, and has to be arranged above it.
+//! Priority, not arrival order, decides who writes next (#425). `busy_timeout` is a retry loop with
+//! no ordering, so "interactive first" has to be arranged above SQLite.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use postio_storage::{WriteGate, WritePriority, test_support};
 
-/// Long enough for a task that has said it is about to block to actually be
-/// blocked. Not a performance assertion — it only establishes *arrival order*,
-/// which is the thing these tests need to be able to set up. Both tests would
-/// still be correct if it were longer; they would merely be slower.
 const ENOUGH_TO_BLOCK: Duration = Duration::from_millis(50);
 
-/// Spin until an interactive writer has registered itself.
-///
-/// `interactive_is_waiting` is the gate's own observable, and waiting on it is
-/// what lets these tests establish arrival order without a sleep. The yield is
-/// what makes it safe on a single-worker runtime: a spin loop that never
-/// awaits starves the very task it is waiting for.
+/// Waits on the gate's own observable to establish arrival order without a sleep; the yield keeps
+/// it safe on a single-worker runtime.
 async fn until_interactive_is_waiting(gate: &WriteGate) {
     while !gate.interactive_is_waiting() {
         tokio::task::yield_now().await;
@@ -34,8 +17,6 @@ async fn until_interactive_is_waiting(gate: &WriteGate) {
 }
 
 async fn gate() -> WriteGate {
-    // Through a real database, because that is how every caller reaches one
-    // and it is worth knowing the wiring is there.
     test_support::memory().await.write_gate().clone()
 }
 
@@ -44,11 +25,8 @@ async fn an_interactive_writer_goes_first_even_though_it_asked_second() {
     let gate = gate().await;
     let order: Arc<Mutex<Vec<&'static str>>> = Arc::new(Mutex::new(Vec::new()));
 
-    // Nobody writes until this is dropped, so both threads below are
-    // definitely queued rather than racing to be first.
     let blocking = gate.acquire(WritePriority::Interactive).await;
 
-    // The backfill asks first...
     let background = tokio::spawn({
         let gate = gate.clone();
         let order = Arc::clone(&order);
@@ -59,7 +37,6 @@ async fn an_interactive_writer_goes_first_even_though_it_asked_second() {
     });
     tokio::time::sleep(ENOUGH_TO_BLOCK).await;
 
-    // ...and the keystroke asks second.
     let interactive = tokio::spawn({
         let gate = gate.clone();
         let order = Arc::clone(&order);
@@ -68,9 +45,6 @@ async fn an_interactive_writer_goes_first_even_though_it_asked_second() {
             order.lock().unwrap().push("interactive");
         }
     });
-    // Observable rather than slept on: the interactive writer counts itself as
-    // waiting before it blocks, which is exactly what the background writer
-    // has to be able to see.
     until_interactive_is_waiting(&gate).await;
 
     drop(blocking);
@@ -89,10 +63,8 @@ async fn an_interactive_writer_goes_first_even_though_it_asked_second() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_background_writer_waits_for_a_queued_interactive_one() {
-    // The same property from the other side, and the one that actually bounds
-    // the wait: a background writer must not *begin* while an interactive
-    // writer is waiting. Beginning and then yielding would be yielding after
-    // taking SQLite's lock, which is too late to help.
+    // A background writer must not begin while an interactive one waits: yielding after taking
+    // SQLite's lock is too late.
     let gate = gate().await;
 
     let blocking = gate.acquire(WritePriority::Background).await;
@@ -101,8 +73,6 @@ async fn a_background_writer_waits_for_a_queued_interactive_one() {
         let gate = gate.clone();
         async move {
             let permit = gate.acquire(WritePriority::Interactive).await;
-            // Held, so the background attempt below has something to fail
-            // against rather than a lock that is merely free.
             tokio::time::sleep(ENOUGH_TO_BLOCK).await;
             drop(permit);
         }
@@ -111,8 +81,6 @@ async fn a_background_writer_waits_for_a_queued_interactive_one() {
 
     drop(blocking);
 
-    // With an interactive writer queued, this must not be granted until that
-    // one has come and gone.
     let started = std::time::Instant::now();
     let _permit = gate.acquire(WritePriority::Background).await;
     let waited = started.elapsed();
@@ -132,10 +100,8 @@ async fn a_background_writer_waits_for_a_queued_interactive_one() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn two_interactive_writers_do_not_hold_the_lock_at_once() {
-    // The gate is a lock as well as a queue: whatever the priorities, exactly
-    // one permit is outstanding at a time. Without this the sync batch and a
-    // keystroke could both be inside `BEGIN IMMEDIATE`, which is the
-    // SQLITE_BUSY that #79 was.
+    // The gate is a lock as well as a queue: two permits at once would put a sync batch and a
+    // keystroke both inside `BEGIN IMMEDIATE` (#79).
     let gate = gate().await;
     let holders = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -172,23 +138,9 @@ async fn two_interactive_writers_do_not_hold_the_lock_at_once() {
     );
 }
 
-/// A writer that asks once is served, however busy its rivals are.
-///
-/// The gate wakes **every** waiter on release and lets them race for the
-/// mutex. That was harmless while the only background writers were the
-/// occasional ones — a resync, an egress flush, a housekeeping sweep — and
-/// stopped being harmless when the body backfill started taking a permit for
-/// every body and header it writes. A folder sync's single acquisition then
-/// has to win a race against a continuous stream of them, every time, for
-/// ever.
-///
-/// Observed on a live account: a `Drafts` sync of twenty-five messages
-/// started and had not finished seven minutes later, and because a wave does
-/// not return until all of its passes do, **no other folder was ever
-/// synced** — 59,000 messages of `Archive` stayed on the server.
-///
-/// The loop below is the backfill's shape: acquire, do a little work, release,
-/// immediately ask again.
+/// The gate wakes every waiter on release, which stopped being harmless when the body backfill took
+/// a permit per body: a folder sync's single acquisition raced a continuous stream and starved. The
+/// loop is the backfill's shape.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_lone_writer_is_not_starved_by_a_busy_one() {
     let gate = gate().await;
@@ -209,8 +161,6 @@ async fn a_lone_writer_is_not_starved_by_a_busy_one() {
         }
     });
 
-    // Let the busy writer get properly under way, so the lone one arrives
-    // into real contention rather than an idle gate.
     for _ in 0..50 {
         tokio::task::yield_now().await;
     }
@@ -233,10 +183,8 @@ async fn a_lone_writer_is_not_starved_by_a_busy_one() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn the_gate_records_what_it_did_for_the_load_gate_to_read() {
-    // `test_support::gate_log` is the instrument behind the
-    // interaction-under-load gate in `postio-sync`: that suite can only
-    // assert "no background unit began while a keystroke waited" if the
-    // gate says, in order, who asked and who was served.
+    // `gate_log` is the instrument behind the interaction-under-load gate in `postio-sync`, which
+    // needs the gate to say in order who asked and who was served.
     use postio_storage::test_support::gate_log::{self, Event};
     let gate = gate().await;
     gate_log::reset();

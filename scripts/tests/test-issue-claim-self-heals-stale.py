@@ -35,8 +35,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -56,11 +54,6 @@ FIXTURE_ISSUES = [
     }
 ]
 
-# `gh issue edit ... --remove-assignee ... --remove-label in-progress` is
-# what `issue-release.sh --stale` runs to actually release an abandoned
-# claim. The stub mutates the same fixture file `gh issue list` reads, so a
-# `fetch_candidates` retry after the sweep sees the issue as GitHub would --
-# unassigned and unlabelled -- the way the real self-heal depends on.
 GH_STUB = """#!/usr/bin/env bash
 if [ "$1" = "--version" ]; then echo "gh version 2.98.0 (2026-01-01)"; exit 0; fi
 if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
@@ -167,7 +160,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         base = Path(raw)
 
-        # ── case 1: a dead claim self-heals ──────────────────────────────
         repo, stub_dir = world(base)
         dead_lock = base / "claims" / "issue-50"
         dead_lock.mkdir(parents=True)
@@ -193,7 +185,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         base = Path(raw)
 
-        # ── case 2: a live worktree is never touched ─────────────────────
         repo, stub_dir = world(base)
         live_lock = base / "claims" / "issue-50"
         live_lock.mkdir(parents=True)
@@ -224,7 +215,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
         base = Path(raw)
 
-        # ── case 3: --dry-run never mutates anything ─────────────────────
         repo, stub_dir = world(base)
         dead_lock = base / "claims" / "issue-50"
         dead_lock.mkdir(parents=True)

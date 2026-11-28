@@ -1,31 +1,3 @@
-//! What one synced message costs to write, against store size (#1587).
-//!
-//! A live first sync measured ~118 ms per row — a twenty-five row write unit
-//! held the lock for ~3 s — and the existing reproductions all came back
-//! flat: `commit_cost` (small commits vs store size), `fts_write_cost` (body
-//! index share of a header insert), `fts_merge_stall` (worst single insert
-//! against a body index). None of them walked the one path the sync actually
-//! takes: [`commit_batch`] — upsert, threading, and the `search_documents`
-//! metadata trigger with its five-column `USING fts` index — repeated until
-//! the store is *large*.
-//!
-//! So this walks it, printing ms/row as the store grows, twice: once with
-//! the search schema installed (the app's reality — `ensure_schema` runs at
-//! session open) and once without, which is the bisect. A curve that climbs
-//! with the index and stays flat without it is the answer.
-//!
-//! ```text
-//! cargo run -p postio-sync --release --example insert_cost_curve
-//! ```
-//!
-//! A third axis is the contacts a sync records beside each message
-//! (`ContactRepository::record_message`: the sighting, the person, the month
-//! and the recent ring), because specs/011-focus-contacts S5 adds writes
-//! there and the fts column is the ceiling nothing may approach. The
-//! environment's `CURVE_CEILING` shortens a run.
-//!
-//! Fixtures only: this writes, so it must never be pointed at real mail.
-
 use std::collections::BTreeSet;
 use std::time::Instant;
 
@@ -33,12 +5,8 @@ use postio_model::{Account, EmailAddress, Mailbox, Message, RfcMessageId, Uid, U
 use postio_storage::test_support;
 use postio_sync::commit_batch;
 
-/// How many messages one loop iteration commits — the network batch size the
-/// real pass uses, which `commit_batch` then cuts into write units itself.
 const BATCH: usize = 200;
 
-/// Stop a run once the store holds this many messages, unless
-/// `CURVE_CEILING` says fewer.
 const CEILING: usize = 30_000;
 
 fn ceiling() -> usize {
@@ -48,18 +16,13 @@ fn ceiling() -> usize {
         .unwrap_or(CEILING)
 }
 
-/// Report every this many rows.
 const REPORT_EVERY: usize = 1_000;
 
-/// Stop early once the cost is unambiguous: two consecutive reports over
-/// this many milliseconds per row is the live failure reproduced, and the
-/// rest of the curve is money spent proving a proven point.
 const REPRODUCED_MS: f64 = 40.0;
 
 fn synthetic(account: &Account, mailbox: &Mailbox, uid: u32) -> Message {
     let mut message = Message::new(account.id, mailbox.id, chrono::Utc::now());
-    // Sized like mail, not like a fixture: the fts index eats the subject
-    // and sender, so a two-word subject would understate it.
+    // Sized like mail: the fts index eats the subject and sender.
     message.subject = Some(format!(
         "Quarterly figures and the {uid} things still open before the review"
     ));

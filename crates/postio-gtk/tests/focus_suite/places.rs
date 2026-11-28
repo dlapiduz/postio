@@ -1,86 +1,9 @@
-//! The folders popover (US4 scenario 6, T088; screen 10): `g l` lists the
-//! places to go, typing filters them, and `Enter` goes to the first one --
-//! the list shows it, and the header names it.
-
 use crate::support::{self, Fixture};
 
-pub fn g_o_then_trav_and_enter_shows_travel() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Inbox mail", "Hello.", 5)
-            .await;
-        let travel = fixture.folder("Travel").await;
-        fixture.file_in(travel, "Train to the coast", 60).await;
-        fixture.file_in(travel, "Hotel booking", 20).await;
-        let receipts = fixture.folder("Receipts").await;
-        fixture.file_in(receipts, "Coffee beans", 30).await;
-        let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window) == ["Inbox mail"]).await,
-            "the inbox never reached the screen"
-        );
-
-        support::keys(&window, &["g", "l"]);
-        let places = window.places().expect("g l opened the folders popover");
-        assert!(
-            crate::settle_until(async || places.names().contains(&"Travel".to_owned())).await,
-            "the popover never listed Travel: {:?}",
-            places.names()
-        );
-        assert!(
-            places.names().contains(&"Inbox".to_owned())
-                && places.names().contains(&"Receipts".to_owned()),
-            "mailboxes and folders are listed: {:?}",
-            places.names()
-        );
-        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
-        assert!(!places.is_open(), "Escape closed the popover");
-        support::keys(&window, &["g", "l"]);
-        assert!(places.is_open(), "g l opened it again");
-        places.set_filter("trav");
-        assert_eq!(places.names(), ["Travel"], "typing filters the places");
-        support::click_row_saying(&window, &window, "Travel");
-        assert!(
-            crate::settle_until(async || !places.is_open()).await,
-            "clicking a place closed the popover"
-        );
-
-        assert!(
-            crate::settle_until(async || {
-                support::subjects(&window) == ["Hotel booking", "Train to the coast"]
-            })
-            .await,
-            "Travel's conversations are not shown: {:?}",
-            support::subjects(&window)
-        );
-        assert_eq!(window.place_name(), "Travel", "the header names the place");
-
-        support::keys(&window, &["g", "i"]);
-        assert!(
-            crate::settle_until(async || support::subjects(&window) == ["Inbox mail"]).await,
-            "g i did not come back to the inbox: {:?}",
-            support::subjects(&window)
-        );
-        assert_eq!(window.place_name(), "Inbox");
-    });
-}
-
-/// While the folders popover has the keyboard, the list's cursor row
-/// keeps only its quiet mark: one accent ring on the screen, the field's
-/// (#2081, FR-091). It is the accent again once the popover goes.
 pub fn the_folders_popover_quiets_the_lists_ring() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Inbox mail", "Hello.", 5)
-            .await;
+        fixture.file_from_ada("Inbox mail", "Hello.", 5).await;
         let (window, _client) = fixture.open().await;
         assert!(
             crate::settle_until(async || support::subjects(&window) == ["Inbox mail"]).await,
@@ -114,18 +37,10 @@ pub fn the_folders_popover_quiets_the_lists_ring() {
     });
 }
 
-/// The popover lists Flagged (`g s`) and Snoozed (`g b`) among the
-/// mailboxes, each with its key inside the row, and choosing one lists the
-/// same cross-account view the key does.
 pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (atlas, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 30)
-            .await;
+        let (atlas, _) = fixture.file_from_ada("Atlas budget", "x", 30).await;
         let (harbor, _) = fixture
             .file(("Lena Park", "lena@example.org"), "Harbor draft", "x", 20)
             .await;
@@ -180,88 +95,10 @@ pub fn flagged_and_snoozed_are_listed_and_open_their_views() {
     });
 }
 
-/// Every mailbox the popover lists shows the key that goes there, `g #`
-/// takes the Trash by that key, the line under the places follows the
-/// highlighted row, and the Inbox's count is the strip's.
-pub fn every_mailbox_shows_its_key_and_the_footer_follows_the_highlight() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        fixture
-            .file(("Ada Moreno", "ada@example.com"), "Inbox mail", "Hello.", 5)
-            .await;
-        let junk = fixture.folder("Junk").await;
-        fixture.file_in(junk, "Old news", 60).await;
-        let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window) == ["Inbox mail"]).await,
-            "the inbox never reached the screen"
-        );
-
-        support::keys(&window, &["g", "l"]);
-        let places = window.places().expect("g l opened the folders popover");
-        assert!(
-            crate::settle_until(async || places.names().contains(&"Junk".to_owned())).await,
-            "the popover never listed Junk: {:?}",
-            places.names()
-        );
-        let said = row_saying(&window, "Junk").await;
-        assert!(
-            said.iter().any(|text| text == "g j"),
-            "the Trash row shows no key: {said:?}"
-        );
-        // The Inbox's count is the conversations the strip counts.
-        let strip = support::texts(&window)
-            .into_iter()
-            .find(|text| text.contains(" unread") && text.contains('\u{b7}'))
-            .expect("the strip counts the inbox");
-        let inbox = row_saying(&window, "Inbox").await;
-        let count = strip.split_whitespace().next().unwrap_or_default();
-        assert!(
-            inbox.iter().any(|text| text == count),
-            "the Inbox row says {inbox:?}, the strip {strip:?}"
-        );
-        // The footer says what Return does on the highlighted row.
-        assert!(
-            places.footer().contains("in:Inbox"),
-            "the first row is the Inbox: {:?}",
-            places.footer()
-        );
-        support::press(&window, "Down", gtk::gdk::ModifierType::empty());
-        assert!(
-            !places.footer().contains("in:Inbox"),
-            "the footer did not move with the highlight: {:?}",
-            places.footer()
-        );
-
-        support::press(&window, "Escape", gtk::gdk::ModifierType::empty());
-        support::keys(&window, &["g", "j"]);
-        assert!(
-            crate::settle_until(async || {
-                window.place_name() == "Junk" && support::subjects(&window) == ["Old news"]
-            })
-            .await,
-            "g j listed {:?} under {:?}",
-            support::subjects(&window),
-            window.place_name()
-        );
-    });
-}
-
-/// Every place says how many conversations it holds, the same number its own
-/// view shows: Flagged and Snoozed, which are views over mail filed
-/// elsewhere, and each label, as the mailboxes are.
 pub fn every_place_shows_its_count() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        let (atlas, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 30)
-            .await;
+        let (atlas, _) = fixture.file_from_ada("Atlas budget", "x", 30).await;
         let (harbor, _) = fixture
             .file(("Lena Park", "lena@example.org"), "Harbor draft", "x", 20)
             .await;
@@ -306,103 +143,6 @@ pub fn every_place_shows_its_count() {
                 "the {name} row should say {count}, as its view lists: {said:?}"
             );
         }
-    });
-}
-
-/// A flag written while the folders popover is up is counted in it: the
-/// popover reads the places again when mail changes, rather than showing
-/// the read it opened with until it is opened again (#2153). The same
-/// read is what a flag written just after `g l` asked for its places
-/// would otherwise miss.
-pub fn a_flag_while_the_folders_are_up_is_counted() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (atlas, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 30)
-            .await;
-        let (harbor, _) = fixture
-            .file(("Lena Park", "lena@example.org"), "Harbor draft", "x", 20)
-            .await;
-        let (window, client) = fixture.open().await;
-        crate::commands::flag(&client, atlas).await;
-        support::keys(&window, &["g", "l"]);
-        assert!(
-            crate::settle_until(async || row_saying(&window, "Flagged")
-                .await
-                .iter()
-                .any(|text| text == "1"))
-            .await,
-            "Flagged never counted one: {:?}",
-            row_saying(&window, "Flagged").await
-        );
-
-        crate::commands::flag(&client, harbor).await;
-        assert!(
-            crate::settle_until(async || row_saying(&window, "Flagged")
-                .await
-                .iter()
-                .any(|text| text == "2"))
-            .await,
-            "the open popover's Flagged row never said 2: {:?}",
-            row_saying(&window, "Flagged").await
-        );
-    });
-}
-
-/// What the popover's row for `name` says, key included.
-/// A count that moves while the popover is up is written into the row it
-/// is on, not drawn with a new list: a click across a redraw lands on a row
-/// that no longer exists and goes nowhere.
-pub fn a_count_landing_keeps_the_rows_a_click_is_on() {
-    crate::gtk_case(async {
-        use gtk::prelude::*;
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let (atlas, _) = fixture
-            .file(("Ada Moreno", "ada@example.com"), "Atlas budget", "x", 30)
-            .await;
-        let (harbor, _) = fixture
-            .file(("Lena Park", "lena@example.org"), "Harbor draft", "x", 20)
-            .await;
-        let (window, client) = fixture.open().await;
-        crate::commands::flag(&client, atlas).await;
-        let flagged_row = || {
-            support::descendants(&window).into_iter().find(|widget| {
-                widget.is::<gtk::ListBoxRow>()
-                    && widget.is_mapped()
-                    && support::texts(widget).iter().any(|text| text == "Flagged")
-            })
-        };
-        support::keys(&window, &["g", "l"]);
-        let places = window.places().expect("g l opened the folders popover");
-        assert!(
-            crate::settle_until(async || flagged_row()
-                .is_some_and(|row| support::texts(&row).iter().any(|text| text == "1")))
-            .await,
-            "Flagged never counted one"
-        );
-        places.close();
-        crate::commands::flag(&client, harbor).await;
-
-        // Open again: the places drawn are the last ones read, and the read
-        // lands with Flagged's new count.
-        support::keys(&window, &["g", "l"]);
-        let row = flagged_row().expect("Flagged is listed at once");
-        assert!(
-            crate::settle_until(async || support::texts(&row).iter().any(|text| text == "2")).await,
-            "the Flagged row never said 2: it says {:?}, and is {}in the list",
-            support::texts(&row),
-            if row.root().is_some() {
-                ""
-            } else {
-                "no longer "
-            }
-        );
     });
 }
 

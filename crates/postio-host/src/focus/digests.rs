@@ -1,6 +1,4 @@
-//! What the digest window reads (spec 007 T137): the messages a delivery
-//! holds, as list rows. Two reads: the holds, through their delivery's
-//! index, and the rows in one batch.
+//! Reads for the digest window: the held messages as list rows.
 
 use postio_model::DeliveryId;
 use postio_model::listing::{MessageSummary, StoreError};
@@ -8,7 +6,6 @@ use postio_storage::repository::DigestRepository;
 
 use crate::Inner;
 
-/// Which of `messages` a digest holds, and for which rule.
 pub(crate) async fn held(
     inner: &Inner,
     messages: &[postio_model::MessageId],
@@ -17,14 +14,12 @@ pub(crate) async fn held(
     Ok(DigestRepository::new(&reader).held(messages).await?)
 }
 
-/// How many messages each of `rules` holds now, in their order.
 pub(crate) async fn waiting(inner: &Inner, rules: &[String]) -> Result<Vec<u32>, StoreError> {
     let reader = inner.wiring.database.read().await?;
     let names: Vec<&str> = rules.iter().map(String::as_str).collect();
     Ok(DigestRepository::new(&reader).waiting(&names).await?)
 }
 
-/// What `delivery` holds, newest first.
 pub(crate) async fn delivery_messages(
     inner: &Inner,
     delivery: DeliveryId,

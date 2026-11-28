@@ -1,5 +1,3 @@
-//! The JSON-RPC and MCP framing every client relies on.
-
 use serde_json::json;
 
 use crate::harness::{INBOX_ONLY, World};

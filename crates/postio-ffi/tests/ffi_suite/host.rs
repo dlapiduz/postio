@@ -1,19 +1,9 @@
-//! A verb issued through the boundary reaches the store (docs/archive/specs/005-tui-frontend
-//! T019, ADR 0041).
-//!
-//! A session opened the ordinary way -- no bus supplied by the caller -- used
-//! to wire a handler that took every command and dropped it, so `invoke`
-//! reached nothing: the macOS app's `a` archived nothing at all. The session
-//! is a client of `postio-host` now, and its commands run on the host's verbs
-//! over the store it opened. These hold that, with no bus of the test's own.
-
 use chrono::Utc;
 use postio_ffi::{Session, SessionOptions};
 use postio_model::{Mailbox, MailboxRole, Message};
 use postio_storage::repository::{MailboxRepository, MessageRepository};
 use postio_storage::test_support;
 
-/// Where the store says `message` lives now.
 async fn home_of(database: &postio_storage::Store, message: i64) -> Option<i64> {
     let connection = database.connect().await.expect("a connection");
     MessageRepository::new(&connection)
@@ -43,11 +33,8 @@ async fn archiving_through_the_boundary_moves_the_message() {
         (inbox, archive.id.get(), message.id.get())
     };
 
-    // No `on_bridge`: the bus is whatever the session wires for itself,
-    // which is what `Session::open_at` -- the Swift constructor -- gets.
     let session =
         Session::open(SessionOptions::in_memory_with(database.clone())).expect("a session");
-    // The message is the inbox's one row, and the cursor opens on it.
     crate::focus::cursor_on_the_first_row(&session).await;
     session.invoke("archive");
 

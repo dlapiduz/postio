@@ -1,14 +1,10 @@
-//! `[reader]` — how the reading pane draws a message (spec 006).
-
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{Extras, Result};
 
-/// Every zoom step, in percent (spec 006 FR-021): a value off the list
-/// clamps to the nearest one, because the file is edited by hand.
+/// A value off the list clamps to the nearest step, because the file is edited by hand.
 pub const ZOOM_STEPS: [u16; 13] = [50, 67, 75, 80, 90, 100, 110, 125, 150, 175, 200, 250, 300];
 
-/// The step nearest `percent`; below the first or above the last, the end.
 pub fn nearest_zoom(percent: u16) -> u16 {
     *ZOOM_STEPS
         .iter()
@@ -16,18 +12,10 @@ pub fn nearest_zoom(percent: u16) -> u16 {
         .expect("the steps are not empty")
 }
 
-/// The `[reader]` section.
-///
-/// ```toml
-/// [reader]
-/// zoom = 100   # percent: 50 67 75 80 90 100 110 125 150 175 200 250 300
-/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReaderConfig {
-    /// How large messages are drawn, in percent; one of [`ZOOM_STEPS`].
     #[serde(default = "hundred", deserialize_with = "stepped")]
     pub zoom: u16,
-    /// Keys this version of Postio does not know, preserved verbatim.
     #[serde(flatten)]
     pub extra: Extras,
 }
@@ -50,9 +38,6 @@ impl Default for ReaderConfig {
     }
 }
 
-/// Write `[reader] zoom = percent` to the file at `path`, touching only
-/// `[reader]`; a file that already says so is left alone. Both desktop apps
-/// keep a zoom a person chose this way (spec 006 FR-021, spec 007 T242).
 pub fn save_zoom(path: &std::path::Path, percent: u16) -> Result<()> {
     let original = std::fs::read_to_string(path).unwrap_or_default();
     let mut config = crate::Config::from_toml_str(&original).unwrap_or_default();
@@ -64,8 +49,6 @@ pub fn save_zoom(path: &std::path::Path, percent: u16) -> Result<()> {
     crate::Config::write_text_to_path(&patched, path)
 }
 
-/// Rewrites `text`'s `[reader]` table to match `reader`, leaving every
-/// other section and its comments untouched -- `patch_ui`'s tradeoff.
 pub fn patch_reader(text: &str, reader: &ReaderConfig) -> Result<String> {
     crate::splice::replace_section(text, "reader", &ReaderOnly { reader })
 }

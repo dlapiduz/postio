@@ -1,26 +1,6 @@
-//! One binary for `postio-storage`'s integration tests.
-//!
-//! 24 files became 24 executables, because cargo gives every file
-//! in `tests/` its own. Each links SQLCipher, the model and this crate --
-//! **54 MB apiece** -- and linking is where this workspace's test
-//! time goes: ~3,000 tests execute in 108s inside a `cargo test` step that
-//! takes ~497s (#841).
-//!
-//! Nothing here touches GTK, so unlike a suite that needs a display, this keeps
-//! libtest's ordinary harness and its thread pool. The cases were already
-//! running in parallel *within* each of the old binaries; they now do so
-//! across all of them, which is the same guarantee and one link.
-//!
-//! **A case that needs its own process does not belong here.** None of these
-//! set a process-global -- no `set_var`, no `#![...]` crate attributes -- and
-//! that was checked before they were merged rather than assumed. A test that
-//! grows one has to move back out, or it will change what its neighbours see.
-//!
-//! A case that only *reads* something the process shares -- a count every
-//! thread adds to, a slot the last session to open filled, a log callsite --
-//! is no setter, and still sees its neighbours under `cargo test`. It starts
-//! with `postio_test_support::alone!`, which gives it a process of its own
-//! wherever it does not already have one (#1976).
+//! One binary for the storage tests: linking is where the workspace's test time goes (#841). A case
+//! that sets a process-global must move out; one that only reads shared process state starts with
+//! `postio_test_support::alone!` (#1976).
 
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 
@@ -30,6 +10,7 @@ mod blob;
 mod blob_encryption;
 mod body_failures;
 mod bulk;
+mod calendar;
 mod cold_jump_cost;
 mod concurrent_open;
 mod connections;
@@ -72,6 +53,7 @@ mod mailbox_roles;
 mod mailbox_size;
 mod mailboxes;
 mod markers;
+mod measurement;
 mod messages;
 mod migrations;
 mod operations;

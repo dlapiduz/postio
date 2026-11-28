@@ -4,10 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The Contacts view's model (specs/011-focus-contacts S7, handoff screens 01
-/// to 03). The controller says what the frame, the rows and the card are;
-/// the Mac keeps none of it, asks for a row at a time and sends back a click
-/// on a tab, a row, a button or the filter.
 @MainActor
 struct ContactsModelTests {
     final class Engine: ContactsEngine {
@@ -125,8 +121,6 @@ struct ContactsModelTests {
         #expect(model.filterRequest == asked + 1)
     }
 
-    // MARK: the Edit contact form (specs/011-focus-contacts S8)
-
     nonisolated static func form(given: String = "Ada", armed: String? = nil) -> ContactEditViewFfi {
         ContactEditViewFfi(
             title: "Editing Ada Moreno", note: "saved in Postio",
@@ -192,8 +186,6 @@ struct ContactsModelTests {
         model.apply(.focusCloseSurface(kind: .contacts))
         #expect(model.edit == nil)
     }
-
-    // MARK: the merge sheet (specs/011-focus-contacts S10)
 
     nonisolated static func sheet(kept: Int = 0) -> MergeSheetViewFfi {
         let avatar = AvatarFfi(text: "AM", rgb: 0xb0624a, round: true)

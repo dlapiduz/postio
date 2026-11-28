@@ -1,16 +1,9 @@
-//! Size parsing for `larger:` and `smaller:`.
-//!
-//! `larger:1M` is the canvas spelling. Suffixes are binary, matching the way
-//! mail clients and file managers report message sizes: `K` is 1024 bytes, `M`
-//! is 1024 K, `G` is 1024 M. A bare number is bytes. Fractions are allowed
-//! (`1.5M`), and the `B` in `MB` is optional.
-//!
-//! Anything else — `larger:`, `larger:big`, `larger:1X` — returns `None`, which
-//! the parser turns into a [`crate::query::Partial`] rather than an error.
+//! Size parsing for `larger:` and `smaller:`: binary suffixes (`K` is 1024 bytes), fractions
+//! allowed (`1.5M`), the `B` in `MB` optional. Anything else is `None`, which the parser turns into
+//! a [`crate::query::Partial`].
 
 const KIB: f64 = 1024.0;
 
-/// Parses a size value into bytes. Returns `None` for anything unrecognized.
 pub(crate) fn parse_size(value: &str) -> Option<u64> {
     let value = value.trim();
     if value.is_empty() {

@@ -1,20 +1,3 @@
-//! Search across accounts, and the `account:` operator. #186.
-//!
-//! ADR 0005 Q5's rule is that scope is a filter on the executor and never a
-//! change to the query language: **the same query string means the same thing
-//! in either scope.** These tests are the differential form of that claim —
-//! one string, two scopes, and the difference is only ever which accounts'
-//! mail is eligible.
-//!
-//! # Two orthogonal scopes, not one enum
-//!
-//! `SearchRequest` carries a role scope (`facets::Scope` — the tri-tab's
-//! `AllMail`/`Inbox`/`Lists`) *and* an account scope (`AccountScope`). #186
-//! chose that over folding account into the role enum, because one enum holds
-//! one value and "Inbox, this account only" would have stopped being
-//! expressible. The test that matters for the choice is
-//! [`a_role_scope_and_an_account_scope_compose`], which asks for exactly that.
-
 use super::executor::at;
 use chrono::Utc;
 use postio_index::{SearchRequest, search};
@@ -42,8 +25,6 @@ async fn message(
     message
 }
 
-/// Two accounts, each with an inbox and an archive, each holding one message
-/// whose subject carries the same word.
 struct World {
     _database: postio_storage::Store,
     connection: postio_storage::Checkout,
@@ -54,11 +35,6 @@ struct World {
     work_archive_message: Message,
 }
 
-/// An account with its own name and address.
-///
-/// `test_support::account` gives every account the same "Test" /
-/// `test@example.com`, which is fine for one and useless for two: half of
-/// what these tests assert is that `account:` picks *this* one out.
 async fn named_account(
     connection: &Connection,
     display_name: &str,
@@ -133,8 +109,6 @@ async fn run(
 
 #[tokio::test]
 async fn the_same_query_string_means_the_same_thing_in_both_scopes() {
-    // ADR 0005 Q5's rule, stated as a difference. Nothing about the string
-    // changes; the eligible set does.
     let world = world().await;
 
     let unified = run(&world, "quarterly", Scope::AllMail, AccountScope::Unified).await;
@@ -168,10 +142,6 @@ async fn the_same_query_string_means_the_same_thing_in_both_scopes() {
 
 #[tokio::test]
 async fn a_role_scope_and_an_account_scope_compose() {
-    // The reason #186 kept them as two fields. Under a single enum with
-    // `Account` as a fourth variant, this query could not be asked at all:
-    // one enum holds one value, so "Inbox" and "this account" would have been
-    // mutually exclusive.
     let world = world().await;
 
     let both = run(
@@ -188,9 +158,6 @@ async fn a_role_scope_and_an_account_scope_compose() {
          scopes"
     );
 
-    // And the role predicate is unchanged when the account one is absent —
-    // "every account's inbox", which is a predicate removal and not a
-    // redefinition (ADR 0005 Q5a).
     let every_inbox = run(&world, "quarterly", Scope::Inbox, AccountScope::Unified).await;
     assert_eq!(every_inbox.len(), 2, "{every_inbox:?}");
     assert!(every_inbox.contains(&world.work_inbox_message.id));
@@ -203,8 +170,6 @@ async fn a_role_scope_and_an_account_scope_compose() {
 
 #[tokio::test]
 async fn the_account_operator_pins_a_search_to_one_account_from_inside_the_query() {
-    // What makes a saved search portable (ADR 0005 Q12): the string carries
-    // the account, so it means the same thing run from any scope.
     let world = world().await;
 
     let by_name = run(
@@ -221,7 +186,6 @@ async fn the_account_operator_pins_a_search_to_one_account_from_inside_the_query
     );
     assert!(!by_name.contains(&world.home_inbox_message.id));
 
-    // By address too — the name a person is most likely to remember.
     let by_address = run(
         &world,
         &format!("quarterly account:{}", world.home.address.address),
@@ -248,9 +212,8 @@ async fn a_negated_account_operator_means_every_other_account() {
 
 #[tokio::test]
 async fn an_account_that_names_nothing_matches_nothing_rather_than_everything() {
-    // The failure mode worth naming: an unresolvable name must not silently
-    // drop the predicate, which would turn "account:typo" into an unscoped
-    // search — the same class of lie ADR 0005 Q10 forbids of aggregate views.
+    // An unresolvable name must not silently drop the predicate, which would turn `account:typo`
+    // into an unscoped search (ADR 0005 Q10).
     let world = world().await;
 
     let nothing = run(
@@ -267,17 +230,8 @@ async fn an_account_that_names_nothing_matches_nothing_rather_than_everything() 
     );
 }
 
-/// ADR 0005 Q10: a disabled account is not searched.
-///
-/// `AccountScope::Unified` documents itself as "every **enabled** account at
-/// once", and the executor's Unified path is a predicate *removal* — the
-/// account conjunct simply is not pushed — so without a positive filter it
-/// reaches every account in the store, disabled ones included.
-///
-/// That was invisible while nothing in the application could construct
-/// `Unified` (#961). It stops being invisible the moment something does, and
-/// the failure is the quiet kind: mail from an account the user switched off
-/// appearing in a result list, with no row telling them where it came from.
+/// `Unified` is every enabled account: removing the account predicate alone would reach a disabled
+/// account's mail with no row saying where it came from (ADR 0005 Q10, #961).
 #[tokio::test]
 async fn a_disabled_account_is_not_searched_under_the_unified_scope() {
     let world = world().await;
@@ -306,9 +260,6 @@ async fn a_disabled_account_is_not_searched_under_the_unified_scope() {
 
 #[tokio::test]
 async fn a_pending_deletion_account_is_not_searched_either() {
-    // The other half of what `list_enabled` means. An account being removed
-    // still has its rows until the sweep finishes; a search that showed them
-    // would be showing mail from an account the user has already deleted.
     let world = world().await;
     world
         .connection
@@ -329,9 +280,8 @@ async fn a_pending_deletion_account_is_not_searched_either() {
 
 #[tokio::test]
 async fn naming_a_disabled_account_explicitly_still_searches_it() {
-    // The scope is a *view* filter, not an authorisation one. Settings can
-    // still show what a disabled account holds, and `AccountScope::Account`
-    // is how it asks — so the enabled filter belongs to Unified alone.
+    // The scope is a view filter, not an authorisation one: settings can still show what a disabled
+    // account holds, so the enabled filter belongs to Unified alone.
     let world = world().await;
     world
         .connection

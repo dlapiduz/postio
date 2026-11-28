@@ -1,15 +1,5 @@
-//! The composer: one draft being written, in Markdown (US3).
-//!
-//! Modeless, like every text box the person has used before (FR-022a): a
-//! key that is not a composer command is typed. Commands still resolve --
-//! the keymap is asked with `in_text_entry`, which lets a chord with a
-//! modifier through and hands a plain key back -- so `a` is a letter here,
-//! never Archive.
-//!
-//! The body is kept as the Markdown typed. What is sent is derived from it
-//! on every save (data-model.md, Composer): the text part is that Markdown
-//! (FR-021), the HTML part is its rendering, and a body with nothing to
-//! style sends no HTML at all.
+//! One draft being written, in Markdown. Modeless: a plain key is typed, so `a` is a letter here,
+//! never Archive. What is sent is derived from the Markdown on every save.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use postio_body::{Block, Document, Inline, Presentation, markdown};
@@ -20,50 +10,79 @@ use ratatui_textarea::TextArea;
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
 
-/// Which part of the composer the keyboard is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
-    /// Which of the account's addresses it goes from, when it has several.
     From,
-    /// `To`.
     To,
-    /// `Cc`, once shown.
     Cc,
-    /// `Bcc`, once shown.
     Bcc,
-    /// The subject.
     Subject,
-    /// The body.
     Body,
 }
 
-/// The desktop composer's formatting commands, as the Markdown they stand
-/// for in this one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Format {
-    /// `**…**`.
     Bold,
-    /// `*…*`.
     Italic,
-    /// `# ` at the start of the line.
-    Heading1,
-    /// `- ` at the start of the line.
+    Strikethrough,
+    InlineCode,
+    Heading(u8),
+    NormalText,
+    CodeBlock,
+    TaskList,
+    ToggleTask,
+    Indent,
+    Outdent,
+    Divider,
+    Table,
+    ClearFormatting,
     BulletList,
-    /// `1. ` at the start of the line.
     NumberedList,
-    /// `> ` at the start of the line.
     Quote,
-    /// `[…](…)`.
     Link,
 }
 
-/// One draft being written.
+impl Format {
+    /// `None` for a command the body does not answer.
+    pub fn for_command(id: &str) -> Option<Self> {
+        Some(match id {
+            "bold" => Format::Bold,
+            "italic" => Format::Italic,
+            "strikethrough" => Format::Strikethrough,
+            "inline_code" => Format::InlineCode,
+            "heading_1" => Format::Heading(1),
+            "heading_2" => Format::Heading(2),
+            "heading_3" => Format::Heading(3),
+            "heading_4" => Format::Heading(4),
+            "heading_5" => Format::Heading(5),
+            "heading_6" => Format::Heading(6),
+            "normal_text" => Format::NormalText,
+            "bullet_list" => Format::BulletList,
+            "numbered_list" => Format::NumberedList,
+            "quote_block" => Format::Quote,
+            "insert_link" => Format::Link,
+            "code_block" => Format::CodeBlock,
+            "task_list" => Format::TaskList,
+            "toggle_task" => Format::ToggleTask,
+            "indent" => Format::Indent,
+            "outdent" => Format::Outdent,
+            "divider" => Format::Divider,
+            "table" => Format::Table,
+            "clear_formatting" => Format::ClearFormatting,
+            _ => return None,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Remote {
+    Downloading,
+    Refused(postio_ui::compose::RemoteRefusal),
+}
+
 pub struct Composer {
-    /// Which composition this is, for the host's draft writer: a save made
-    /// before the previous one's id came back still updates the same row.
+    /// A save made before the last one's id came back still updates the same row.
     generation: u64,
-    /// The draft as it was opened; what the fields do not hold comes from
-    /// here (account, kind, what it answers, its id once saved).
     draft: Draft,
     to: Input,
     cc: Input,
@@ -71,28 +90,20 @@ pub struct Composer {
     subject: Input,
     body: TextArea<'static>,
     field: Field,
-    /// Whether `Cc` and `Bcc` are shown. Shown from the start when the draft
-    /// already has some, so reopening one never hides a recipient.
+    /// Shown from the start when the draft has some, so reopening one never hides a recipient.
     extra_recipients: bool,
-    /// A reply's quote or a forward's message, sent after what is typed.
     quote: Vec<Block>,
-    /// The addresses the account can send as.
     identities: Vec<postio_model::Identity>,
-    /// Which of them this goes from.
     identity: usize,
-    /// How many times what would be saved has changed, so a save that was
-    /// asked for before the last edit knows it is stale.
+    /// A save asked for before the last edit knows it is stale.
     edits: u64,
-    /// The first body line the last frame showed: the textarea's own
-    /// scroll, mirrored, since it does not say where it scrolled to.
+    remote: std::collections::HashMap<String, Remote>,
+    /// The textarea does not say where it scrolled to, so its scroll is mirrored.
     body_top: std::cell::Cell<u16>,
-    /// How many lines the last frame showed of it.
     body_height: std::cell::Cell<u16>,
-    /// Who the recipient being typed could be, best first.
     suggestions: Vec<RecipientCandidate>,
-    /// The suggestion the keyboard is on.
     suggestion: usize,
-    /// What was last looked up, so an answer for anything else is dropped.
+    /// An answer for anything else is dropped.
     asking: Option<String>,
 }
 
@@ -107,16 +118,10 @@ impl std::fmt::Debug for Composer {
 }
 
 impl Composer {
-    /// A composer holding `draft`, as composition `generation`.
-    ///
-    /// The body reopens from the Markdown it was typed in when there is some,
-    /// and otherwise from its HTML, translated (data-model.md,
-    /// `drafts.body_markdown`), and otherwise from its text.
+    /// The body reopens from its Markdown, else from its HTML translated, else from its text.
     pub fn new(generation: u64, draft: Draft) -> Self {
-        // A reply's quote -- and a forward's message -- is kept whole and
-        // apart from what is typed (data-model.md, Composer): it is somebody
-        // else's HTML, carried as the desktop carries it (ADR 0033), and
-        // Markdown would narrow it. Everything from the first quote on is it.
+        // A quote is somebody else's HTML, kept whole and apart from what is typed: Markdown would
+        // narrow it (ADR 0033).
         let document = draft.body.html.as_deref().map(postio_body::parse);
         let (head, quote) = match document {
             Some(document) => {
@@ -137,18 +142,14 @@ impl Composer {
             (None, None, Some(text)) => text.clone(),
             (None, None, None) => String::new(),
         };
-        // Through `SafeText`, every one: a reply's subject and quoted
-        // addresses are copied from received mail, and whatever a composer
-        // holds is drawn (FR-043). A control character has no business in a
-        // draft, so it is not kept to be sent either.
+        // Received subject and addresses are drawn, so control characters are dropped before
+        // sending.
         let safe = |text: &str| SafeText::new(text).as_str().to_owned();
         let lines: Vec<String> = markdown.split('\n').map(safe).collect();
         let line = |addresses: &[postio_model::EmailAddress]| {
             Input::default().with_value(safe(&postio_model::address::format_list(addresses)))
         };
         let extra_recipients = !draft.cc.is_empty() || !draft.bcc.is_empty();
-        // Where a person picks up: an address first when there is none, the
-        // body when the message is already addressed -- a reply is.
         let field = if draft.to.is_empty() {
             Field::To
         } else {
@@ -162,8 +163,6 @@ impl Composer {
             subject: Input::default().with_value(safe(&draft.subject)),
             body: {
                 let mut body = TextArea::new(lines);
-                // No underline under the cursor's line: a message body is not
-                // a code editor.
                 body.set_cursor_line_style(ratatui::style::Style::default());
                 body
             },
@@ -173,6 +172,7 @@ impl Composer {
             identities: Vec::new(),
             identity: 0,
             edits: 0,
+            remote: std::collections::HashMap::new(),
             body_top: std::cell::Cell::new(0),
             body_height: std::cell::Cell::new(0),
             suggestions: Vec::new(),
@@ -182,10 +182,7 @@ impl Composer {
         }
     }
 
-    /// The same composer, sending as one of `identities`: the one the draft
-    /// names (a reply answers as the address it was sent to), else the
-    /// account's default. With more than one, a new message starts by
-    /// showing which.
+    /// With several identities, a new message starts on From.
     pub fn with_identities(mut self, identities: Vec<postio_model::Identity>) -> Self {
         self.identity = self
             .draft
@@ -200,42 +197,37 @@ impl Composer {
         self
     }
 
-    /// Whether there is a choice of address to send as.
     pub fn shows_identities(&self) -> bool {
         self.identities.len() > 1
     }
 
-    /// How many lines the kept quote is, for its folded summary; none when
-    /// there is no quote.
     pub fn quote_lines(&self) -> usize {
         quote_text(&self.quote).lines().count()
     }
 
-    /// Which composition this is.
+    pub fn quote(&self) -> String {
+        quote_text(&self.quote)
+    }
+
     pub fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// Where the keyboard is.
     pub fn field(&self) -> Field {
         self.field
     }
 
-    /// Whether `Cc` and `Bcc` are shown.
     pub fn shows_extra_recipients(&self) -> bool {
         self.extra_recipients
     }
 
-    /// Show `Cc` and `Bcc`, and put the keyboard in `Cc`.
     pub fn show_extra_recipients(&mut self) {
         self.extra_recipients = true;
         self.field = Field::Cc;
     }
 
-    /// `copy_fields`: raise `Cc` and `Bcc`, or put them away again -- only
-    /// while both are empty, since a hidden row still holding an address
-    /// would still send to it, unseen. Refused, the keyboard goes to `Cc`,
-    /// so the refusal shows.
+    /// Only while both are empty: a hidden row holding an address would still send to it. Refused,
+    /// the keyboard goes to `Cc`, so the refusal shows.
     pub fn toggle_copy_fields(&mut self) {
         let empty = self.cc.value().trim().is_empty() && self.bcc.value().trim().is_empty();
         if !self.extra_recipients || !empty {
@@ -248,93 +240,115 @@ impl Composer {
         }
     }
 
-    /// Apply `format` in the body: around the selection, or as a pair to
-    /// type into, or to the line the caret is on. Answers whether anything
-    /// changed; outside the body nothing does.
+    /// Answers whether anything changed; outside the body nothing does.
     pub fn format(&mut self, format: Format) -> bool {
         if self.field != Field::Body {
             return false;
         }
+        use postio_ui::editor::markdown_edit as edit;
         match format {
-            Format::Bold => self.wrap("**", "**"),
-            Format::Italic => self.wrap("*", "*"),
-            Format::Link => {
-                let words = self.take_selection();
-                if words.is_empty() {
-                    self.body.insert_str("[]()");
-                    self.back(3);
-                } else {
-                    self.body.insert_str(format!("[{words}]()"));
-                    self.back(1);
-                }
-            }
-            Format::Heading1 => self.toggle_prefix("# "),
-            Format::BulletList => self.toggle_prefix("- "),
-            Format::NumberedList => self.toggle_prefix("1. "),
-            Format::Quote => self.toggle_prefix("> "),
+            Format::Bold => self.apply(|text, at| edit::wrap(text, at, "**", "**")),
+            Format::Italic => self.apply(|text, at| edit::wrap(text, at, "*", "*")),
+            Format::Link => self.apply(edit::link),
+            Format::Strikethrough => self.apply(edit::strikethrough),
+            Format::InlineCode => self.apply(edit::inline_code),
+            Format::Heading(level) => self.apply(|text, at| edit::heading(text, at, level)),
+            Format::NormalText => self.apply(edit::normal_text),
+            Format::CodeBlock => self.apply(edit::code_block),
+            Format::TaskList => self.apply(edit::task_list),
+            Format::ToggleTask => self.apply(edit::toggle_task),
+            Format::Indent => self.apply(edit::indent),
+            Format::Outdent => self.apply(edit::outdent),
+            Format::Divider => self.apply(edit::divider),
+            Format::Table => self.apply(edit::table),
+            Format::ClearFormatting => self.apply(edit::clear_formatting),
+            Format::BulletList => self.apply(|text, at| edit::toggle_prefix(text, at, "- ")),
+            Format::NumberedList => self.apply(|text, at| edit::toggle_prefix(text, at, "1. ")),
+            Format::Quote => self.apply(|text, at| edit::toggle_prefix(text, at, "> ")),
         }
         self.edits += 1;
         true
     }
 
-    /// The selected words, taken out of the body; nothing when there is no
-    /// selection. The yank buffer is left as it was.
-    fn take_selection(&mut self) -> String {
-        match self.body.selection_range() {
-            Some((start, end)) if start != end => {
-                let yanked = self.body.yank_text();
-                self.body.cut();
-                let words = self.body.yank_text();
-                self.body.set_yank_text(yanked);
-                words
+    /// Only the span that changed is replaced, so the text area's own undo takes the edit back.
+    fn apply(
+        &mut self,
+        edit: impl FnOnce(&str, std::ops::Range<usize>) -> postio_ui::editor::markdown_edit::Edit,
+    ) {
+        let before = self.body.lines().join("\n");
+        let offset = |row: usize, column: usize| -> usize {
+            let lines = self.body.lines();
+            let above: usize = lines.iter().take(row).map(|line| line.len() + 1).sum();
+            let line = lines.get(row).map_or("", String::as_str);
+            above
+                + line
+                    .char_indices()
+                    .nth(column)
+                    .map_or(line.len(), |(at, _)| at)
+        };
+        let selection = match self.body.selection_range() {
+            Some(((r0, c0), (r1, c1))) => offset(r0, c0)..offset(r1, c1),
+            None => {
+                let ratatui_textarea::DataCursor(row, column) = self.body.cursor();
+                let at = offset(row, column);
+                at..at
             }
-            _ => {
-                self.body.cancel_selection();
-                String::new()
-            }
-        }
-    }
+        };
+        let after = edit(&before, selection);
 
-    fn wrap(&mut self, open: &str, close: &str) {
-        let words = self.take_selection();
-        self.body.insert_str(format!("{open}{words}{close}"));
-        if words.is_empty() {
-            self.back(close.chars().count());
+        let mut head = before
+            .bytes()
+            .zip(after.text.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !before.is_char_boundary(head) || !after.text.is_char_boundary(head) {
+            head -= 1;
         }
-    }
-
-    fn back(&mut self, columns: usize) {
-        for _ in 0..columns {
-            self.body.move_cursor(ratatui_textarea::CursorMove::Back);
+        let mut tail = before[head..]
+            .bytes()
+            .rev()
+            .zip(after.text[head..].bytes().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !before.is_char_boundary(before.len() - tail)
+            || !after.text.is_char_boundary(after.text.len() - tail)
+        {
+            tail -= 1;
         }
-    }
-
-    /// `prefix` at the start of the caret's line, or taken off it again.
-    fn toggle_prefix(&mut self, prefix: &str) {
-        let ratatui_textarea::DataCursor(row, column) = self.body.cursor();
-        let line = self.body.lines().get(row).cloned().unwrap_or_default();
-        let jump = |row: usize, column: usize| {
+        let jump = |text: &str, at: usize| {
+            let row = text[..at].matches('\n').count();
+            let column = text[text[..at].rfind('\n').map_or(0, |n| n + 1)..at]
+                .chars()
+                .count();
             ratatui_textarea::CursorMove::Jump(
                 u16::try_from(row).unwrap_or(u16::MAX),
                 u16::try_from(column).unwrap_or(u16::MAX),
             )
         };
-        let width = prefix.chars().count();
-        self.body.move_cursor(jump(row, 0));
-        if line.starts_with(prefix) {
-            for _ in 0..width {
-                self.body.delete_next_char();
-            }
+        self.body.cancel_selection();
+        self.body.move_cursor(jump(&before, head));
+        if before.len() - tail > head {
+            self.body.start_selection();
+            self.body.move_cursor(jump(&before, before.len() - tail));
+            let yanked = self.body.yank_text();
+            self.body.cut();
+            self.body.set_yank_text(yanked);
+        }
+        self.body
+            .insert_str(&after.text[head..after.text.len() - tail]);
+        if after.selection.is_empty() {
             self.body
-                .move_cursor(jump(row, column.saturating_sub(width)));
+                .move_cursor(jump(&after.text, after.selection.start));
         } else {
-            self.body.insert_str(prefix);
-            self.body.move_cursor(jump(row, column + width));
+            self.body
+                .move_cursor(jump(&after.text, after.selection.start));
+            self.body.start_selection();
+            self.body
+                .move_cursor(jump(&after.text, after.selection.end));
         }
     }
 
-    /// Type `key` into the field the keyboard is in. `Tab` and `Shift+Tab`
-    /// move between fields. Answers whether anything changed.
+    /// Answers whether anything changed.
     pub fn type_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Tab => {
@@ -345,13 +359,10 @@ impl Composer {
                 self.field = self.step(-1);
                 return true;
             }
-            // Enter in a one-line field moves on, as it does in a form; in
-            // the body it is a new line.
             KeyCode::Enter if self.field != Field::Body && key.modifiers.is_empty() => {
                 self.field = self.step(1);
                 return true;
             }
-            // In From there is nothing to type: the arrows and space choose.
             KeyCode::Left | KeyCode::Up if self.field == Field::From => {
                 self.identity = self
                     .identity
@@ -387,13 +398,10 @@ impl Composer {
         changed || moved
     }
 
-    /// How many times what would be saved has changed.
     pub fn edits(&self) -> u64 {
         self.edits
     }
 
-    /// Put `markdown` in place of the body: what the external editor saved.
-    /// Everything else about the draft stays as it was.
     pub fn replace_body(&mut self, markdown: &str) {
         let lines: Vec<String> = markdown
             .split('\n')
@@ -405,8 +413,6 @@ impl Composer {
         self.edits += 1;
     }
 
-    /// The message as it will arrive, drawn by the reader: the HTML part
-    /// when there is one, else the text part (FR-021).
     pub fn preview(&self) -> crate::reader::Rendered {
         let body = body_of(&self.markdown(), &self.quote);
         match (body.html, body.text) {
@@ -416,9 +422,8 @@ impl Composer {
         }
     }
 
-    /// The body is being drawn `height` lines tall: which of its lines is at
-    /// the top. The textarea's own rule -- it scrolls only when the cursor
-    /// would leave the view -- mirrored, so a click can be placed.
+    /// The textarea scrolls only when the cursor would leave the view; mirrored, so a click can be
+    /// placed.
     pub fn body_top(&self, height: u16) -> u16 {
         self.body_height.set(height);
         let row = u16::try_from(self.body.cursor().0).unwrap_or(u16::MAX);
@@ -434,8 +439,6 @@ impl Composer {
         top
     }
 
-    /// Scroll the body by `lines`, down when positive, as far as its first
-    /// and last lines allow; the cursor stays in view.
     pub fn scroll(&mut self, lines: isize) {
         let top = i64::from(self.body_top.get());
         let last = i64::try_from(self.body.lines().len())
@@ -449,8 +452,6 @@ impl Composer {
             .set(self.body_top.get().saturating_add_signed(rows));
     }
 
-    /// Put the cursor where a click landed in the body: `row` lines and
-    /// `column` columns into what was drawn.
     pub fn click_body(&mut self, row: u16, column: u16) {
         self.field = Field::Body;
         let row = self.body_top.get().saturating_add(row);
@@ -458,35 +459,96 @@ impl Composer {
             .move_cursor(ratatui_textarea::CursorMove::Jump(row, column));
     }
 
-    /// Put the keyboard in `field`.
     pub fn focus_field(&mut self, field: Field) {
         self.field = field;
     }
 
-    /// The files this draft carries.
     pub fn attachments(&self) -> &[postio_model::Attachment] {
         &self.draft.attachments
     }
 
-    /// Carry `attachment`, already stored by the host.
+    /// Asked on every frame, so a body with no `](http` in it is not read as Markdown at all.
+    pub fn remote_images(&self) -> Vec<(postio_body::WebHref, String)> {
+        let text = self.markdown();
+        if !text.to_ascii_lowercase().contains("](http") {
+            return Vec::new();
+        }
+        markdown::to_document(&text).remote_images()
+    }
+
+    pub fn remote_rows(&self, key: &str) -> Vec<(String, String)> {
+        self.remote_images()
+            .into_iter()
+            .map(|(href, alt)| {
+                let host = postio_ui::compose::remote_host(href.as_str());
+                let words = match self.remote.get(href.as_str()) {
+                    Some(Remote::Downloading) => postio_ui::compose::DOWNLOADING.to_owned(),
+                    Some(Remote::Refused(refusal)) => {
+                        postio_ui::compose::remote_refusal(refusal, &host, key)
+                    }
+                    None => host,
+                };
+                (alt, words)
+            })
+            .collect()
+    }
+
+    pub fn start_remote(&mut self) -> Option<postio_body::WebHref> {
+        let href = self
+            .remote_images()
+            .into_iter()
+            .map(|(href, _)| href)
+            .find(|href| self.remote.get(href.as_str()) != Some(&Remote::Downloading))?;
+        self.remote
+            .insert(href.as_str().to_owned(), Remote::Downloading);
+        Some(href)
+    }
+
+    pub fn settle_remote(
+        &mut self,
+        href: &str,
+        outcome: Result<postio_model::Attachment, postio_ui::compose::RemoteRefusal>,
+    ) {
+        match outcome {
+            Ok(attachment) => {
+                self.remote.remove(href);
+                if let Some(id) = attachment.content_id.clone() {
+                    let from = format!("]({href})");
+                    let to = format!("](cid:{id})");
+                    self.apply(|text, at| {
+                        let mut edited = text.to_owned();
+                        if let Some(found) = text.find(&from) {
+                            edited.replace_range(found..found + from.len(), &to);
+                        }
+                        postio_ui::editor::markdown_edit::Edit {
+                            text: edited,
+                            selection: at,
+                        }
+                    });
+                }
+                self.attach(attachment);
+            }
+            Err(refusal) => {
+                self.remote
+                    .insert(href.to_owned(), Remote::Refused(refusal));
+            }
+        }
+    }
+
     pub fn attach(&mut self, attachment: postio_model::Attachment) {
         self.draft.attachments.push(attachment);
         self.edits += 1;
     }
 
-    /// Who the recipient being typed could be, best first.
     pub fn suggestions(&self) -> &[RecipientCandidate] {
         &self.suggestions
     }
 
-    /// The suggestion the keyboard is on.
     pub fn suggestion(&self) -> usize {
         self.suggestion
     }
 
-    /// What to look up now, if the recipient being typed has changed and
-    /// there is enough of it (the desktop's threshold, #424). Anything
-    /// shorter puts the suggestions away.
+    /// Anything shorter than the desktop's threshold puts the suggestions away (#424).
     pub fn wants_completion(&mut self) -> Option<String> {
         let wanted = match self.field {
             Field::To | Field::Cc | Field::Bcc => {
@@ -506,7 +568,7 @@ impl Composer {
         wanted
     }
 
-    /// The answer to a lookup, offered only if it is still what is typed.
+    /// Offered only if it is still what is typed.
     pub fn offer(&mut self, prefix: &str, found: Vec<RecipientCandidate>) {
         if self.asking.as_deref() == Some(prefix) {
             self.suggestions = found;
@@ -514,8 +576,6 @@ impl Composer {
         }
     }
 
-    /// A key while suggestions are showing: the arrows choose, Tab or Enter
-    /// accepts, Escape puts them away. Answers whether it was one of those.
     pub fn completion_key(&mut self, key: KeyEvent) -> bool {
         if self.suggestions.is_empty() {
             return false;
@@ -541,13 +601,10 @@ impl Composer {
         true
     }
 
-    /// The id the host gave this draft's first save.
     pub fn adopt_id(&mut self, id: postio_model::DraftId) {
         self.draft.id = id;
     }
 
-    /// The field `by` steps from the one the keyboard is in, over the
-    /// fields that are shown, wrapping.
     fn step(&self, by: isize) -> Field {
         let mut shown = Vec::with_capacity(6);
         if self.shows_identities() {
@@ -575,10 +632,7 @@ impl Composer {
         }
     }
 
-    /// Put `text` where the cursor is: a paste of words.
     pub fn insert(&mut self, text: &str) {
-        // A paste is whatever the clipboard held, from anywhere: made safe
-        // as mail text is, after folding a Windows line end into a newline.
         let text = SafeText::new(&text.replace("\r\n", "\n"));
         let text = text.as_str();
         match self.field {
@@ -586,8 +640,6 @@ impl Composer {
                 self.body.insert_str(text);
             }
             field => {
-                // A one-line field keeps one line: a pasted list of
-                // addresses arrives with newlines between them.
                 let flat = text.split(['\r', '\n']).filter(|part| !part.is_empty());
                 let flat = flat.collect::<Vec<_>>().join(", ");
                 if let Some(input) = self.line_mut(field) {
@@ -600,12 +652,10 @@ impl Composer {
         self.edits += 1;
     }
 
-    /// The Markdown in the body, as typed.
     pub fn markdown(&self) -> String {
         self.body.lines().join("\n")
     }
 
-    /// One field's text, for drawing.
     pub fn value(&self, field: Field) -> &str {
         match field {
             Field::To => self.to.value(),
@@ -620,7 +670,7 @@ impl Composer {
         }
     }
 
-    /// Where the cursor is in a one-line field, in columns.
+    /// In columns.
     pub fn cursor_in(&self, field: Field) -> usize {
         match field {
             Field::To => self.to.visual_cursor(),
@@ -631,28 +681,23 @@ impl Composer {
         }
     }
 
-    /// The body's editor, for drawing.
     pub fn body(&self) -> &TextArea<'static> {
         &self.body
     }
 
-    /// What the draft is: new, a reply, a reply to all, or a forward.
     pub fn kind(&self) -> postio_model::DraftKind {
         self.draft.kind
     }
 
-    /// When a reminder is asked for if nobody replies, once one is chosen.
     pub fn remind_at(&self) -> Option<chrono::DateTime<chrono::Utc>> {
         self.draft.remind_at
     }
 
-    /// Ask for a reminder at `at` if nobody replies, or for none.
     pub fn set_remind_at(&mut self, at: Option<chrono::DateTime<chrono::Utc>>) {
         self.draft.remind_at = at;
         self.edits += 1;
     }
 
-    /// How many words the body holds.
     pub fn words(&self) -> usize {
         self.body
             .lines()
@@ -661,7 +706,6 @@ impl Composer {
             .sum()
     }
 
-    /// The draft as it stands, with what is sent derived from the Markdown.
     pub fn draft(&self) -> Draft {
         let mut draft = self.draft.clone();
         draft.to = postio_model::address::parse_list(self.to.value());
@@ -678,20 +722,21 @@ impl Composer {
     }
 }
 
-/// What a body of Markdown, followed by `quote`, sends: the Markdown and
-/// then the quote's text as the text part (FR-021), and the rendering of
-/// both as the HTML part when there is anything to style.
+/// The text part is the written document's plain alternative, then the quote's text: `**bold**`
+/// in a text part is the doubled marker spec 002 forbids. HTML only with something to style.
 pub fn body_of(markdown: &str, quote: &[Block]) -> MessageBody {
     if markdown.trim().is_empty() && quote.is_empty() {
         return MessageBody::default();
     }
-    let mut document = markdown::to_document(markdown);
+    let written = markdown::to_document(markdown);
+    let written_text = written.to_flowed_text();
+    let mut document = written;
     document.blocks.extend(quote.iter().cloned());
     let quoted = quote_text(quote);
     let text = match (markdown.trim().is_empty(), quoted.is_empty()) {
-        (_, true) => markdown.to_owned(),
+        (_, true) => written_text,
         (true, false) => quoted,
-        (false, false) => format!("{}\n\n{quoted}", markdown.trim_end()),
+        (false, false) => format!("{}\n\n{quoted}", written_text.trim_end()),
     };
     MessageBody {
         text: Some(text),
@@ -699,9 +744,6 @@ pub fn body_of(markdown: &str, quote: &[Block]) -> MessageBody {
     }
 }
 
-/// The text half of a kept quote: a reply's with `> ` before every line, as
-/// every mail client expects; a forward's as it is, since it is not a
-/// quotation but the message itself.
 fn quote_text(quote: &[Block]) -> String {
     let mut out = Vec::new();
     for block in quote {
@@ -734,11 +776,7 @@ fn quote_text(quote: &[Block]) -> String {
     out.join("\n\n")
 }
 
-/// The Markdown for what comes before a quote.
-///
-/// A reply opens with an empty paragraph for the caret above the
-/// attribution; here that is an empty first line, so what is typed goes
-/// above the attribution rather than into it.
+/// A reply opens with an empty first line, so what is typed goes above the attribution.
 fn markdown_of(head: Document) -> String {
     let caret = matches!(
         head.blocks.first(),
@@ -830,7 +868,7 @@ pub(crate) mod tests {
     #[test]
     fn headings_lists_and_quotes_prefix_the_line_and_a_second_press_takes_it_off() {
         for (format, prefix) in [
-            (Format::Heading1, "# "),
+            (Format::Heading(1), "# "),
             (Format::BulletList, "- "),
             (Format::NumberedList, "1. "),
             (Format::Quote, "> "),
@@ -841,6 +879,88 @@ pub(crate) mod tests {
             assert!(composer.format(format));
             assert_eq!(composer.markdown(), "one", "{format:?} again takes it off");
         }
+    }
+
+    #[test]
+    fn every_now_phase_formatting_command_writes_its_markdown() {
+        for (format, before, after) in [
+            (Format::Strikethrough, "gone", "~~gone~~"),
+            (Format::InlineCode, "x", "`x`"),
+            (Format::Heading(1), "Plan", "# Plan"),
+            (Format::Heading(4), "Plan", "#### Plan"),
+            (Format::Heading(6), "Plan", "###### Plan"),
+            (Format::NormalText, "## Plan", "Plan"),
+            (Format::CodeBlock, "let x", "```\nlet x\n```"),
+            (Format::TaskList, "- one", "- [ ] one"),
+            (Format::ToggleTask, "- [ ] one", "- [x] one"),
+            (Format::Indent, "- a\n- b", "- a\n  - b"),
+            (Format::Outdent, "- a\n  - b", "- a\n- b"),
+            (Format::Divider, "above", "above\n\n---\n"),
+            (
+                Format::Table,
+                "",
+                "| Column 1 | Column 2 |\n|---|---|\n|  |  |",
+            ),
+            (Format::ClearFormatting, "**b** and *i*", "b and i"),
+        ] {
+            let mut composer = in_body(before);
+            composer
+                .body
+                .move_cursor(ratatui_textarea::CursorMove::Bottom);
+            composer
+                .body
+                .move_cursor(ratatui_textarea::CursorMove::Head);
+            composer.body.start_selection();
+            composer.body.move_cursor(ratatui_textarea::CursorMove::End);
+            assert!(composer.format(format), "{format:?}");
+            assert_eq!(composer.markdown(), after, "{format:?} over {before:?}");
+        }
+    }
+
+    #[test]
+    fn a_remote_image_is_a_row_downloaded_on_a_press_and_put_in_place() {
+        let mut composer = in_body("See ![chart](https://example.com/x.png).");
+        assert_eq!(
+            composer.remote_rows("alt+I"),
+            vec![("chart".to_owned(), "example.com".to_owned())]
+        );
+        let href = composer.start_remote().expect("one to download");
+        assert_eq!(href.as_str(), "https://example.com/x.png");
+        assert_eq!(composer.remote_rows("alt+I")[0].1, "Downloading\u{2026}");
+        assert_eq!(
+            composer.start_remote(),
+            None,
+            "one request at a time for one image"
+        );
+        let mut part = postio_model::Attachment::new(
+            postio_model::ids::MessageId::UNASSIGNED,
+            "image/png",
+            10,
+        );
+        part.content_id = Some("x1@postio.invalid".to_owned());
+        composer.settle_remote(href.as_str(), Ok(part));
+        assert_eq!(composer.markdown(), "See ![chart](cid:x1@postio.invalid).");
+        assert!(composer.remote_rows("alt+I").is_empty());
+        assert_eq!(composer.attachments().len(), 1);
+    }
+
+    #[test]
+    fn a_refused_download_says_why_and_stays_a_link() {
+        let mut composer = in_body("![chart](https://example.com/x.png)");
+        let href = composer.start_remote().expect("one");
+        composer.settle_remote(
+            href.as_str(),
+            Err(postio_ui::compose::RemoteRefusal::TooLarge),
+        );
+        assert_eq!(
+            composer.remote_rows("alt+I")[0].1,
+            "Larger than 10 MB \u{b7} not attached \u{b7} it will be sent as a link"
+        );
+        assert_eq!(composer.markdown(), "![chart](https://example.com/x.png)");
+        assert!(
+            composer.start_remote().is_some(),
+            "a press again asks again"
+        );
     }
 
     #[test]
@@ -885,7 +1005,7 @@ pub(crate) mod tests {
         );
         assert_eq!(draft.subject, "Tide gate");
         assert_eq!(draft.body_markdown.as_deref(), Some("Some **bold** words"));
-        assert_eq!(draft.body.text.as_deref(), Some("Some **bold** words"));
+        assert_eq!(draft.body.text.as_deref(), Some("Some bold words"));
         assert!(
             draft
                 .body
@@ -899,7 +1019,6 @@ pub(crate) mod tests {
 
     #[test]
     fn plain_words_send_no_html() {
-        // US3 scenario 3.
         let body = body_of("Just words.\n\nTwo paragraphs of them.", &[]);
         assert!(body.html.is_none(), "{:?}", body.html);
         assert_eq!(
@@ -926,8 +1045,6 @@ pub(crate) mod tests {
 
     #[test]
     fn cc_and_bcc_go_away_only_while_empty() {
-        // `copy_fields`' asymmetric half: a hidden row still holding an
-        // address would still send to it, unseen.
         let mut composer = fresh();
         composer.toggle_copy_fields();
         assert!(composer.shows_extra_recipients());
@@ -990,7 +1107,6 @@ pub(crate) mod tests {
         assert!(markdown.starts_with("one\ntwo"), "{markdown:?}");
     }
 
-    /// A message from Ada saying "Hello **there**", and the account it came to.
     pub(crate) fn a_message_and_its_account() -> (postio_model::Message, postio_model::Account) {
         let mut account = postio_model::Account::new(
             "grace",
@@ -1115,7 +1231,6 @@ pub(crate) mod tests {
         for _ in 0..45 {
             composer.type_key(key(KeyCode::Down, KeyModifiers::NONE));
         }
-        // Drawn ten lines tall with the cursor on line 45: lines 36 to 45.
         assert_eq!(composer.body_top(10), 36);
         composer.click_body(2, 3);
         assert_eq!(composer.body().cursor(), (38, 3));

@@ -1,149 +1,78 @@
-//! Whether new mail is worth interrupting somebody for, and what the
-//! notification may say — decided once, for every frontend.
-//!
-//! The classic app and the macOS app each had a copy of this decision, and
-//! they had already drifted: the macOS copy suppressed mail landing in the
-//! folder on screen and the GTK copy did not; one pointed a burst's click
-//! at the folder and the other at the newest message. This module is the
-//! one rule both call. The delivery — `gio::Notification` on one side,
-//! `UNUserNotificationCenter` on the other — stays with the toolkit, thin.
-//!
-//! # What is shared and what is deliberately not
-//!
-//! The suppression, the identifier, and where a click lands are one rule.
-//! **The wording is a per-platform choice**, carried in by [`Wording`]:
-//!
-//! - [`Wording::Counts`] says counts and a folder name, never message
-//!   content. It is what the macOS app draws, because a notification there
-//!   is a log the lock screen reads out, and `PRODUCT.md`'s rule that logs
-//!   carry ids, counts and outcomes only applies to it more than anywhere.
-//! - [`Wording::Newest`] names the newest arrival's sender and subject, plus
-//!   how many more came with it. It is what the GTK app draws, where the
-//!   desktop shell keeps banners off the lock screen and a popup that says
-//!   nothing about the mail is not worth the interruption (#745).
-//!
-//! The click lands on the message the notification named, and on the
-//! folder when it named none: under `Newest` that is always the newest
-//! arrival, under `Counts` only a single arrival names one.
-//!
-//! # Coalescing
-//!
-//! Every notification for one mailbox reuses the same [`identifier`], which
-//! both `gio::Application::send_notification` and `UNUserNotificationCenter`
-//! treat as "replace the one already showing" rather than "queue another
-//! beside it" — so several `IDLE` wake-ups in a row settle into one popup
-//! saying the current state.
+//! Whether new mail is worth interrupting for and what the notification may say, decided once for
+//! every frontend; delivery stays with the toolkit.
+//! Wording is per platform: `Counts` never carries message content (a lock screen reads it out),
+//! `Newest` names the newest arrival.
+//! Every notification for a mailbox reuses one `identifier`, so successive wake-ups replace rather
+//! than stack.
 
 use postio_config::SyncConfig;
 use postio_model::{MailboxId, MailboxRole, MessageId};
 
-/// New mail as `Event::NewMail` reports it: ids and nothing else.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Arrival {
-    /// The folder it landed in.
     pub mailbox: MailboxId,
-    /// The newly delivered messages.
     pub messages: Vec<MessageId>,
 }
 
-/// What the person is looking at at the moment the mail lands.
-///
-/// **Both** halves are needed to suppress: a folder left open behind
-/// another application is not one the user is watching, and treating "this
-/// is the open mailbox" as sufficient is the version of this check that
-/// silently swallows the notification somebody actually needed.
+/// Both halves are needed to suppress: a folder left open behind another application is not one the
+/// user is watching.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Attention {
-    /// The mailbox the list has open, if any.
     pub showing: Option<MailboxId>,
-    /// Whether Postio is the frontmost application.
     pub active: bool,
 }
 
-/// How much a notification may say. See the module docs for why this is
-/// the frontend's choice rather than this module's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Wording<'a> {
-    /// Counts and the folder's name, never content.
     Counts {
-        /// The folder's display name, when the frontend knows it.
         mailbox_name: Option<&'a str>,
     },
-    /// The newest arrival's sender and subject.
     Newest {
-        /// The arrival to name — whichever `received_at` is latest, which
-        /// the caller decides because it is the one holding the rows.
         message: MessageId,
-        /// Its sender, as the frontend displays addresses.
         from: Option<&'a str>,
-        /// Its subject line.
         subject: Option<&'a str>,
-        /// The account's name, when more than one is enabled (#189);
-        /// naming the only account there is would be noise (ADR 0005 Q13).
+        /// Named only when more than one account is enabled (#189); naming the only account is
+        /// noise.
         account: Option<&'a str>,
     },
 }
 
-/// Why an arrival did not become a notification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Suppressed {
-    /// The event carried no new messages — the engine can emit a `NewMail`
-    /// whose messages were all already known, and interrupting somebody to
-    /// say nothing happened is the worst available outcome.
+    /// The engine can emit a `NewMail` whose messages were all already known.
     NothingArrived,
-    /// It landed in the folder the user is looking at, right now.
     AlreadyOnScreen,
 }
 
-/// What to do about an arrival.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Decision {
-    /// Nothing, and why.
     Suppress(Suppressed),
-    /// Post this.
     Deliver(Notification),
 }
 
-/// One notification, ready for the toolkit to post.
-///
-/// Serialisable because the store's owner decides it and the frontend that
-/// delivers it is another process (ADR 0041).
+/// Serialisable because the store's owner decides it and the frontend that delivers it is another
+/// process (ADR 0041).
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Notification {
-    /// Stable per folder — see the module docs on coalescing.
     pub identifier: String,
-    /// What it says.
     pub title: String,
-    /// The rest of what it says.
     pub body: String,
-    /// The folder a click opens.
     pub mailbox: MailboxId,
-    /// The message a click lands on, when the notification named one.
     pub message: Option<MessageId>,
 }
 
-/// Whether `[sync]` says `role`'s arrivals are worth a notification.
-///
-/// Asked before [`decide`], by whoever holds the config: the role gate is
-/// the one input that costs a store read to answer, and a frontend that
-/// fails it has no reason to go on and read the messages.
 pub fn watched(config: &SyncConfig, role: MailboxRole) -> bool {
     config.notify && role_watched(&config.notify_roles, role)
 }
 
-/// Whether `notify_roles` (`[sync] notify_roles`) lists `role`: the part of
-/// [`watched`] a caller that holds only the roles, not the whole config,
-/// can ask.
 pub fn role_watched(notify_roles: &[String], role: MailboxRole) -> bool {
     notify_roles.iter().any(|name| name == role.as_str())
 }
 
-/// A notification id scoped to one mailbox.
 pub fn identifier(mailbox: MailboxId) -> String {
     format!("new-mail-{}", mailbox.get())
 }
 
-/// Whether `arrival` becomes a notification, and what it says.
 pub fn decide(arrival: &Arrival, attention: Attention, wording: Wording<'_>) -> Decision {
     let count = arrival.messages.len();
     if count == 0 {
@@ -163,9 +92,8 @@ pub fn decide(arrival: &Arrival, attention: Attention, wording: Wording<'_>) -> 
             } else {
                 format!("{count} new messages")
             };
-            // A single arrival names its message so the click lands on that
-            // row; a burst's count picks no message, so the click opens the
-            // folder, exactly as choosing it in the sidebar would.
+            // A single arrival names its message so the click lands on that row; a burst opens the
+            // folder.
             let message = (count == 1).then(|| arrival.messages[0]);
             (title, body, message)
         }
@@ -236,8 +164,6 @@ mod tests {
         }
     }
 
-    // The suppression rule, the same on every platform.
-
     #[test]
     fn an_empty_arrival_is_not_a_notification() {
         assert_eq!(
@@ -265,9 +191,6 @@ mod tests {
 
     #[test]
     fn the_same_folder_in_a_window_you_are_not_looking_at_still_notifies() {
-        // "On screen" means both halves. A folder left open behind another
-        // application is not something the user is watching, and this is
-        // the case a naive "is this the open mailbox" check gets wrong.
         let attention = Attention {
             showing: Some(MailboxId::new(5)),
             active: false,
@@ -290,8 +213,6 @@ mod tests {
         ));
     }
 
-    // The identifier, the same on every platform.
-
     #[test]
     fn a_second_batch_for_one_folder_replaces_the_first_rather_than_stacking() {
         let first = delivered(decide(&arrival(7, &[1]), elsewhere(), COUNTS));
@@ -309,8 +230,6 @@ mod tests {
     fn each_mailbox_gets_one_stable_notification_id() {
         assert_eq!(identifier(MailboxId::new(7)), "new-mail-7");
     }
-
-    // Counts wording: what a lock screen may read out.
 
     #[test]
     fn a_burst_under_counts_is_one_notification_carrying_a_count() {
@@ -354,14 +273,10 @@ mod tests {
 
     #[test]
     fn no_message_content_reaches_a_counts_notification() {
-        // Not even the id is drawn at somebody, and this asserts nobody later
-        // adds a lookup to "improve" it.
         let notification = delivered(decide(&arrival(1, &[42]), elsewhere(), COUNTS));
         let drawn = format!("{} {}", notification.title, notification.body);
         assert!(!drawn.contains("42"), "{drawn:?}");
     }
-
-    // Newest wording: the sender and subject of the newest arrival.
 
     #[test]
     fn a_single_arrival_names_the_sender_and_the_subject() {
@@ -439,8 +354,6 @@ mod tests {
         assert_eq!(burst.body, "\"(no subject)\" and 1 more");
     }
 
-    // #189: notifications name the account when more than one is configured.
-
     #[test]
     fn newest_names_the_account_when_one_is_given() {
         let single = delivered(decide(
@@ -466,8 +379,6 @@ mod tests {
         ));
         assert_eq!(burst.title, "Bob — Work");
     }
-
-    // The role gate.
 
     #[test]
     fn notify_settings_gate_on_both_the_switch_and_the_role() {
@@ -496,5 +407,82 @@ mod tests {
             ..SyncConfig::default()
         };
         assert!(!watched(&config, MailboxRole::Inbox));
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReminderNotice {
+    pub identifier: String,
+    pub title: String,
+    pub body: String,
+}
+
+pub fn reminder<Z: chrono::TimeZone>(
+    event: i64,
+    title: &str,
+    starts: chrono::DateTime<chrono::Utc>,
+    now: chrono::DateTime<chrono::Utc>,
+    missed: bool,
+    zone: &Z,
+) -> ReminderNotice
+where
+    Z::Offset: std::fmt::Display,
+{
+    let at = starts.with_timezone(zone).format("%H:%M");
+    let body = if missed {
+        format!("While Postio was closed: {title} at {at}")
+    } else {
+        let minutes = (starts - now).num_minutes();
+        match minutes {
+            ..=0 => format!("{title} \u{b7} {at} \u{b7} now"),
+            1..=59 => format!("{title} \u{b7} {at} \u{b7} in {minutes} min"),
+            _ => format!("{title} \u{b7} {at}"),
+        }
+    };
+    ReminderNotice {
+        identifier: format!("reminder-{event}-{}", starts.timestamp()),
+        title: if missed {
+            "Missed reminder"
+        } else {
+            "Reminder"
+        }
+        .to_owned(),
+        body,
+    }
+}
+
+#[cfg(test)]
+mod reminder_tests {
+    use chrono::{Duration, TimeZone, Utc};
+
+    use super::reminder;
+
+    #[test]
+    fn a_reminder_says_what_when_and_how_soon_and_a_missed_one_says_so() {
+        let starts = Utc.with_ymd_and_hms(2026, 11, 24, 9, 30, 0).unwrap();
+        let soon = reminder(
+            7,
+            "Standup",
+            starts,
+            starts - Duration::minutes(10),
+            false,
+            &Utc,
+        );
+        assert_eq!(soon.body, "Standup \u{b7} 09:30 \u{b7} in 10 min");
+        assert_eq!(soon.title, "Reminder");
+
+        let missed = reminder(
+            7,
+            "Standup",
+            starts,
+            starts + Duration::hours(2),
+            true,
+            &Utc,
+        );
+        assert_eq!(missed.body, "While Postio was closed: Standup at 09:30");
+        assert_ne!(
+            soon.identifier,
+            reminder(8, "Standup", starts, starts, false, &Utc).identifier
+        );
     }
 }

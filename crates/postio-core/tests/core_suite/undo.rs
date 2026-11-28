@@ -1,14 +1,3 @@
-//! The undo stack: docs/PRODUCT.md §16 and canvas 3b — *Archived 12 messages — Undo*,
-//! bound to `u`.
-//!
-//! Two things make that toast honest. Archiving twelve messages with twelve
-//! keystrokes has to be *one* undoable unit, or `u` twelve times is the only
-//! way back; and undo has to be instant and local, so it works on a train with
-//! no signal and the server catches up later.
-//!
-//! Time is passed in rather than slept through: the coalescing window and the
-//! expiry policy are exactly the things a test must be able to step across.
-
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -25,7 +14,6 @@ fn message(id: i64) -> MessageId {
     MessageId::new(id)
 }
 
-/// The undo of an archive: put it back where it came from.
 fn archived(id: i64) -> UndoEntry {
     UndoEntry::new(
         UndoKind::Archive,
@@ -48,8 +36,6 @@ fn deleted(id: i64) -> UndoEntry {
     )
 }
 
-// -- Coalescing --------------------------------------------------------------
-
 #[test]
 fn one_archive_is_one_message() {
     let mut stack = UndoStack::new();
@@ -62,7 +48,6 @@ fn one_archive_is_one_message() {
 
 #[test]
 fn a_burst_of_archives_is_one_undoable_unit() {
-    // Twelve keystrokes, one `u`. This is the toast docs/PRODUCT.md §16 asks for.
     let mut stack = UndoStack::new();
     let start = Instant::now();
 
@@ -87,7 +72,6 @@ fn a_pause_ends_the_burst() {
 
     stack.record_at(archived(1), start);
     stack.record_at(archived(2), start + UndoStack::COALESCE_WINDOW / 2);
-    // Long enough that the user has moved on to a new thought.
     stack.record_at(
         archived(3),
         start + UndoStack::COALESCE_WINDOW * 2 + Duration::from_millis(1),
@@ -99,7 +83,6 @@ fn a_pause_ends_the_burst() {
 
 #[test]
 fn the_window_runs_from_the_last_action_not_the_first() {
-    // Holding `a` down for a minute is still one gesture.
     let mut stack = UndoStack::new();
     let start = Instant::now();
     let step = UndoStack::COALESCE_WINDOW / 2;
@@ -114,9 +97,6 @@ fn the_window_runs_from_the_last_action_not_the_first() {
 
 #[test]
 fn touching_the_same_message_twice_starts_a_new_unit() {
-    // Within one unit every action is independent, which is what makes
-    // replaying the inverses in recorded order correct. A second action on a
-    // message already in the unit breaks that, so it starts a new one.
     let mut stack = UndoStack::new();
     let now = Instant::now();
 
@@ -130,7 +110,6 @@ fn touching_the_same_message_twice_starts_a_new_unit() {
 
 #[test]
 fn different_actions_never_coalesce() {
-    // "Archived 3 messages" must never quietly include a delete.
     let mut stack = UndoStack::new();
     let now = Instant::now();
 
@@ -141,8 +120,6 @@ fn different_actions_never_coalesce() {
     assert_eq!(stack.depth(), 3);
     assert_eq!(stack.peek().unwrap().description(), "Archived 1 message");
 }
-
-// -- Undoing -----------------------------------------------------------------
 
 #[test]
 fn undoing_hands_back_the_inverse_in_recorded_order() {
@@ -190,8 +167,6 @@ fn there_is_nothing_to_undo_on_an_empty_stack() {
     assert_eq!(stack.peek(), None);
 }
 
-// -- Bounds and expiry -------------------------------------------------------
-
 #[test]
 fn the_stack_is_bounded_and_forgets_the_oldest() {
     let mut stack = UndoStack::new();
@@ -203,7 +178,6 @@ fn the_stack_is_bounded_and_forgets_the_oldest() {
     }
 
     assert_eq!(stack.depth(), UndoStack::MAX_DEPTH);
-    // What survived is the recent end: undo walks back through the newest.
     let newest = stack.undo_at(spaced(UndoStack::MAX_DEPTH + 5)).unwrap();
     assert_eq!(
         newest.messages(),
@@ -213,8 +187,6 @@ fn the_stack_is_bounded_and_forgets_the_oldest() {
 
 #[test]
 fn an_undo_the_user_forgot_about_expires() {
-    // Putting back something archived an hour ago is a surprise, not a mercy,
-    // and by then the server has almost certainly moved on.
     let mut stack = UndoStack::new();
     let now = Instant::now();
     stack.record_at(archived(1), now);
@@ -249,10 +221,6 @@ fn the_policy_is_adjustable_for_the_tests_that_need_it() {
     assert_eq!(stack.depth(), 2, "bounded at the depth we asked for");
 }
 
-// -- Through the bus, offline ------------------------------------------------
-
-/// The local half of the world: an inbox, an archive, and the queue of
-/// operations the sync engine will replay against the server when it can.
 #[derive(Debug, Default)]
 struct FakeMail {
     inbox: Mutex<Vec<MessageId>>,
@@ -276,8 +244,6 @@ impl FakeMail {
         });
     }
 
-    /// Applying an inverse is the same local-first shape: change the local
-    /// truth now, enqueue the remote half, never await the network.
     fn apply_inverse(&self, command: &Command) {
         let Command::Move { target, .. } = command else {
             unreachable!("archive inverts to a move")
@@ -300,8 +266,6 @@ fn archiving_twelve_messages_then_undoing_restores_all_twelve() {
         inbox: Mutex::new((1..=12).map(message).collect()),
         ..FakeMail::default()
     });
-    // Nothing here reaches a server, and nothing awaits one: undo is a local
-    // operation with a remote tail, so it works offline by construction.
 
     let archiving = Arc::clone(&mail);
     let undoing = Arc::clone(&mail);
@@ -339,9 +303,6 @@ fn archiving_twelve_messages_then_undoing_restores_all_twelve() {
                 let Some(entry) = mail.undo.lock().unwrap().undo() else {
                     return Err(CommandError::rejected("nothing to undo"));
                 };
-                // Inverses are applied directly rather than sent back through
-                // the bus: replaying them as commands would record an undo of
-                // the undo, and `u` `u` would toggle instead of walking back.
                 for command in entry.inverse() {
                     mail.apply_inverse(command);
                 }
@@ -367,10 +328,8 @@ fn archiving_twelve_messages_then_undoing_restores_all_twelve() {
 
     let seen: Vec<Event> = std::iter::from_fn(|| events.try_next()).collect();
 
-    // Locally: everything is back in the inbox.
     assert_eq!(mail.archive.lock().unwrap().len(), 0);
     assert_eq!(mail.inbox.lock().unwrap().len(), 12);
-    // Remotely: every archive and every inverse is queued for the server.
     let queued = mail.queued.lock().unwrap();
     assert_eq!(queued.len(), 24, "12 archives and 12 ways back");
     assert!(
@@ -380,7 +339,6 @@ fn archiving_twelve_messages_then_undoing_restores_all_twelve() {
         "the inverses are queued for replay: {queued:?}"
     );
 
-    // And the user was told, once, about all twelve.
     assert!(
         seen.contains(&Event::UndoPerformed {
             description: "Archived 12 messages".into(),
@@ -399,10 +357,6 @@ fn archiving_twelve_messages_then_undoing_restores_all_twelve() {
     );
 }
 
-// ── An entry that lasts only its window (specs/007-postio-focus research R9) ──
-
-/// An invitation answered: its reply waits `window` in the outbox, and
-/// cancelling the send is the way back.
 fn accepted(id: i64, window: Duration) -> UndoEntry {
     UndoEntry::new(
         UndoKind::Accept,
@@ -416,9 +370,6 @@ fn accepted(id: i64, window: Duration) -> UndoEntry {
 
 #[test]
 fn an_answer_can_be_taken_back_inside_its_window_and_not_after() {
-    // Research R9: the undo stack holds an entry for an RSVP's window that
-    // expires with it, so `mod+z` after the window reaches the action
-    // beneath rather than answering "too late".
     let mut stack = UndoStack::new();
     let start = Instant::now();
     stack.record_at(archived(1), start);
@@ -447,8 +398,6 @@ fn an_answer_can_be_taken_back_inside_its_window_and_not_after() {
 
 #[test]
 fn an_answer_is_never_folded_into_another_unit() {
-    // Each answer is its own send with its own window: two answered in one
-    // breath are two entries, each expiring on its own.
     let mut stack = UndoStack::new();
     let start = Instant::now();
     stack.record_at(accepted(1, Duration::from_secs(10)), start);

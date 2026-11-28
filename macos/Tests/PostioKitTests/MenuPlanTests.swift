@@ -3,14 +3,7 @@ import Testing
 
 @testable import PostioKit
 
-/// The menu bar, decided from the registry.
-///
-/// #657's acceptance criteria, asserted: every registry command reachable or
-/// deliberately excluded, accelerators from what is *in force*, and no list of
-/// commands written in Swift.
 @Suite struct MenuPlanTests {
-    /// A binding lookup that answers the registry's defaults, expanded the
-    /// way the boundary expands them on this platform.
     private func defaults(_ command: String) -> [String] {
         guard let spec = PostioRegistry.commands.first(where: { $0.id == command }) else {
             return []
@@ -23,10 +16,6 @@ import Testing
         let bar = MenuPlan.build(bindings: defaults)
         #expect(!bar.isEmpty, "no menus at all")
 
-        // Every item names a command the registry knows. The failure this
-        // guards is a Swift-side list drifting from the Rust one -- which
-        // cannot happen while the rows come from `commands()`, and this is
-        // what would notice if somebody made it possible again.
         let known = Set(PostioRegistry.commands.map(\.id))
         for menu in bar {
             for item in menu.items {
@@ -40,30 +29,24 @@ import Testing
         let bar = MenuPlan.build(bindings: defaults)
         let message = bar.first { $0.title == "Message" }
         #expect(message?.items.contains { $0.command == "archive" } == true)
-        // ...and not under some other one, or the grouping is not a grouping.
         let file = bar.first { $0.title == "File" }
         #expect(file?.items.contains { $0.command == "archive" } == false)
     }
 
     @Test func noMenuIsDrawnEmpty() {
-        // A section with nothing under it is a pane that opens onto nothing,
-        // which reads as a broken application rather than an empty section.
         for menu in MenuPlan.build(bindings: { _ in [] }) {
             #expect(!menu.items.isEmpty, "\(menu.title) is empty")
         }
     }
 
     @Test func theAcceleratorIsWhatIsBoundNotWhatTheRegistryDefaultsTo() {
-        // The whole reason `binding(for:)` exists. A menu drawing the default
-        // for a command somebody rebound is confidently wrong, which is worse
-        // than showing no key at all.
+        // A menu drawing the default for a rebound command is confidently wrong.
         let bar = MenuPlan.build(bindings: { $0 == "archive" ? ["ctrl+shift+e"] : [] })
         let archive = bar.flatMap(\.items).first { $0.command == "archive" }
         #expect(archive?.shortcut == "⌃⇧E")
     }
 
     @Test func modifiersAreDrawnInApplesOrderNotTheBindingsOrder() {
-        // ⌃⌥⇧⌘, always, whatever order somebody typed into `[keys]`.
         #expect(MenuPlan.accelerator(from: "cmd+shift+alt+ctrl+k") == "⌃⌥⇧⌘K")
         #expect(MenuPlan.accelerator(from: "shift+cmd+a") == "⇧⌘A")
         #expect(MenuPlan.accelerator(from: "cmd+k") == "⌘K")
@@ -76,31 +59,22 @@ import Testing
     }
 
     @Test func aShiftFoldedCapitalKeepsItsShift() {
-        // The resolver folds Shift into the character for a key that types
-        // one -- `shift+a` *is* `A` -- so eleven registry defaults are bare
-        // capitals. Uppercasing them for display loses the fold, and
-        // `Archive` and `Archive thread` then draw the identical accelerator
-        // for two different commands. Seen in the Message menu before it was
-        // fixed; invisible in every test that existed.
+        // The resolver folds Shift into the character (`shift+a` is `A`), so uppercasing for
+        // display would draw one accelerator for `Archive` and `Archive thread`.
         #expect(MenuPlan.accelerator(from: "A") == "⇧A")
         #expect(MenuPlan.accelerator(from: "a") == "A")
         #expect(MenuPlan.accelerator(from: "cmd+A") == "⇧⌘A")
-        // Explicit shift and a folded capital are the same key, drawn once.
         #expect(MenuPlan.accelerator(from: "shift+A") == "⇧A")
     }
 
     @Test func aPunctuationKeyIsDrawnAsItsCharacter() {
-        // The resolver spells punctuation by name -- `mod+comma` is Settings'
-        // default -- and the names are GDK's. A menu that printed the name
-        // showed `⌘COMMA`, which is not a key anybody can find.
+        // The resolver spells punctuation by GDK name; a menu printing it would show `⌘COMMA`.
         #expect(MenuPlan.accelerator(from: "cmd+comma") == "⌘,")
         #expect(MenuPlan.accelerator(from: "question") == "?")
         #expect(MenuPlan.accelerator(from: "slash") == "/")
     }
 
     @Test func aKeypadKeyIsDrawnAsItsCharacter() {
-        // `zoom_in`'s alternates name the keypad's keys by GDK's names, and
-        // the key map (screen 20) drew `⌘KP_ADD` for one.
         #expect(MenuPlan.accelerator(from: "cmd+KP_Add") == "⌘+")
         #expect(MenuPlan.accelerator(from: "cmd+KP_Subtract") == "⌘-")
         #expect(MenuPlan.accelerator(from: "cmd+KP_0") == "⌘0")
@@ -108,10 +82,8 @@ import Testing
     }
 
     @Test func noAcceleratorLeaksAKeyName() {
-        // The class, over the whole registry rather than the three spellings
-        // that happened to be wrong. A key name reaching a menu renders as a
-        // run of capitals -- COMMA, RETURN, PAGE_UP -- and a real accelerator
-        // never has one: modifiers are glyphs and the key is one character.
+        // Over the whole registry: a key name reaching a menu renders as capitals (COMMA, PAGE_UP),
+        // which no real accelerator has.
         for spec in PostioRegistry.commands {
             let binding = spec.defaultBinding.replacingOccurrences(of: "mod+", with: "cmd+")
             guard let drawn = MenuPlan.accelerator(from: binding) else { continue }
@@ -122,9 +94,8 @@ import Testing
     }
 
     @Test func twoCommandsThatBindDifferentKeysDrawDifferentAccelerators() {
-        // The failure that started this: `Archive` (`a`) and `Archive thread`
-        // (`A`) are different keys and drew the same string. Checked over the
-        // whole registry, because any pair could do it.
+        // `a` and `A` are different keys and must not draw the same string; checked over the whole
+        // registry.
         var drawnBy: [String: String] = [:]
         for spec in PostioRegistry.commands {
             let binding = spec.defaultBinding.replacingOccurrences(of: "mod+", with: "cmd+")
@@ -138,10 +109,8 @@ import Testing
     }
 
     @Test func aSequenceIsDrawnAsNoAcceleratorAtAll() {
-        // `g g` cannot be expressed as a key equivalent, and showing `G` for
-        // a command that `G` does not run is worse than showing nothing. This
-        // is also why the cheat sheet is in the Help menu: it is the only
-        // surface that can describe a sequence.
+        // `g g` cannot be a key equivalent, and showing `G` for a command `G` does not run is worse
+        // than nothing.
         #expect(MenuPlan.accelerator(from: "g g") == nil)
         let bar = MenuPlan.build(bindings: defaults)
         let first = bar.flatMap(\.items).first { $0.command == "first_message" }
@@ -150,14 +119,11 @@ import Testing
     }
 }
 
-/// The application menu, which macOS expects and freedesktop does not have.
 @MainActor
 @Suite struct ApplicationMenuTests {
     @Test func settingsIsPlannedIntoTheApplicationMenu() {
-        // `⌘,` is discoverable there and nowhere else on this platform. The
-        // placement comes from `postio_core::menu`, so it is one table's
-        // answer rather than a list of command ids kept here by hand — which
-        // is what #1158 existed to remove.
+        // The placement comes from `postio_core::menu`, one table's answer rather than a hand-kept
+        // list (#1158).
         let plan = MenuPlan.build(bindings: { _ in ["⌘,"] })
         let app = plan.first { $0.section == .app }
         #expect(app != nil, "no application menu was planned")
@@ -166,8 +132,7 @@ import Testing
     }
 
     @Test func nothingInTheApplicationMenuIsAlsoInEdit() {
-        // The failure this guards is a fold that adds rather than moves,
-        // leaving Settings in two menus at once.
+        // A fold that adds rather than moves would leave Settings in two menus.
         let plan = MenuPlan.build(bindings: { _ in [] })
         let app = Set(plan.first { $0.section == .app }?.items.compactMap(\.command) ?? [])
         let edit = Set(plan.first { $0.section == .edit }?.items.compactMap(\.command) ?? [])
@@ -175,13 +140,8 @@ import Testing
     }
 }
 
-/// Focus's menu bar on the Mac (specs/009-focus-macos T104): the registry's
-/// menus for what Focus offers here, each item showing the key in force, and
-/// the standard items every Mac application has around them.
 @MainActor
 @Suite struct FocusMenuBarTests {
-    /// What `bindingsFor` answers: the registry's defaults as this platform
-    /// expands them, with `[keys]`' overrides on top.
     final class Keys {
         var overrides: [String: [String]] = [:]
         func bindings(_ command: String) -> [String] {

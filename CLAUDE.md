@@ -1,9 +1,8 @@
 # Project instructions for AI agents
 
-Claim an issue, work it test-first in a worktree of your own, land it, take
-the next one. Hooks and `scripts/check.sh` enforce most rules when you break
-them, and each says what to do instead; this file is what they cannot check.
-Traps worth knowing first are in `docs/gotchas.md`.
+Claim an issue, work it test-first in your own worktree, land it, take the
+next. Hooks and `scripts/check.sh` enforce most rules and print the remedy;
+this file holds what they cannot check. Traps by area: `docs/gotchas.md`.
 
 ## The loop
 
@@ -12,151 +11,97 @@ scripts/issue-claim.sh                  # next ready issue -> its own worktree
 cd ~/src/postio-worktrees/issue-<n>     # work there, never in ~/src/postio
 scripts/issue-land.sh --detach          # gates, commit, push, PR, auto-merge
 scripts/issue-land.sh --status          # what the landing did
-scripts/issue-claim.sh                  # from inside the worktree: the next one
 ```
 
-`/issue` has the rest: claim flags, several small issues on one branch,
-feature branches for interdependent issues, red PRs, releasing a claim.
+`/issue` has claim flags, batches, feature branches and releases.
 
-**Keep going.** Finishing an issue is not finishing a session; do not ask
-whether to continue. Stop only when the claim finds nothing ready (say so),
-when a decision is the maintainer's (label it `needs-maintainer` and comment
-with the question and the options), or when context is nearly gone. Commit
-as you go — a WIP commit beats loose files — and land or commit before you
-stop.
-
-**Spec-driven work has no issues.** A feature under `specs/<nnn>-<name>/`
-that has been through `/speckit-specify` and `/speckit-plan` runs on its own
-branch: `git worktree add ~/src/postio-worktrees/<name> -b feature/<name>
-origin/main`, then `scripts/worktree-seed.sh` on it, then `printf
-'main\n' > "$(git rev-parse --git-dir)/postio-base"`. Work `tasks.md` top to
-bottom, a commit per task ending `Refs: specs/<nnn>-<name>` and the task id,
-and land with `scripts/issue-land.sh --detach --full-suite --title
-'<what the branch does>'`. Do not file an issue per task. Work the spec does not cover is still filed.
-
-A spec records its decisions, so it gets no parallel ADR. Write an ADR only
-for a rule that outlives the feature and other work must obey; fold a
-feature-only ADR into the spec and delete it.
+- **Keep going.** Stop only when nothing is ready, when a decision is the
+  maintainer's (label `needs-maintainer`, comment the question and options),
+  or context is nearly gone. Commit as you go.
+- **Spec-driven work** (`specs/<nnn>-<name>/`, after `/speckit-specify` and
+  `/speckit-plan`) runs on `feature/<name>`: one commit per task ending
+  `Refs: specs/<nnn>-<name>` and the task id, landed with
+  `issue-land.sh --detach --title '…'`. No issue per task.
+- A change too small for an issue: branch `fix/`, `docs/` or `chore/<slug>`.
 
 ## Tests
 
-**Red, green, repeat.** Write the failing test and watch it fail before the
-fix. Never re-break working code to test a test; if one was never seen red,
-tighten its assertion instead. An issue is done when its acceptance criteria
-are covered by tests.
+Red, then green. A test never seen red gets a tighter assertion, never a
+re-broken fix. An issue is done when its acceptance is covered by tests.
 
 | Tier | Command | When |
 |---|---|---|
-| fast | `scripts/test-fast.sh` | between edits: changed crates, `--lib` |
-| suite | `cargo nextest run -p <crate> --test <suite> [case]` | to confirm what you touched |
-| doctests | `cargo test -p <crate> --doc` | nextest does not run them |
-| landing | `issue-land.sh`: clippy, rustdoc, units and doctests of the crates you changed, then `check.sh` | always |
-| CI | every suite, nightly; on the PR with `--full-suite` | new features, big changes |
+| fast | `scripts/test-fast.sh` | between edits |
+| suite | `cargo nextest run -p <crate> --test <suite> [case]` | what you touched |
+| main | full suite and frontends | after each merge, unattended |
 
-- Nothing in the default suite touches the network. `#[ignore]` means only
-  "this machine may lack what the test needs" (a live server, D-Bus, a
-  keyring). A slow test goes in the nightly tier instead: a
-  `//! POSTIO-MEASUREMENT:` marker and `.config/nextest.toml`'s
-  `default-filter`.
-- No test on the merge path waits on the clock: no `sleep` of a second or
-  more, no product timer run in real time. Give the case a fake clock
-  (`#[tokio::test(start_paused = true)]`) or the nightly tier, with the
-  marker on the one case when the rest of its file is fast;
-  `check-no-clock-waits.py` refuses the rest.
-- Assert on what a person would see, not on what a layer was handed. The
-  bugs here live between layers that each pass their tests. `focus_suite`
-  (`crates/postio-gtk/tests/focus_suite/`) opens the real window and
-  presses real keys.
-- Each layer asserts its own question (ADR 0049): a behaviour's branches
-  once, in a rule crate or the controller; a frontend suite drives
-  composition, one case per path a person takes, per platform.
-- A change to how an app behaves under the keyboard ships with its
-  storyboard in `storyboards/`, written from the acceptance first and red
-  on the base, and `/ux-review` before landing.
-- A test that needs a display lives in `tests/`, never `src/`. Tests run on
-  a private headless compositor; `POSTIO_HEADLESS=0` to watch one.
-- Protocol code tests against the `MailBackend` mock and the `.eml` corpus
-  in `crates/postio-model/tests/corpus/` (`/add-fixture`).
-- Put logic where it is cheap to test: a rule as a function in
-  `postio-core`, `postio-ui` or `postio-body` is red in a second.
-- Logging is `POSTIO_LOG` (an `EnvFilter`, e.g. `info,postio_sync=debug`),
-  not `RUST_LOG`. To see the app at a pinned commit,
-  `scripts/run-isolated.sh [commit] [--shot]`.
+- **Each layer asserts its own question (ADR 0049).** A behaviour's branches
+  are tested once, in a rule crate or the controller (`postio-focus`). Each
+  frontend has one case per surface a person reaches, plus a key-binding
+  table check. Put logic where it is cheap to test: a function in
+  `postio-core`, `postio-ui` or `postio-body`.
+- **Assert what a person sees**, not what a layer was handed.
+- **No network, no clock.** Fake clocks (`start_paused = true`); a slow case
+  goes to the nightly tier with `POSTIO-MEASUREMENT:`. `#[ignore]` only means
+  "this machine may lack what the test needs".
+- **Keyboard behaviour changes** ship with a storyboard (`storyboards/`),
+  red on the base, and `/ux-review` before landing.
+- Display tests live in `tests/`; protocol code tests against the
+  `MailBackend` mock and the `.eml` corpus (`/add-fixture`).
+- Logs: `POSTIO_LOG` (an `EnvFilter`), not `RUST_LOG`.
 
-**Landing.** The default tier is the cheap one: what you changed, locally,
-and the PR's checks as the judge about five minutes later. `--full` (those
-crates' suites, locally) needs a specific reason. Ask for
-`--full-suite` when the default tier does not give you confidence in a
-change: a new feature, a storage migration, a change across several crates.
-`issue-land.sh` names a high-risk diff (`scripts/risk-of-diff.sh`) but adds
-the label by itself only for a change to the build environment
-(`rust-toolchain.toml`, `mise.toml`, `.cargo/config.toml`, `flatpak/*.json`); the full suite runs on `main` after every merge
-regardless. The `Frontends` check fails on any GTK suite failure, with no
-bypass. A CI
-failure on your PR is yours, on the same branch (`issue-claim.sh --resume
-<n>`). A failure in code your diff does not touch is probably someone
-else's: reproduce it alone and search the issues before re-running. The
-full suite runs on `main` after every merge and every night. While the
-latest run on `main` is red, nothing merges except the one PR that fixes
-it, labelled `fixes-nightly`; its merge runs the suite again, and a green
-run unlocks the rest. If your PR is that fix, label it; if not, wait for
-it, or be it.
+**Landing costs at most five minutes.** `issue-land.sh` runs the cheap gates,
+pushes, opens the PR and arms auto-merge. Report the PR number and stop or
+claim the next issue; never wait on CI. A red PR check is yours
+(`issue-claim.sh --resume <n>`); a failure outside your diff is probably
+someone else's. While `main` is red only a `fixes-nightly` PR merges.
 
 ## What the code must do
 
-- **Instant.** Startup < 500 ms, interaction < 16 ms, local search
-  < 100 ms, transitions ≤ 100 ms or none, and honour reduced motion. Never
-  load a whole mailbox; lists are windowed over the paged store. Budgets
-  are gated as counts (`postio_storage::test_support::counting`), so add a
-  count assertion when you touch a read path.
-- **Local-first.** Every mutating action is store write, enqueue, emit,
-  repaint. The UI never awaits the network.
-- **Providers are data.** Server settings live in the preset table, never
-  in named constants or special-cased branches.
-- **No backwards compatibility.** There are no installs to protect: write
-  the clean version and its migration, without shims or deprecation paths.
-- **Pimalaya first.** For a protocol or format need, check the Pimalaya
-  crates (io-imap, io-smtp, io-oauth, …) before writing wire code.
-- **Crate boundaries** are in `docs/ARCHITECTURE.md` and enforced by
-  `scripts/check.sh`.
+The constitution (`.specify/memory/constitution.md`) holds the principles;
+these are the ones every diff meets:
 
-## Privacy
+- **Instant:** startup < 500 ms, interaction < 16 ms, local search < 100 ms,
+  transitions ≤ 100 ms or none. Never load a whole mailbox. Budgets are
+  gated as counts: add a count assertion when you touch a read path.
+- **Local-first:** store write, enqueue, emit, repaint. The UI never awaits
+  the network.
+- **Providers are data** (the preset table). **No backwards compatibility**:
+  write the clean version and its migration. **Pimalaya first** for protocol
+  code. **Crate boundaries** are in `docs/ARCHITECTURE.md`.
+- **Privacy:** nothing leaves the machine unasked; credentials only in the
+  keyring; logs carry ids, counts and outcomes, never content. The repo is
+  public: reserved domains (`ada@example.com`) and no real names.
 
-Nothing leaves the machine that the user did not ask for: no telemetry, no
-prefetch, no speculative connections, remote images blocked per sender, and
-a reader that cannot run script or reach the network. Credentials live in
-the OS keyring only. **Logs carry ids, counts and outcomes, never message
-content.** The repository is public: fixtures, issues, PRs and commits use
-reserved domains (`ada@example.com`) and no real person's name or address,
-least of all the maintainer's. Never paste real mail or unread logs.
+## Comments
+
+1. A comment states a why the code cannot show: a constraint, ordering,
+   race, safety or privacy rule, workaround, or the bug it prevents. At most
+   three lines, on the line it protects.
+2. Never restate a name, a signature or the code below. Rename instead.
+3. Private items, fields and variants get no doc. A public item gets one
+   only for a caller's contract (units, errors, panics, ordering, `None`).
+4. No history, narrative or FR/task ids; that is the commit body's job. A
+   reference is a bare id after a why: `(ADR 0049)`, `(#751)`.
+5. A module `//!` is at most three lines; test files get none. `POSTIO-*`
+   markers stay. No dividers, no commented-out code.
+6. If the why can be a type, a test name or an assert message, make it that.
 
 ## Commits and git
 
-- The body of a commit says **why**. The format (`<type>(<scope>):
-  <summary>`, `Refs:`, no closing keywords even negated) is
-  `.gitmessage`, and `.githooks/commit-msg` refuses a message that breaks
-  it and names the rule. The PR title is the squash subject, so CI checks
-  it the same way; the PR's `Closes` does the closing.
-- A change too small for an issue gets none: branch it `fix/<slug>`,
-  `docs/<slug>` or `chore/<slug>` and land it the same way.
-- PRs merge squashed. Fetch before you reason about the tree; other
-  sessions land all the time.
-- Allowed without asking: committing, pushing your own branch, and
-  `--force-with-lease` on it. Ask first: pushing `main`, adding remotes,
-  rewriting shared history, bare `--force`.
+- The body says **why**. Format and trailers are `.gitmessage`; the hook
+  names any rule you break. PRs merge squashed; the PR title is the subject.
+- Fetch before you reason about the tree; other sessions land all the time.
+- Never force-push (a hook refuses it). A conflicted PR runs no checks: merge
+  `origin/main` into it and push. Ask before pushing `main`, adding remotes
+  or rewriting shared history.
 
 ## One machine, many sessions
 
-`~/src/postio` is for coordination; work in your own worktree, which no
-other session may touch. Never put a worktree path into anything rustc or a
-build script sees: it breaks the shared compile cache. Never pass `-j`; a
-machine-wide jobserver hands out compile jobs. A tree made with plain `git
-worktree add` should be seeded with `scripts/worktree-seed.sh`, or it builds
-cold. Cargo never deletes a superseded artifact, so a tree kept across
-rebases grows by gigabytes: `scripts/target-sweep.py` deletes what no build
-of it uses, and fails if the next build would rebuild anything.
-
-The Mac app's build loops are in `macos/CLAUDE.md`.
+Work only in your own worktree. Never pass `-j` (a machine-wide jobserver
+hands out jobs). Seed a tree made by hand with `scripts/worktree-seed.sh`.
+Never put a worktree path where rustc sees it. `scripts/target-sweep.py`
+trims a target that grew across rebases. The Mac's loops: `macos/CLAUDE.md`.
 
 ## Say it where it persists
 
@@ -164,30 +109,19 @@ The Mac app's build loops are in `macos/CLAUDE.md`.
 |---|---|
 | Why the change is shaped this way | the commit body |
 | What you found along the way | a comment on the issue |
-| Work you found that bears on what you are doing | fix it now, in its own commit, whatever its size |
-| Work you found that is tangential, or that you cannot do now | `scripts/issue-file.sh`, which searches for duplicates first; comment on the existing issue if it finds one |
-| A design call an agent can make | label `needs-architecture` (`/ux-architect`'s queue) |
-| A call only the maintainer can make | label `needs-maintainer`, with the question and options |
-| A trap future sessions must know | `docs/gotchas.md`, or a dated note in `docs/notes/` listed in its README |
-| A decision other work must obey | an ADR in `docs/decisions/` |
+| Related work | fix it now, in its own commit |
+| Tangential work | `scripts/issue-file.sh` |
+| A design call an agent can make | label `needs-architecture` |
+| A call only the maintainer can make | label `needs-maintainer` |
+| A trap future sessions must know | `docs/gotchas/<area>.md` |
+| A rule other work must obey | an ADR in `docs/decisions/` |
 
-## Skills and sources of truth
+## Sources of truth
 
-Skills: `/issue` (the loop), `/steward` (the periodic health pass),
-`/lanes` (who else is working), `/preflight` (the true state of the tree),
-`/add-fixture`, `/ux-architect` (designing a surface),
-`/gtk-design` (building one), `/ux-review` (filming and reviewing an
-interaction change), and the `/speckit-*` set for spec-driven features.
-
-- Principles: `.specify/memory/constitution.md`.
-- Product: `docs/PRODUCT.md`. The app says "Flagged", never "Starred".
-- Keys: `docs/keybindings.md`, generated from the registry; one keymap for
-  every app, all rebindable.
-- Crates and boundaries: `docs/ARCHITECTURE.md`.
-- Decisions: `docs/decisions/`, then each feature's `specs/`.
-- Visual truth: spec 007's `screens.md` against the maintainer's local
-  `Design/` references (untracked, never copied in).
-- Scope for v1: Linux, IMAP and SMTP with OAuth, one provider preset
-  table, no AI in Postio itself (a local model the user connects is
-  optional, never required).
-- A release is a PR: `scripts/release-prepare.sh X.Y.Z` from a worktree.
+Skills: `/issue`, `/steward`, `/lanes`, `/preflight`, `/add-fixture`,
+`/ux-architect`, `/gtk-design`, `/ux-review`, `/speckit-*`. Product:
+`docs/PRODUCT.md` (the app says "Flagged", never "Starred"). Keys:
+`docs/keybindings.md` (generated). Decisions: `docs/decisions/`, then
+`specs/`. Visual truth: spec 007's `screens.md`. v1 scope: Linux, IMAP and
+SMTP with OAuth, one preset table, no AI inside Postio. A release is a PR:
+`scripts/release-prepare.sh X.Y.Z`.

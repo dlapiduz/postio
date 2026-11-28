@@ -1,11 +1,3 @@
-//! The cross-account move saga, drained (#188, ADR 0005 Q9).
-//!
-//! Each design constraint the ADR states is a test here, against two
-//! `MockBackend`s standing in for two servers and one store holding both
-//! accounts. What the matrix is really about: **however the two drainers
-//! interleave, replay, or die, the source copy outlives anything short of a
-//! confirmed copy in the target.**
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_account::backend::{Fault, MailBackend, MockBackend, MockMailbox, MockMessage};
 use postio_model::ids::{AccountId, MailboxId, MessageId, Uid, UidValidity};
@@ -21,7 +13,6 @@ const RAW: &[u8] = b"From: Ada Lovelace <ada@example.com>\r\n\
     Message-ID: <engine@example.com>\r\n\
     Subject: Analytical engine\r\n\r\nNotes.\r\n";
 
-/// The same message, with no Message-ID to confirm by.
 const RAW_ANONYMOUS: &[u8] =
     b"From: Ada Lovelace <ada@example.com>\r\nSubject: Analytical engine\r\n\r\nNotes.\r\n";
 
@@ -29,7 +20,6 @@ fn at(hour: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 3, 2, hour, 0, 0).unwrap()
 }
 
-/// Two accounts in one store, a saga between them, and both queue halves.
 struct World {
     database: test_support::TempStore,
     blobs: BlobStore,
@@ -38,8 +28,6 @@ struct World {
     source_inbox: MailboxId,
     target_inbox: MailboxId,
     source_message: MessageId,
-    /// The provisional copy in the target account — the row the user sees
-    /// there at once, and the one phase 2 has to give an identity to.
     target_message: MessageId,
     saga: postio_model::ids::CrossAccountMoveId,
 }
@@ -78,11 +66,8 @@ async fn world(raw: &[u8], with_message_id: bool) -> World {
         .await
         .expect("source message");
 
-    // The provisional copy the user sees in the target the instant they
-    // press the key — `relocate_rows` makes one for every cross-account
-    // move, so a fixture without one is not the shape this code runs
-    // against. Born with no server identity at all (#940): account B's
-    // server has never seen it.
+    // The provisional copy `relocate_rows` makes for every cross-account move; born with no server
+    // identity (#940).
     let mut copy = message.clone();
     copy.id = MessageId::UNASSIGNED;
     copy.account_id = target.id;
@@ -143,7 +128,6 @@ async fn world(raw: &[u8], with_message_id: bool) -> World {
     }
 }
 
-/// The source server: the message at UID 1 in its inbox.
 async fn source_server() -> MockBackend {
     let backend = MockBackend::builder()
         .mailbox(
@@ -156,8 +140,6 @@ async fn source_server() -> MockBackend {
     backend
 }
 
-/// The target server: an empty inbox. `uid_plus` decides whether APPEND
-/// proves anything.
 async fn target_server(uid_plus: bool) -> MockBackend {
     let mut builder = MockBackend::builder().mailbox(MockMailbox::new("INBOX"));
     builder = if uid_plus {
@@ -174,7 +156,6 @@ async fn drain(world: &World, backend: &MockBackend, account: AccountId) {
     drain_at(world, backend, account, 10).await;
 }
 
-/// A refused step backs off, so a later pass has to come visibly later.
 async fn drain_at(world: &World, backend: &MockBackend, account: AccountId, hour: u32) {
     let connection = world.database.connect().await.expect("checkout");
     Drainer::new(backend)
@@ -204,9 +185,6 @@ async fn the_move_completes_and_the_only_order_is_copy_confirm_remove() {
     let source = source_server().await;
     let target = target_server(true).await;
 
-    // The remove drained first — the interleaving that must refuse. The
-    // source server still holds the message afterwards, whatever the queue
-    // wanted.
     drain(&world, &source, world.source_account).await;
     assert_eq!(
         messages_in(&source, "INBOX").await,
@@ -215,28 +193,17 @@ async fn the_move_completes_and_the_only_order_is_copy_confirm_remove() {
     );
     assert_eq!(phase(&world).await, MovePhase::Copying);
 
-    // The copy runs: APPEND, confirmed by APPENDUID.
     drain(&world, &target, world.target_account).await;
     assert_eq!(messages_in(&target, "INBOX").await, 1);
     assert_eq!(phase(&world).await, MovePhase::Confirmed);
 
-    // Now — and only now — the remove goes through. Hours later, because
-    // the refused attempt backed off like any deferred operation.
     drain_at(&world, &source, world.source_account, 20).await;
     assert_eq!(messages_in(&source, "INBOX").await, 0);
     assert_eq!(phase(&world).await, MovePhase::Done);
 }
 
-/// #531, and the forward path's own reconciliation.
-///
-/// The confirmation proves where the message landed on the target server —
-/// `APPENDUID` carries the destination's `UIDVALIDITY` as well as its UID,
-/// so the identity is whole (ADR 0026). Writing it only onto the saga leaves
-/// the row the user is looking at claiming no server identity, with two
-/// consequences: the target account's next sync matches a fetched message by
-/// `find_by_remote_id(mailbox, remote_id)` and so produces a *second* row for
-/// the same message, and an inverse saga has no coordinate to name the copy
-/// it must remove.
+/// #531: the confirmation writes the destination identity onto the row the user sees, or the next
+/// target sync would create a second row and an inverse saga would have no coordinate.
 #[tokio::test]
 async fn confirming_writes_the_identity_onto_the_row_the_user_sees() {
     let world = world(RAW, true).await;
@@ -293,17 +260,12 @@ async fn confirming_writes_the_identity_onto_the_row_the_user_sees() {
 
 #[tokio::test]
 async fn a_replayed_copy_finds_the_first_copy_and_makes_no_second() {
-    // A crash after the APPEND but before the queue row settles replays the
-    // operation. Idempotency is by Message-ID: the re-run confirms the copy
-    // that is already there.
     let world = world(RAW, true).await;
     let target = target_server(true).await;
 
     drain(&world, &target, world.target_account).await;
     assert_eq!(messages_in(&target, "INBOX").await, 1);
 
-    // The crash: the settled row is put back to pending, as a restart that
-    // lost the settle would leave it.
     {
         let connection = world.database.connect().await.expect("checkout");
         connection
@@ -340,9 +302,6 @@ async fn without_uidplus_the_search_confirms_instead() {
 
 #[tokio::test]
 async fn unconfirmable_stops_at_phase_two_and_deletes_nothing() {
-    // No UIDPLUS and no Message-ID: the append lands but nothing can prove
-    // it. The saga parks in `unconfirmed`, the operation fails loudly, and
-    // the remove keeps refusing — the ADR's "stop and ask", exactly.
     let world = world(RAW_ANONYMOUS, false).await;
     let source = source_server().await;
     let target = target_server(false).await;
@@ -358,35 +317,18 @@ async fn unconfirmable_stops_at_phase_two_and_deletes_nothing() {
     );
 }
 
-/// #531 / ADR 0026: phase 3 uses the identity its own queue row snapshotted.
-///
-/// `remove` re-derives the source coordinate from the live message row, and
-/// reads "no `remote_id` on the row" as "the server copy is already gone" —
-/// settling the saga `done` without touching a server. That is right for a
-/// row whose copy really did vanish and wrong for a row that never had an
-/// identity, which is precisely what an inverse saga hands it: the
-/// provisional copy in the target account is born with none (#940).
-///
-/// The mechanism to use instead already exists. `operation_queue.
-/// source_remote_id` is filled by `enqueue` for every message-targeted
-/// operation, reading the row *before* the caller's local write can null it
-/// — the ordering #289 exists to enforce — and `Move` and `Delete` already
-/// prefer it for exactly this reason.
-///
-/// The fixture nulls the row's identity after enqueueing, which is the state
-/// an inverse saga produces and the one this code has never been run
-/// against.
+/// #531 / ADR 0026: phase 3 uses the identity its own queue row snapshotted, not the live row,
+/// which an inverse saga's provisional copy leaves empty (#940).
+/// The fixture nulls the row's identity after enqueueing.
 #[tokio::test]
 async fn the_removal_uses_the_coordinate_its_queue_row_snapshotted() {
     let world = world(RAW, true).await;
     let source = source_server().await;
     let target = target_server(true).await;
 
-    // Phase 1-2 on the target, so the saga reaches `confirmed`.
     drain(&world, &target, world.target_account).await;
     assert_eq!(phase(&world).await, MovePhase::Confirmed);
 
-    // The live row loses its identity, the queue row keeps its snapshot.
     {
         let connection = world.database.connect().await.expect("checkout");
         connection
@@ -420,8 +362,6 @@ async fn the_removal_uses_the_coordinate_its_queue_row_snapshotted() {
 
 #[tokio::test]
 async fn a_vanished_destination_aborts_with_the_source_intact() {
-    // Q13: the target folder was deleted (or its account removed) while the
-    // saga was in flight. The saga aborts; the source copy is untouched.
     let world = world(RAW, true).await;
     let source = source_server().await;
     let target = target_server(true).await;
@@ -443,7 +383,6 @@ async fn a_vanished_destination_aborts_with_the_source_intact() {
         1,
         "an aborted move leaves the message exactly where it was (Q13)"
     );
-    // And locally too: the source row is still there to be shown again.
     let connection = world.database.connect().await.expect("checkout");
     assert!(
         MessageRepository::new(&connection)
@@ -456,35 +395,21 @@ async fn a_vanished_destination_aborts_with_the_source_intact() {
     let _ = world.source_inbox;
 }
 
-/// #531's last criterion: the inverse saga's removal reaches the **target**
-/// server, using the **target's** coordinates.
-///
-/// This is the failure the whole issue is shaped around, and it is a silent
-/// one: an inverse removal that names a coordinate the target server does
-/// not have reaches nothing, expunges nothing, and settles `done` reporting
-/// success. The user is told their message came back and account B keeps its
-/// copy for ever.
-///
-/// It is driven the whole way rather than staged: the forward saga runs
-/// against both mock servers until the move is genuinely complete, the undo
-/// builds the inverse the way `u` does, and then the inverse's two halves
-/// drain against the same two servers. Every coordinate in play is one a
-/// server actually issued.
+/// #531: the inverse saga's removal reaches the target server with the target's coordinates; a
+/// wrong one would expunge nothing and settle `done`.
+/// Driven the whole way so every coordinate is one a server issued.
 #[tokio::test]
 async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates() {
     let world = world(RAW, true).await;
     let source = source_server().await;
     let target = target_server(true).await;
 
-    // ── the move, all the way ────────────────────────────────────────────
     drain(&world, &target, world.target_account).await;
     drain(&world, &source, world.source_account).await;
     assert_eq!(phase(&world).await, MovePhase::Done);
     assert_eq!(messages_in(&source, "INBOX").await, 0, "A gave it up");
     assert_eq!(messages_in(&target, "INBOX").await, 1, "B has it");
 
-    // The identity B's server issued, now on the row (this branch's earlier
-    // commit) — and the coordinate the inverse must remove by.
     let copy_identity = {
         let connection = world.database.connect().await.expect("checkout");
         MessageRepository::new(&connection)
@@ -497,7 +422,6 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
             .expect("phase 2 wrote what the append proved")
     };
 
-    // ── the undo, built the way `u` builds it ────────────────────────────
     let forward_blob = {
         let connection = world.database.connect().await.expect("checkout");
         CrossAccountMoveRepository::new(&connection)
@@ -518,9 +442,6 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
                 target_account: world.source_account,
                 target_mailbox: world.source_inbox,
                 target_message: Some(world.source_message),
-                // The bytes to put back. Content-addressed, so this is the
-                // same blob the forward pass appended to B — `invert_one`
-                // reads it off the copy row for the same reason.
                 raw_blob_id: forward_blob.clone(),
                 rfc_message_id: Some("<engine@example.com>".to_owned()),
             })
@@ -536,8 +457,6 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
             )
             .await
             .expect("enqueue the copy back");
-        // Enqueued while the copy still carries B's identity, which is what
-        // `source_remote_id` snapshots — and what phase 3 removes by.
         queue
             .enqueue(
                 world.target_account,
@@ -554,9 +473,6 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
         inverse
     };
 
-    // Phase 1 of the inverse, on account A. Unlike the `confirmed` case,
-    // `done` means A genuinely gave the message up — so this is a real
-    // append, from the raw blob the forward pass already stored.
     drain_at(&world, &source, world.source_account, 12).await;
     let phase_now = {
         let connection = world.database.connect().await.expect("checkout");
@@ -575,7 +491,6 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
          rule doing its job, and this test failing for the right reason"
     );
 
-    // ── and the half this test exists for ────────────────────────────────
     drain_at(&world, &target, world.target_account, 13).await;
 
     assert_eq!(
@@ -591,23 +506,13 @@ async fn the_inverse_removal_reaches_the_target_server_with_its_own_coordinates(
         "and the message is back on the server it came from, exactly once"
     );
 
-    // The count above *is* the coordinate assertion, which is why there is
-    // no separate one. A `RemoteId` from account A's UID space either fails
-    // `wire_uid`'s generation check outright or names a UID B never issued;
-    // either way the expunge matches nothing and the message is still there.
-    // The only way this inbox reaches zero is the removal naming what B's
-    // own server assigned — which is `copy_identity`, read off the row
-    // before the undo, and written there by phase 2.
+    // The count is the coordinate assertion: a foreign `RemoteId` fails `wire_uid`'s generation
+    // check or names a UID B never issued, leaving the message in place.
     let _ = copy_identity;
 }
 
 #[tokio::test]
 async fn a_copy_replayed_after_the_saga_already_aborted_is_obsolete() {
-    // A restart that lost its settle re-queues the operation the same way
-    // `a_replayed_copy_finds_the_first_copy_and_makes_no_second` does -- but
-    // this time onto a saga that is already `Aborted` (Q13's own vanished-
-    // destination case), which `copy` must recognise before it ever asks
-    // whether the destination exists again.
     let world = world(RAW, true).await;
     let target = target_server(true).await;
     {
@@ -648,10 +553,6 @@ async fn a_copy_replayed_after_the_saga_already_aborted_is_obsolete() {
 
 #[tokio::test]
 async fn a_search_failure_while_confirming_backs_off_rather_than_failing() {
-    // The Message-ID search is what proves an append without UIDPLUS -- and
-    // without UIDPLUS it also runs first, before any append is attempted, so
-    // a server that refuses it must be retried rather than treated as a
-    // permanent failure: nothing has been uploaded yet to fail over.
     let world = world(RAW, true).await;
     let target = target_server(false).await;
     target.inject_after(
@@ -677,10 +578,6 @@ async fn a_search_failure_while_confirming_backs_off_rather_than_failing() {
 
 #[tokio::test]
 async fn an_upload_failure_backs_off_rather_than_failing() {
-    // No Message-ID to search by, so the append is the very first thing
-    // `copy` asks the server for. A server that refuses it is a reason to
-    // retry later, not to abandon the move -- the source copy is still
-    // exactly where it was.
     let world = world(RAW_ANONYMOUS, false).await;
     let target = target_server(false).await;
     target.inject_after(1, Fault::Rejected("APPEND refused".to_owned()));
@@ -695,11 +592,6 @@ async fn an_upload_failure_backs_off_rather_than_failing() {
     assert_eq!(messages_in(&target, "INBOX").await, 0);
 }
 
-/// A message with no server identity at all, in an account of its own --
-/// the case #211-236 exists for and neither existing removal test reaches:
-/// `enqueue`'s own snapshot is empty (there was nothing to snapshot) *and*
-/// the live row has nothing either, so `remove` has no coordinate from
-/// either source and must settle the saga without asking a server anything.
 #[tokio::test]
 async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server() {
     let database = test_support::temp().await;
@@ -723,10 +615,6 @@ async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server
         .await
         .id;
 
-    // No `server.remote_id` at all -- born locally with nowhere on a server
-    // it has ever been, which is the state #940 describes for a provisional
-    // copy and, degenerately, the state any message has before its first
-    // sync.
     let mut message = Message::new(source.id, source_inbox, at(8));
     let source_message = MessageRepository::new(&connection)
         .create(&mut message)
@@ -746,9 +634,6 @@ async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server
         })
         .await
         .expect("saga");
-    // `remove` refuses to run before `confirmed` -- reachable straight from
-    // `copying`, per the phase graph, without staging a whole copy this test
-    // is not about.
     CrossAccountMoveRepository::new(&connection)
         .transition(saga, MovePhase::Confirmed)
         .await
@@ -794,10 +679,6 @@ async fn a_removal_with_no_coordinate_anywhere_settles_without_reaching_a_server
 
 #[tokio::test]
 async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing() {
-    // Phase 1 needs the raw bytes on this machine, and a queue row can
-    // outrun a backfill that has not landed them yet. Nothing to upload is
-    // a reason to wait, not to fail the move over a race with a different
-    // pass of the same engine.
     let database = test_support::temp().await;
     let blobs = BlobStore::open(
         database.directory().join("blobs"),
@@ -835,9 +716,6 @@ async fn a_copy_with_no_local_blob_yet_backs_off_rather_than_uploading_nothing()
         .await
         .expect("the provisional copy");
 
-    // No `raw_blob_id` at all -- the state a queue row is in the moment it
-    // is enqueued, before the backfill that will eventually fetch this
-    // message's bytes has had a turn.
     let saga = CrossAccountMoveRepository::new(&connection)
         .create(&NewCrossAccountMove {
             source_message,

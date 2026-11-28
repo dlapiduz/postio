@@ -1,18 +1,11 @@
-//! The bar under the list that says what the keys act on (spec 013 US2;
-//! `Design/focus-macos-threads` screens 02 and 03): the scope in bold, the
-//! keys that matter there as cap and label, and on the right one sentence
-//! about what acts on the message and what on the thread.
-//!
-//! The words are `postio_ui::scope::FooterView`'s, composed once for both
-//! apps; this only draws them. Its keys come from the keymap, so a
-//! rebinding shows.
+//! The bar under the list that says what the keys act on. The words are
+//! `postio_ui::scope::FooterView`'s, composed once for both apps; this only draws them.
 
 use gtk::prelude::*;
 use postio_ui::scope::FooterView;
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space;
 
-/// The footer bar.
 pub struct ScopeFooter {
     root: gtk::Box,
     title: gtk::Label,
@@ -21,7 +14,6 @@ pub struct ScopeFooter {
 }
 
 impl ScopeFooter {
-    /// An empty bar, drawn once there is something to say.
     pub fn new() -> Self {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
         root.add_css_class("focus-scope-footer");
@@ -48,12 +40,10 @@ impl ScopeFooter {
         }
     }
 
-    /// The bar, to place in a layout.
     pub fn widget(&self) -> &gtk::Box {
         &self.root
     }
 
-    /// Draw `view`, replacing what was said.
     pub fn set(&self, view: &FooterView) {
         self.title.set_text(&view.title);
         while let Some(child) = self.keys.first_child() {
@@ -70,12 +60,10 @@ impl ScopeFooter {
         self.root.set_visible(!view.title.is_empty());
     }
 
-    /// The scope in words, as drawn.
     pub fn title(&self) -> String {
         self.title.text().to_string()
     }
 
-    /// The words beside the keycaps, as drawn, in order: "move | open | ...".
     pub fn labels(&self) -> String {
         let mut said = Vec::new();
         let mut pair = self.keys.first_child();
@@ -91,7 +79,6 @@ impl ScopeFooter {
         said.join(" | ")
     }
 
-    /// The right-hand sentence, if there is one.
     pub fn note(&self) -> Option<String> {
         self.note
             .is_visible()

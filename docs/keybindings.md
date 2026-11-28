@@ -45,11 +45,11 @@ command from inside a text field.
 
 | Keys | Command | Where | Undo | Id |
 |---|---|---|---|---|
-| `j` or `Down` | Next message | List, thread, reader, search, digest, Filtered view, search results, thread outline |  | `next_message` |
-| `k` or `Up` | Previous message | List, thread, reader, search, digest, Filtered view, search results, thread outline |  | `prev_message` |
-| `g g` | First message | List, thread, reader, search, search results |  | `first_message` |
-| `G` | Last message | List, thread, reader, search, search results |  | `last_message` |
-| `Return` or `o` | Open message | List, thread, search, digest, Filtered view, search results, thread outline |  | `open_message` |
+| `j` or `Down` | Next message | List, thread, reader, search, digest, Filtered view, search results, thread outline, calendar, calendar window |  | `next_message` |
+| `k` or `Up` | Previous message | List, thread, reader, search, digest, Filtered view, search results, thread outline, calendar, calendar window |  | `prev_message` |
+| `g g` | First message | List, thread, reader, search, search results, calendar, calendar window |  | `first_message` |
+| `G` | Last message | List, thread, reader, search, search results, calendar, calendar window |  | `last_message` |
+| `Return` or `o` | Open message | List, thread, search, digest, Filtered view, search results, thread outline, calendar, calendar window |  | `open_message` |
 | `x` | Toggle selection | List, thread, reader, search, Filtered view, search results |  | `toggle_selection` |
 | `J` or `shift+Down` | Extend selection down | List, reader, search, Filtered view |  | `extend_selection_down` |
 | `K` or `shift+Up` | Extend selection up | List, reader, search, Filtered view |  | `extend_selection_up` |
@@ -75,7 +75,7 @@ command from inside a text field.
 | `a` or `ctrl+shift+r` | Reply to all | List, thread, reader, composer |  | `reply_all` |
 | `f` or `ctrl+shift+f` | Forward | List, thread, reader, composer |  | `forward` |
 | `e` or `ctrl+shift+a` | Archive | List, thread, reader, digest, search results | Undoable | `archive` |
-| `#` or `Delete` | Delete | List, thread, reader, Filtered view, search results | Undoable | `delete` |
+| `#` or `Delete` | Delete | List, thread, reader, Filtered view, search results, calendar, calendar window | Undoable | `delete` |
 | `v` | Move to… | List, thread, reader, search results | Undoable | `move` |
 | `s` | Flag | List, thread, reader, Filtered view | Undoable | `flag` |
 | `I` or `U` | Mark read or unread | List, thread, reader, Filtered view, search results | Undoable | `toggle_read` |
@@ -83,8 +83,8 @@ command from inside a text field.
 | `B` | Unsnooze | List, thread, reader | Undoable | `unsnooze` |
 | `h` or `ctrl+h` | Remind if no reply… | List, thread, reader, composer | Undoable | `remind_if_no_reply` |
 | `l` | Add label… | List, thread, reader, search results | Undoable | `add_label` |
-| `y` | Accept invitation | List, thread, reader | Undo briefly | `accept_invite` |
-| `Y` | Decline invitation | List, thread, reader | Undo briefly | `decline_invite` |
+| `y` | Accept invitation | List, thread, reader, calendar, calendar window | Undo briefly | `accept_invite` |
+| `Y` | Decline invitation | List, thread, reader, calendar, calendar window | Undo briefly | `decline_invite` |
 | `d` | Digest rule… | List, thread, reader, digest |  | `digest_rule` |
 | `D` | Stop digesting this sender | Reader, digest | Undoable | `stop_digesting_sender` |
 | `V` | View source | List, thread, reader |  | `view_source` |
@@ -92,7 +92,7 @@ command from inside a text field.
 | `-` | Dismiss marker | List, thread, reader | Undoable | `dismiss_marker` |
 | `.` | More actions | Reader |  | `more_actions` |
 | `F8` | Read beside the list or over it | List |  | `toggle_reading_pane` |
-| `/` or `alt+ctrl+f` | Search | List, thread, reader, search, folder list, search results, thread outline |  | `search` |
+| `/` or `alt+ctrl+f` | Search | List, thread, reader, search, folder list, search results, thread outline, calendar, calendar window |  | `search` |
 | `ctrl+s` | Save search as folder | Search, search results |  | `save_search` |
 | `ctrl+BackSpace` or `alt+BackSpace` | Back to words | Search, search results |  | `back_to_words` |
 | `ctrl+Return` | Show all results | Search (not the terminal) |  | `show_all_results` |
@@ -135,37 +135,55 @@ command from inside a text field.
 | `ctrl+b` | Bold | Composer |  | `bold` |
 | `ctrl+i` or `alt+i` | Italic | Composer |  | `italic` |
 | `ctrl+alt+1` or `alt+1` | Heading 1 | Composer |  | `heading_1` |
+| `ctrl+alt+2` or `alt+2` | Heading 2 | Composer |  | `heading_2` |
+| `ctrl+alt+3` or `alt+3` | Heading 3 | Composer |  | `heading_3` |
+| `ctrl+alt+4` or `alt+4` | Heading 4 | Composer |  | `heading_4` |
+| `ctrl+alt+5` or `alt+5` | Heading 5 | Composer |  | `heading_5` |
+| `ctrl+alt+6` or `alt+6` | Heading 6 | Composer |  | `heading_6` |
+| `ctrl+alt+0` or `alt+0` | Normal text | Composer |  | `normal_text` |
 | `ctrl+shift+8` or `alt+8` | Bulleted list | Composer |  | `bullet_list` |
 | `ctrl+shift+7` or `alt+7` | Numbered list | Composer |  | `numbered_list` |
 | `ctrl+shift+k` or `alt+k` | Insert link… | Composer |  | `insert_link` |
 | `ctrl+shift+9` or `alt+9` | Quote block | Composer |  | `quote_block` |
-| `z` or `ctrl+z` | Undo | List, thread, reader, account list, digest, Filtered view, search results |  | `undo` |
+| `ctrl+shift+s` or `alt+asciitilde` | Strikethrough | Composer |  | `strikethrough` |
+| `ctrl+e` or `alt+grave` | Inline code | Composer |  | `inline_code` |
+| `ctrl+alt+c` or `alt+C` | Code block | Composer |  | `code_block` |
+| `ctrl+shift+6` or `alt+t` | Task list | Composer |  | `task_list` |
+| `ctrl+alt+x` or `alt+X` | Done or not done | Composer |  | `toggle_task` |
+| `ctrl+bracketright` or `alt+greater` | Indent | Composer |  | `indent` |
+| `ctrl+bracketleft` or `alt+less` | Outdent | Composer |  | `outdent` |
+| `ctrl+alt+minus` or `alt+minus` | Divider | Composer |  | `divider` |
+| `ctrl+shift+t` or `alt+bar` | Table | Composer |  | `table` |
+| `ctrl+backslash` or `alt+backslash` | Clear formatting | Composer |  | `clear_formatting` |
+| `ctrl+alt+s` | Edit as Markdown or rich text | Composer (not the terminal) |  | `toggle_markdown_source` |
+| `ctrl+alt+i` or `alt+I` | Download and attach image | Composer |  | `attach_remote_image` |
+| `z` or `ctrl+z` | Undo | List, thread, reader, account list, digest, Filtered view, search results, calendar, calendar window |  | `undo` |
 | `ctrl+k` | Command palette | Everywhere |  | `command_palette` |
 | `?` | Keyboard shortcuts | List, thread, reader |  | `cheat_sheet` |
 | `ctrl+comma` or `alt+comma` | Settings | Everywhere |  | `settings` |
 | `ctrl+shift+n` or `alt+n` | Add account | Everywhere |  | `add_account` |
 | `ctrl+e` | Edit configuration | List, thread, reader |  | `edit_config` |
-| `ctrl+q` or `ctrl+w` | Quit Postio | Everywhere |  | `quit` |
+| `ctrl+q` | Quit Postio | Everywhere |  | `quit` |
 | `alt+i` | Show remote images | List, thread, reader |  | `show_images` |
 | `alt+I` | Always show images from this sender | List, thread, reader |  | `always_show_images` |
 | `M` | Unsubscribe from this list | List, thread, reader, digest |  | `unsubscribe` |
 | `C` | Clear what the list sent | List, thread, reader, digest | Undoable | `clear_list_mail` |
 | `g l` | Go to folders | List, thread, reader, search |  | `go_to_folders` |
-| `g i` | Go to inbox | List, thread, reader, search, folder list, digest, Filtered view |  | `go_to_inbox` |
-| `g d` | Go to drafts | List, thread, reader, search, folder list |  | `go_to_drafts` |
-| `g t` | Go to sent | List, thread, reader, search, folder list |  | `go_to_sent` |
-| `g s` | Go to flagged | List, thread, reader, search, folder list |  | `go_to_flagged` |
-| `g a` | Go to archive | List, thread, reader, search, folder list |  | `go_to_archive` |
-| `g b` | Go to snoozed | List, thread, reader, search, folder list |  | `go_to_snoozed` |
-| `g o` | Go to outbox | List, thread, reader, search, folder list |  | `go_to_outbox` |
-| `g j` | Go to junk | List, thread, reader, search, folder list |  | `go_to_junk` |
-| `g #` | Go to trash | List, thread, reader, search, folder list |  | `go_to_trash` |
-| `g f` | Go to Filtered | List, thread, reader, search, folder list |  | `go_to_filtered` |
-| `g r` | Go to digest rules | List, thread, reader, search, folder list |  | `go_to_digest_rules` |
-| `alt+1` | Saved search 1 | List, thread, reader, search, folder list |  | `saved_search_1` |
-| `alt+2` | Saved search 2 | List, thread, reader, search, folder list |  | `saved_search_2` |
-| `alt+3` | Saved search 3 | List, thread, reader, search, folder list |  | `saved_search_3` |
-| `alt+4` | Saved search 4 | List, thread, reader, search, folder list |  | `saved_search_4` |
+| `g i` | Go to inbox | List, thread, reader, search, folder list, digest, Filtered view, calendar, calendar window |  | `go_to_inbox` |
+| `g d` | Go to drafts | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_drafts` |
+| `g t` | Go to sent | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_sent` |
+| `g s` | Go to flagged | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_flagged` |
+| `g a` | Go to archive | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_archive` |
+| `g b` | Go to snoozed | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_snoozed` |
+| `g o` | Go to outbox | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_outbox` |
+| `g j` | Go to junk | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_junk` |
+| `g #` | Go to trash | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_trash` |
+| `g f` | Go to Filtered | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_filtered` |
+| `g r` | Go to digest rules | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_digest_rules` |
+| `alt+1` | Saved search 1 | List, thread, reader, search, folder list, calendar, calendar window |  | `saved_search_1` |
+| `alt+2` | Saved search 2 | List, thread, reader, search, folder list, calendar, calendar window |  | `saved_search_2` |
+| `alt+3` | Saved search 3 | List, thread, reader, search, folder list, calendar, calendar window |  | `saved_search_3` |
+| `alt+4` | Saved search 4 | List, thread, reader, search, folder list, calendar, calendar window |  | `saved_search_4` |
 | `!` | Show only what has an action | List, search results |  | `toggle_has_action` |
 | `Return` | Enable or disable account | Account list |  | `toggle_account_enabled` |
 | `Delete` | Remove account | Account list | Undoable | `remove_account` |
@@ -202,7 +220,7 @@ command from inside a text field.
 | `alt+s` | Use the subject instead | Capture sheet |  | `capture_use_subject` |
 | `ctrl+Return` or `alt+Return` | Add to the vault | Capture sheet |  | `capture_write` |
 | `L` | Digest mail like this | List |  | `digest_like_this` |
-| `g c` | Contacts | List, thread, reader, search, folder list (not the terminal) |  | `open_contacts` |
+| `g c` | Contacts | List, thread, reader, search, folder list, calendar, calendar window (not the terminal) |  | `open_contacts` |
 | `i` | Contact popover | List, thread, reader, search results (not the terminal) |  | `contact_popover` |
 | `ctrl+i` | Open card |  (not the terminal) |  | `contact_open_card` |
 | `ctrl+Return` | Add contact |  (not the terminal) | Undoable | `contact_add` |
@@ -226,7 +244,7 @@ command from inside a text field.
 | `d` or `Delete` | Delete |  (not the terminal) | Undoable | `contact_delete` |
 | `r` | Restore contact |  (not the terminal) | Undoable | `contact_restore` |
 | `v d` | Deleted contacts |  (not the terminal) |  | `contacts_toggle_deleted` |
-| `g w` | Review contacts | List, thread, reader, search, folder list (not the terminal) |  | `contacts_suggestions` |
+| `g w` | Review contacts | List, thread, reader, search, folder list, calendar, calendar window (not the terminal) |  | `contacts_suggestions` |
 | `n` | Not the same person |  (not the terminal) |  | `suggestion_dismiss` |
 | `g n` | New group |  (not the terminal) | Undoable | `contact_group_new` |
 | `R` | Rename group |  (not the terminal) | Undoable | `contact_group_rename` |
@@ -252,6 +270,22 @@ command from inside a text field.
 | `3` | Forward the attachments | Forward chooser (not the terminal) |  | `forward_what_3` |
 | `ctrl+shift+Down` | Show newer messages | Composer (not the terminal) |  | `show_newer` |
 | `ctrl+shift+q` | Expand quoted text | Composer (not the terminal) |  | `expand_quoted` |
+| `g e` | Calendar | List, thread, reader, search, folder list, calendar, calendar window |  | `go_to_calendar` |
+| `1` | Agenda | Calendar, calendar window |  | `calendar_agenda` |
+| `[` | Earlier | Calendar, calendar window |  | `calendar_previous` |
+| `]` | Later | Calendar, calendar window |  | `calendar_next` |
+| `t` | Today | Calendar, calendar window |  | `calendar_today` |
+| `ctrl+shift+o` | Open in its own window | Calendar (not the terminal) |  | `pop_out` |
+| `ctrl+shift+o` | Back into the main window | Calendar window (not the terminal) |  | `pop_in` |
+| `ctrl+w` | Close window | Everywhere (not the terminal) |  | `close_window` |
+| `c` | New event | Calendar, calendar window | Undoable | `new_event` |
+| `ctrl+e` | Edit event | Calendar, calendar window | Undoable | `edit_event` |
+| `v` | Move to… | Calendar, calendar window | Undoable | `move_event` |
+| `ctrl+shift+d` or `alt+D` | Duplicate | Calendar, calendar window | Undoable | `duplicate_event` |
+| `alt+y` | Accept tentatively | List, thread, reader, calendar, calendar window | Undo briefly | `tentative_invite` |
+| `ctrl+s` | Save | Calendar, calendar window | Undoable | `save_event` |
+| `ctrl+Return` or `alt+Return` | Save and send | Calendar, calendar window | Undo briefly | `save_and_send_event` |
+| `alt+e` | Email attendees | Calendar, calendar window (not the terminal) |  | `email_attendees` |
 
 ## The one box
 

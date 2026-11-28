@@ -4,24 +4,17 @@ import Testing
 
 @testable import PostioKit
 
-/// Thread ▾'s menu, the outline and the new-reply banner (spec 013 US4 and
-/// US5, T054 and T066), over the real controller and the threads demo
-/// store: the keys go to `session.key`, the models are fed what the engine
-/// says, and what a person would see is what is asserted.
 @MainActor
 struct ThreadMenuOutlineTests {
     typealias Window = ThreadBarTests.Window
-
-    // MARK: the new reply (FR-018)
 
     @Test func aReplyArrivingWhileReadingOffersItselfAndLeavesTheMessageAlone() async throws {
         let window = try Window()
         defer { window.session.shutdown() }
         try await window.openHarbor()
         window.press("[")
-        // Landed, not mid-step: the read waits as `incoming` for at most
-        // `drawPatience`, and the bar's ring may follow it, so a wait for
-        // both at once races the clock.
+        // The read waits as `incoming` for at most `drawPatience` and the ring may follow, so
+        // waiting for both at once races the clock.
         try await window.until("`[` shows the message before, read whole") {
             window.ringed == 4 && window.model.incoming == nil
                 && window.model.displayed != nil && window.model.displayed == window.model.shown
@@ -67,8 +60,6 @@ struct ThreadMenuOutlineTests {
         #expect(MessageBlock.foot(words: words) == nil)
         #expect(words.thread.newReply == nil)
     }
-
-    // MARK: the outline's keyboard path
 
     @Test func theOutlineTakesTypingArrowsAndReturn() async throws {
         let window = try Window()
@@ -117,8 +108,6 @@ struct ThreadMenuOutlineTests {
             window.outline.view?.person == nil && window.outline.view?.rows.count == 6
         }
     }
-
-    // MARK: the menu's keyboard path
 
     @Test func theMenuTakesArrowsAndReturnAndEscapeClosesIt() async throws {
         let window = try Window()

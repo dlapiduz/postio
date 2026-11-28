@@ -1,65 +1,9 @@
-//! Draining the mutation queue against a server that may have moved.
-//!
-//! # The problem this solves
-//!
-//! Every mutating action in Postio happened locally already — the row is
-//! written, the list repainted, the user moved on. What is left in the queue is
-//! *intent*, and by the time it reaches the server the world may not be the one
-//! it was formed in: another client archived the message, a filter moved it,
-//! the mailbox was renumbered. Reconciling that is where a mail client either
-//! stays trustworthy or quietly loses mail.
-//!
-//! # The four answers
-//!
-//! Every step ends in exactly one of these, and every queue row is settled by
-//! one of them. Nothing is ever dropped on the floor.
-//!
-//! * **Applied.** The server did it.
-//! * **Obsolete.** The message the operation names is not where it was, so
-//!   there is nothing to send. Settled rather than failed — but the local row
-//!   now disagrees with the server, so the mailbox goes into
-//!   [`DrainReport::needs_resync`].
-//! * **Deferred.** A transient failure. It comes back later with an exponential
-//!   backoff ([`RetryPolicy`]).
-//! * **Failed.** Everything else, and anything out of attempts. Recorded on the
-//!   row with its reason and returned in [`DrainReport::failed`] so the user is
-//!   told. Failure is loud on purpose: an operation that vanished silently is a
-//!   message the user believes they filed and cannot find.
-//!
-//! # Detecting a vanished message
-//!
-//! IMAP does not report one. `STORE` against a UID that is no longer in the
-//! mailbox succeeds and says nothing, which is indistinguishable from success
-//! unless you look at what came back — so that is what [`Drainer`] looks at: a
-//! store over a non-empty UID set that updates no message means the message is
-//! gone. A move is checked the same way, but only when the server speaks
-//! UIDPLUS; without it an empty mapping is the ordinary answer and carries no
-//! information, so the move is treated as applied and the next resync
-//! reconciles.
-//!
-//! # Sending
-//!
-//! [`Operation::Send`] is a step like any other, except that once the SMTP
-//! transaction is accepted, it can never be retried or reported failed again
-//! -- the recipient's server already has the message, and a "failure" from
-//! here on would mean sending it twice. See [`crate::send`] for the whole
-//! path: resolving the draft, building the message, the transport, and
-//! filing the local Sent copy.
-//!
-//! # Drafts
-//!
-//! [`Operation::SaveDraft`] and [`Operation::DiscardDraft`] keep the account's
-//! Drafts mailbox in step with the composer. They are steps like any other,
-//! except that neither names a message: one is resolved against the draft row,
-//! and the other carries its own `UID` because by then the row is gone. See
-//! [`crate::drafts`].
-//!
-//! # Not here yet
-//!
-//! [`Operation::Append`] needs the blob store, which the drainer does not
-//! have unless it is draining a [`Operation::Send`] (which brings its own).
-//! It is its own bead, and is *failed* with a clear reason rather than
-//! skipped, so one cannot sit in a queue forever looking pending.
+//! Drains the mutation queue against a server that may have moved. Every step ends Applied,
+//! Obsolete (mailbox goes in `needs_resync`),
+//! Deferred (backoff) or Failed (loud: a silently vanished operation is a message the user cannot
+//! find).
+//! A vanished message is detected by a `STORE` that updates nothing. Once SMTP accepts a send it is
+//! never retried or reported failed.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -77,45 +21,29 @@ use crate::coalesce::{Step, coalesce};
 use crate::retry::RetryPolicy;
 use crate::send::SmtpContext;
 
-/// This module's result type.
 pub type Result<T> = std::result::Result<T, SyncError>;
 
-/// A failure that stops the whole pass rather than one operation.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SyncError {
-    /// The local database could not be read or written.
     #[error(transparent)]
     Storage(#[from] postio_storage::Error),
 
-    /// Talking to the server failed in a way no single operation owns — a lost
-    /// session, a refused password.
     #[error(transparent)]
     Backend(#[from] BackendError),
 }
 
-/// An operation the server will not accept, on its way to the user.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailedOperation {
-    /// The queue rows that failed together.
     pub rows: Vec<OperationId>,
-    /// What it was acting on.
     pub target: OperationTarget,
-    /// Which operation it was, for the message shown to the user.
     pub op_type: &'static str,
-    /// Why the server would not do it.
     pub reason: String,
 }
 
 impl FailedOperation {
-    /// The sentence the person sees: what did not happen, then why.
-    ///
-    /// The reason on its own -- "the draft has no recipients", "550 mailbox
-    /// unavailable" -- reads as a fact about the world rather than as the
-    /// fate of something they asked for, and a toast has no other context
-    /// to lend it. The draft's own status line says "Not sent" for the same
-    /// reason, and this is the same sentence in the other place it is
-    /// shown (#1487).
+    /// The sentence the person sees: what did not happen, then why (#1487). The bare reason reads
+    /// as a fact, not the fate of something they asked for.
     pub fn said(&self) -> String {
         let what = match self.op_type {
             "send" => "Not sent",
@@ -134,37 +62,22 @@ impl FailedOperation {
     }
 }
 
-/// What one drain pass did.
-///
-/// Counted in *queue rows* rather than steps, so the numbers add up to what was
-/// in the queue when the pass started.
+/// Counted in queue rows, so the numbers add up to what was in the queue when the pass started.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DrainReport {
-    /// Rows the server accepted.
     pub applied: usize,
-    /// Rows that needed no round trip because they cancelled each other out.
     pub coalesced: usize,
-    /// Rows whose message was not where the operation expected it.
     pub obsolete: usize,
-    /// Rows waiting for a retry.
     pub deferred: usize,
-    /// Rows given up on, with the reason for each. Never silently empty.
     pub failed: Vec<FailedOperation>,
-    /// Rows that may or may not have happened, with the reason for each.
-    ///
-    /// Its own field rather than a flavour of `failed` (#674): these are the
-    /// operations nobody can settle either way, and the difference decides
-    /// what the user is told. See [`Outcome::Uncertain`].
+    /// Rows that may or may not have happened (#674); kept apart from `failed` because the user is
+    /// told differently. See `Outcome::Uncertain`.
     pub uncertain: Vec<FailedOperation>,
-    /// Mailboxes whose local state is now known to disagree with the server.
     pub needs_resync: Vec<MailboxId>,
-    /// Which thread each Sent copy this drain filed joined, for
-    /// `Event::ThreadChanged`.
     pub thread_arrivals: crate::threaded::ThreadArrivals,
 }
 
 impl DrainReport {
-    /// How many rows the pass settled altogether.
     pub fn settled(&self) -> usize {
         self.applied
             + self.coalesced
@@ -176,32 +89,21 @@ impl DrainReport {
                 .sum::<usize>()
     }
 
-    /// Whether the queue had nothing due.
     pub fn is_idle(&self) -> bool {
         self.settled() == 0 && self.deferred == 0
     }
 }
 
-/// Replays the mutation queue against a server.
-///
-/// Holds no state of its own: one is built per pass, over a backend and a
-/// connection the caller owns.
 #[derive(Debug)]
 pub struct Drainer<'a> {
     backend: &'a dyn MailBackend,
     policy: RetryPolicy,
     smtp: Option<SmtpContext<'a>>,
-    /// Where a draft's attachments are read from. Set by [`Drainer::with_smtp`]
-    /// as well, since sending needs the same store — a drainer that can send
-    /// can always save a draft.
     blobs: Option<&'a BlobStore>,
 }
 
 impl<'a> Drainer<'a> {
-    /// Drains against `backend` with the default retry policy.
-    ///
-    /// `Operation::Send` fails outright until [`Drainer::with_smtp`] gives it
-    /// a transport — a queue with nothing to send through is not a bug.
+    /// `Operation::Send` fails outright until `with_smtp` gives it a transport.
     pub fn new(backend: &'a dyn MailBackend) -> Self {
         Self {
             backend,
@@ -211,7 +113,6 @@ impl<'a> Drainer<'a> {
         }
     }
 
-    /// Drains with a different retry policy.
     pub fn with_policy(backend: &'a dyn MailBackend, policy: RetryPolicy) -> Self {
         Self {
             backend,
@@ -221,40 +122,26 @@ impl<'a> Drainer<'a> {
         }
     }
 
-    /// Gives this drainer what [`Operation::Send`] needs: an SMTP transport,
-    /// the account's credentials, and the blob store attachments and the
-    /// sent copy read and write through.
     pub fn with_smtp(mut self, smtp: SmtpContext<'a>) -> Self {
         self.blobs = Some(smtp.blobs);
         self.smtp = Some(smtp);
         self
     }
 
-    /// Gives this drainer the blob store a draft's attachments are read from.
-    ///
-    /// [`Drainer::with_smtp`] already does this, so this is for a drainer that
-    /// keeps drafts in step with the server without being able to send —
-    /// which is every drainer built for a test that has nothing to send.
     pub fn with_blobs(mut self, blobs: &'a BlobStore) -> Self {
         self.blobs = Some(blobs);
         self
     }
 
-    /// Sends everything due for `account`, in order, and settles every row.
-    ///
-    /// One pass. The caller decides when the next one runs — after a reconnect,
-    /// after the shortest deferred backoff elapses, or when the user does
-    /// something new.
+    /// One pass; the caller decides when the next runs.
     pub async fn drain(
         &self,
         connection: &Connection,
         account: AccountId,
         now: DateTime<Utc>,
     ) -> Result<DrainReport> {
-        // Before the early return below, not after it: a send whose operation
-        // is gone has nothing pending by definition, so an account holding
-        // only one of those would take that return on every pass and never
-        // heal. It reads before it writes and is a no-op in the ordinary case.
+        // Before the early return: an account holding only orphaned sends would otherwise take that
+        // return every pass and never heal.
         match postio_storage::repository::DraftRepository::new(connection)
             .fail_orphaned_sends(account)
             .await
@@ -286,9 +173,8 @@ impl<'a> Drainer<'a> {
             ..DrainReport::default()
         };
 
-        // Rows that cancelled each other out are settled without a round trip.
-        // Marked done rather than deleted: the local write they accompanied did
-        // happen, and undo may still want to find them.
+        // Settled without a round trip; marked done, not deleted, since undo may still look for
+        // them.
         for id in &plan.obsolete {
             queue.mark_done(*id, now).await?;
             queue
@@ -301,11 +187,8 @@ impl<'a> Drainer<'a> {
         let mut threaded = crate::threaded::ThreadArrivals::default();
 
         for step in &plan.steps {
-            // One span per operation: the op type and the row it acts on, so a
-            // failure three retries deep can be traced back to the action the
-            // user took. The payload is never a field — a `Move` names two
-            // mailbox ids, an `Append` names a blob key, and neither carries
-            // anything of the message itself.
+            // One span per operation: op type and row only, never the payload (mailbox ids and blob
+            // keys carry nothing of the message).
             let span = tracing::debug_span!(
                 "operation",
                 op = step.operation.op_type(),
@@ -342,8 +225,6 @@ impl<'a> Drainer<'a> {
         Ok(report)
     }
 
-    /// Looks a step up locally: either it is ready to send, or it is already
-    /// decided.
     async fn run(
         &self,
         connection: &Connection,
@@ -371,7 +252,6 @@ impl<'a> Drainer<'a> {
         })
     }
 
-    /// Issues the backend call for a resolved step.
     async fn send(
         &self,
         connection: &Connection,
@@ -405,30 +285,12 @@ impl<'a> Drainer<'a> {
                 self.move_and_adopt(connection, context, destination)
                     .await
                     .map(|_mapping| {
-                        // An empty mapping is not a vanished message, with or
-                        // without UIDPLUS. Without it, nothing is ever
-                        // reported. With it, RFC 4315 §3 says a server SHOULD
-                        // return COPYUID and MAY omit it -- a UIDNOTSTICKY
-                        // destination, or one the account may write to but
-                        // not select -- and absence means the new UIDs are
-                        // unknown, which "the client can discover by
-                        // selecting the destination mailbox". Reading it as
-                        // the message being gone settled a move that had
-                        // succeeded as obsolete, never retried a move that
-                        // had not, and condemned the source folder to a
-                        // resync for nothing (#903). So: applied, and the
-                        // destination is what gets resynced, because that is
-                        // where the answer is.
-                        //
-                        // A mapping does not spare the resync either: the
-                        // local row left its folder with no UID (`move_to`
-                        // clears it), and only a sync of the destination
-                        // gives it one again. Until then the row has no
-                        // address, the reading pane's on-open fetch finds
-                        // nothing to ask for, and a filtered message, which
-                        // the filing pass moves before any body is fetched,
-                        // reads "Downloading" for as long as the folder goes
-                        // unsynced (#1978).
+                        // An empty mapping is not a vanished message: RFC 4315 §3 lets a server
+                        // omit COPYUID, so the new UIDs are unknown (#903).
+                        // Applied, and the destination is resynced, since that is where the answer
+                        // is.
+                        // A mapping does not spare the resync: `move_to` cleared the row's UID, and
+                        // only a destination sync restores it (#1978).
                         let landed = match &context.operation {
                             Operation::Move { to, .. } => Some(*to),
                             Operation::Delete { trash, .. } => Some(*trash),
@@ -448,9 +310,8 @@ impl<'a> Drainer<'a> {
                 .expunge(&context.path, None)
                 .await
                 .map(|_| Outcome::Applied),
-            // Mark, then expunge only these: the server never removes mail
-            // this step did not name (a backend without a targeted expunge
-            // leaves it marked, which is the safe half).
+            // Mark, then expunge only these: a backend without a targeted expunge leaves it marked,
+            // the safe half.
             Operation::Purge { .. } => {
                 let deleted: FlagSet = std::iter::once(Flag::Deleted).collect();
                 match self.store(context, FlagChange::Add(deleted)).await {
@@ -508,14 +369,9 @@ impl<'a> Drainer<'a> {
         }
     }
 
-    /// Runs the server move, then gives the local row the identity the
-    /// answer's `COPYUID` names (#1983).
-    ///
-    /// The local half of a move cleared the row's coordinates; a sync of the
-    /// destination re-attaches the server's copy by `Message-ID`, which a
-    /// message without one cannot be found by. The mapping can, so it is
-    /// written here, best effort: a failed write leaves the old behaviour,
-    /// and the destination resync the caller asks for still runs.
+    /// Runs the server move, then gives the local row the identity from the answer's `COPYUID`
+    /// (#1983).
+    /// Best effort: a message without a Message-ID cannot be re-attached by a destination sync.
     async fn move_and_adopt(
         &self,
         connection: &Connection,
@@ -560,15 +416,9 @@ impl<'a> Drainer<'a> {
         Ok(updates.is_empty())
     }
 
-    /// Fetches the attachments a forward carries whose bytes were never
-    /// downloaded, ahead of the steps that build a draft into a message
-    /// (#1686) — or says why the step has to wait or cannot happen.
-    ///
-    /// Its own stage rather than part of [`Drainer::resolve`], because it is
-    /// the one piece of looking-up that talks to the server: every other
-    /// input `resolve` gathers is a database row or a blob store read.
-    /// `None` means carry on as usual, which is every step that does not
-    /// build a draft, and every draft with nothing missing.
+    /// Fetches attachments a forward carries whose bytes were never downloaded (#1686); `None`
+    /// means carry on.
+    /// A separate stage because it is the one lookup that talks to the server.
     async fn carry(&self, connection: &Connection, step: &Step) -> Result<Option<Outcome>> {
         let draft = match (&step.operation, step.target) {
             (Operation::Send { draft }, _) => *draft,
@@ -586,10 +436,8 @@ impl<'a> Drainer<'a> {
                     after: None,
                 }),
                 crate::carry::Carried::Impossible(reason) => match step.operation {
-                    // The server copy in Drafts is a convenience, and a
-                    // failure here would be a draft that says it failed while
-                    // the person is still writing it. The send, when it comes,
-                    // meets the same refusal and is the one that says so.
+                    // A failed Drafts copy must not make a draft that is still being written say it
+                    // failed; the send meets the same refusal.
                     Operation::SaveDraft { .. } => Some(Outcome::Retry {
                         reason,
                         after: None,
@@ -600,7 +448,6 @@ impl<'a> Drainer<'a> {
         )
     }
 
-    /// Looks up everything the backend call needs, or says why it cannot run.
     async fn resolve(&self, connection: &Connection, step: &Step) -> Result<Resolved> {
         if let Operation::Send { draft } = &step.operation {
             return Ok(
@@ -631,19 +478,10 @@ impl<'a> Drainer<'a> {
             step.operation,
             Operation::CrossAccountCopy { .. } | Operation::CrossAccountRemove { .. }
         ) {
-            // Everything a saga phase needs lives on the saga row, which
-            // `send` reads fresh — a Context resolved here could be a
-            // restart old by the time it runs.
-            //
-            // The one exception is the source coordinate phase 3 removes by,
-            // and it is an exception because it is a *snapshot* rather than
-            // something re-derived: `enqueue` recorded it before the local
-            // write that hides the source row, so unlike a live row it
-            // cannot have gone stale in the meantime. `Move` and `Delete`
-            // below prefer it for the same reason (#289), and phase 3
-            // needs it for a sharper one — an inverse saga's source is the
-            // provisional copy, which is born with no identity at all
-            // (#940, #531).
+            // A saga phase reads its state from the saga row at `send`, except the source
+            // coordinate phase 3 removes by:
+            // a snapshot taken before the local write hid the source row, needed because an inverse
+            // saga's source has no identity (#940, #531, #289).
             let snapshot = match step.operation {
                 Operation::CrossAccountRemove { .. } => OperationQueueRepository::new(connection)
                     .get(step.head())
@@ -663,8 +501,6 @@ impl<'a> Drainer<'a> {
             }));
         }
         if matches!(step.operation, Operation::Append { .. }) {
-            // Resolved as ready so `send` can report it uniformly; there is no
-            // mailbox or UID to look up.
             return Ok(Resolved::Ready(Context {
                 operation: step.operation.clone(),
                 path: String::new(),
@@ -677,18 +513,13 @@ impl<'a> Drainer<'a> {
             }));
         }
 
-        // The message is read once: it carries both the mailbox a flag change
-        // applies to and the UID every message operation needs.
         let message = match step.target {
             OperationTarget::Message(id) => MessageRepository::new(connection).get(id).await?,
             _ => None,
         };
 
-        // A flag change queued ahead of a move: the move's local half nulled
-        // the live row's coordinates, and the queue drains in order, so the
-        // message is still where the move found it, which the move's row
-        // remembers. Without this the change was settled as obsolete and
-        // never reached the server (#2076).
+        // A flag change queued ahead of a move: the move nulled the live row's coordinates, so use
+        // the move row's remembered position or the change is settled obsolete (#2076).
         let left = match (&step.operation, step.target, &message) {
             (
                 Operation::SetFlags { .. } | Operation::ClearFlags { .. },
@@ -734,13 +565,8 @@ impl<'a> Drainer<'a> {
                         mailbox: None,
                     });
                 };
-                // For a Move or Delete the live row cannot answer: its local
-                // half nulled the coordinates in the same transaction that
-                // enqueued this, so the queue row's snapshot is the only
-                // thing that still names the server position. The earliest
-                // contributing row was enqueued before any nulling. Rows
-                // from before the snapshot existed carry none and fall back
-                // to the live row, which is the old behavior. #289.
+                // The live row cannot answer for a Move or Delete: its local half nulled the
+                // coordinates when enqueuing, so the queue snapshot is the only record (#289).
                 let snapshot = match &step.operation {
                     Operation::Move { .. } | Operation::Delete { .. } => {
                         OperationQueueRepository::new(connection)
@@ -762,7 +588,6 @@ impl<'a> Drainer<'a> {
                     }
                 }
             }
-            // A mailbox-wide operation names no messages.
             _ => Vec::new(),
         };
 
@@ -801,12 +626,6 @@ impl<'a> Drainer<'a> {
         }))
     }
 
-    /// Resolves the two operations that keep the Drafts mailbox in step, or
-    /// `None` when this step is not one of them.
-    ///
-    /// Split out rather than folded into [`Drainer::resolve`]'s match because
-    /// neither names a message: a draft has no row in `messages` and, in the
-    /// discard case, no row anywhere at all by the time this runs.
     async fn resolve_draft(
         &self,
         connection: &Connection,
@@ -819,9 +638,7 @@ impl<'a> Drainer<'a> {
             (Operation::DiscardDraft { mailbox, remote_id }, _) => {
                 crate::drafts::resolve_discard(connection, *mailbox, remote_id.clone()).await?
             }
-            // A draft operation whose target is not a draft is a row written
-            // by hand or by a newer Postio; it names nothing this build can
-            // act on.
+            // Written by hand or a newer Postio; names nothing this build can act on.
             (Operation::SaveDraft { .. }, _) => crate::drafts::ResolvedDraft::Impossible(
                 "a draft operation that does not name a draft".to_owned(),
             ),
@@ -848,7 +665,6 @@ impl<'a> Drainer<'a> {
         }))
     }
 
-    /// Writes an outcome back onto every row behind a step.
     async fn settle(
         &self,
         connection: &Connection,
@@ -868,8 +684,7 @@ impl<'a> Drainer<'a> {
                 report.applied += rows;
             }
             Outcome::Obsolete { reason } => {
-                // Settled, not failed: there was nothing for the server to do.
-                // The reason is recorded so it stays explicable in a bug report.
+                // Settled, not failed; the reason is recorded for bug reports.
                 for id in &step.rows {
                     queue.mark_done(*id, now).await?;
                     queue.note(*id, &reason).await?;
@@ -895,11 +710,9 @@ impl<'a> Drainer<'a> {
                     .await?;
             }
             Outcome::Uncertain { reason } => {
-                // Settled, and deliberately not retried: the payload may
-                // already be in somebody's inbox, and a duplicate cannot be
-                // recalled. `mark_done` rather than `mark_failed` because the
-                // queue's work here is over either way -- what is unresolved
-                // is the *message*, which the draft's own state carries.
+                // Settled and not retried: the payload may already be in an inbox and cannot be
+                // recalled. `mark_done` because the unresolved thing is the message, which the
+                // draft's state carries.
                 for id in &step.rows {
                     queue.mark_done(*id, now).await?;
                     queue.note(*id, &reason).await?;
@@ -927,26 +740,10 @@ impl<'a> Drainer<'a> {
         for id in &step.rows {
             queue.mark_failed(*id, now, reason).await?;
         }
-        // A send that has given up has to say so on the draft as well.
-        //
-        // The operation is `failed` and nothing will retry it, so a draft
-        // left `Queued` sits in the Outbox for ever under a row claiming it
-        // is on its way -- and `prune_settled` later removes the settled
-        // operation, taking the last evidence of why with it. A real store
-        // was found in exactly that state: queued, no operation, 25 hours
-        // after the send.
-        //
-        // `Failed` is what the rest of the application already understands:
-        // out of the Outbox, listed in Drafts marked "Not sent", counted in
-        // the number that says something needs a person (spec 003 FR-024),
-        // and offered `RetrySend`.
-        //
-        // Best-effort, and in the one safe direction. This runs only where
-        // the client witnessed a refusal -- `Outcome::Uncertain` goes to
-        // `report.uncertain` and never here -- so it cannot mark a message
-        // as unsent that may have gone. A write that fails leaves the draft
-        // where it was, which is the state this is fixing rather than a new
-        // one.
+        // A give-up must be written on the draft too, or it sits `Queued` in the Outbox for ever
+        // once `prune_settled` removes the operation.
+        // Best-effort and safe: only reached where a refusal was witnessed (`Uncertain` never comes
+        // here), and a failed write leaves the draft as it was.
         if let postio_model::Operation::Send { draft } = step.operation
             && let Err(error) = postio_storage::repository::DraftRepository::new(connection)
                 .set_state(draft, postio_model::DraftState::Failed)
@@ -963,10 +760,7 @@ impl<'a> Drainer<'a> {
         Ok(())
     }
 
-    /// How many attempts the rows behind a step have had.
-    ///
-    /// The most of any of them, so a folded batch backs off on its worst member
-    /// rather than its luckiest.
+    /// The most of any row's attempts, so a folded batch backs off on its worst member.
     async fn attempts(&self, connection: &Connection, step: &Step) -> Result<u32> {
         let queue = OperationQueueRepository::new(connection);
         let mut attempts = 0;
@@ -979,7 +773,6 @@ impl<'a> Drainer<'a> {
     }
 }
 
-/// Everything one backend call needs.
 #[derive(Debug)]
 struct Context {
     operation: Operation,
@@ -987,47 +780,30 @@ struct Context {
     destination: Option<String>,
     ids: Vec<postio_model::RemoteId>,
     mailbox: MailboxId,
-    /// The local row a message-target step acts on.
     message: Option<MessageId>,
-    /// Resolved only for [`Operation::Send`]: everything local storage could
-    /// answer, so [`Drainer::send`] has nothing left to look up. Boxed: it is
-    /// by far the largest field here and every other operation leaves it
-    /// `None`.
+    /// Resolved only for `Operation::Send`. Boxed: by far the largest field.
     send: Option<Box<crate::send::SendJob>>,
-    /// Resolved only for the two operations that keep the Drafts mailbox in
-    /// step, and boxed for the same reason as `send`: by the time the backend
-    /// call is made there is nothing left to look up.
     draft: Option<Box<crate::drafts::DraftJob>>,
 }
 
-/// Whether a step still has to go to the server.
 enum Pending {
     Send(Context),
     Settled(Outcome),
 }
 
-/// The result of looking a step up in the local store.
 enum Resolved {
     Ready(Context),
-    /// Nothing to send; the local store said so before the server was asked.
     Obsolete {
         reason: String,
-        /// The mailbox to resynchronize, when one is implicated.
         mailbox: Option<MailboxId>,
     },
-    /// Not sendable *yet*, and no server was asked: something local is still
-    /// being written. Deferred like a transient failure, so it comes back with
-    /// the same backoff and the same attempt limit rather than inventing a
-    /// second waiting mechanism.
+    /// Not sendable yet: something local is still being written. Deferred with the same backoff and
+    /// attempt limit as a transient failure.
     Later(String),
-    /// Cannot be sent and never will be.
     Impossible(String),
-    /// It may already have happened, and there is no way to find out — see
-    /// [`Outcome::Uncertain`].
     Uncertain(String),
 }
 
-/// What happened to a step.
 #[derive(Debug)]
 pub(crate) enum Outcome {
     Applied,
@@ -1041,15 +817,9 @@ pub(crate) enum Outcome {
     Failed {
         reason: String,
     },
-    /// It may have happened, and there is no way to find out from here.
-    ///
-    /// ADR 0021 Decision 3, #674: an SMTP session that dies after the
-    /// payload has begun going out leaves delivery and failure
-    /// indistinguishable. Settled like `Failed` — the row is done, the
-    /// reason recorded, nothing retried — but carried separately, because
-    /// `failed` means *did not happen* and the runtime turns that straight
-    /// into an error the user reads. A send that may have gone must not
-    /// travel as one.
+    /// It may have happened and cannot be found out (ADR 0021 Decision 3, #674): an SMTP session
+    /// dying mid-payload.
+    /// Settled like `Failed` but carried separately, since `failed` means "did not happen".
     Uncertain {
         reason: String,
     },
@@ -1059,10 +829,8 @@ impl Outcome {
     pub(crate) fn from_error(error: BackendError) -> Self {
         let reason = error.to_string();
         if error.requires_full_resync() {
-            // The UID space was renumbered, so the UID this operation carries
-            // names a different message — or none at all. Retrying it as it
-            // stands would act on the wrong message, which is worse than not
-            // acting; the mailbox is resynchronized and the user is told.
+            // The UID space was renumbered, so retrying would act on the wrong message; resync and
+            // tell the user.
             return Self::Failed { reason };
         }
         if error.is_transient() {
@@ -1075,7 +843,6 @@ impl Outcome {
     }
 }
 
-/// A store or move that touched nothing means the message is not there.
 fn vanished_if_untouched(untouched: bool) -> Outcome {
     if untouched {
         Outcome::Obsolete {

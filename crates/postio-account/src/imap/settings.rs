@@ -1,8 +1,5 @@
-//! Where and how to reach an IMAP server.
-//!
-//! Carries no secret. The password comes from [`SecretStore`](crate::secret)
-//! at the moment a connection is opened and is never stored beside the host
-//! name, never written to `config.toml`, and never logged.
+//! Carries no secret: the password comes from `SecretStore` when a connection opens, never stored
+//! beside the host, in `config.toml` or in logs.
 
 use std::fmt;
 use std::time::Duration;
@@ -12,42 +9,25 @@ use postio_model::{AuthMethod, ServerConfig, TransportSecurity};
 use crate::backend::{BackendError, BackendResult};
 use crate::discovery::{Encryption, preset_for_domain};
 
-/// The implicit-TLS IMAP port (RFC 8314).
 pub const IMAPS_PORT: u16 = 993;
 
-/// The cleartext IMAP port, reachable only through `STARTTLS`.
 pub const IMAP_PORT: u16 = 143;
 
-/// How long a connection attempt may take before it is abandoned.
 pub use postio_transport::DEFAULT_CONNECT_TIMEOUT;
 
-/// Everything needed to open a session, minus the password.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConnectionSettings {
-    /// The server host name. Also the name the certificate must match.
     pub host: String,
-    /// The TCP port.
     pub port: u16,
-    /// How the connection is protected.
     pub security: TransportSecurity,
-    /// The login name. Usually the full address; some providers template it.
     pub username: String,
-    /// Which SASL mechanism the credential is presented with.
-    ///
-    /// Data, not a branch: the credential itself is the same [`Password`] in
-    /// every case — a stored app password or whatever a
-    /// [`TokenSource`](crate::auth::TokenSource) returned — and this says how
-    /// to present it. Defaults to [`AuthMethod::Password`], so an account that
-    /// never mentions auth authenticates exactly as it always has (#193).
-    ///
-    /// [`Password`]: crate::secret::Password
+    /// Data, not a branch: the credential is the same `Password` either way; this says how to
+    /// present it. Defaults to `AuthMethod::Password` (#193).
     pub auth: AuthMethod,
-    /// How long a connect or handshake may take.
     pub connect_timeout: Duration,
 }
 
 impl ConnectionSettings {
-    /// Settings for an arbitrary server.
     pub fn new(
         host: impl Into<String>,
         port: u16,
@@ -64,13 +44,8 @@ impl ConnectionSettings {
         }
     }
 
-    /// Settings from Postio's provider preset table, when it ships a row for
-    /// the address's domain.
-    ///
-    /// Providers are data: this reads the same table the first-run probe
-    /// consults, so adding a provider never means adding a branch here.
-    /// Returns `None` for a domain the table does not cover — the probe or
-    /// the manual form answers those.
+    /// Reads the same table the first-run probe consults. `None` for a domain the table does not
+    /// cover.
     pub fn preset_for(email: &str) -> Option<Self> {
         let (_, domain) = email.rsplit_once('@')?;
         let preset = preset_for_domain(domain)?;
@@ -88,7 +63,6 @@ impl ConnectionSettings {
         ))
     }
 
-    /// Settings from an account's stored incoming-server configuration.
     pub fn from_server_config(config: &ServerConfig) -> Self {
         Self::new(
             config.host.clone(),
@@ -98,30 +72,22 @@ impl ConnectionSettings {
         )
     }
 
-    /// Sets how long a connect or handshake may take.
     pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
         self.connect_timeout = timeout;
         self
     }
 
-    /// Sets which SASL mechanism the credential is presented with.
     pub fn with_auth(mut self, auth: AuthMethod) -> Self {
         self.auth = auth;
         self
     }
 
-    /// `host:port`, for logs and error messages.
     pub fn endpoint(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
 
-    /// Rejects settings that would put a password on the wire in the clear.
-    ///
-    /// `TransportSecurity::None` is allowed only against the loopback
-    /// interface, where the "network" is a test server in the same machine.
-    /// Anywhere else it is refused *before* a socket is opened, because a
-    /// mistyped port is not a reason to hand an app-specific password to
-    /// whoever is listening.
+    /// `TransportSecurity::None` is allowed only against loopback; elsewhere it is refused before a
+    /// socket opens, so a mistyped port cannot hand a password to whoever listens.
     pub fn validate(&self) -> BackendResult<()> {
         if self.host.trim().is_empty() {
             return Err(BackendError::Protocol {

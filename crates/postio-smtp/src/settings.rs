@@ -1,9 +1,5 @@
-//! Where and how to reach a submission server.
-//!
-//! Carries no secret. The password comes from wherever the caller keeps it
-//! (the Secret Service keyring, via `postio-account::secret` — the same
-//! account password serves both protocols) at the moment a connection is
-//! opened, and is never stored beside the host name.
+//! Where and how to reach a submission server. Carries no secret: the password comes from the
+//! keyring when a connection opens and is never stored beside the host.
 
 use std::fmt;
 use std::time::Duration;
@@ -12,40 +8,25 @@ use postio_model::{AuthMethod, ServerConfig, TransportSecurity};
 
 use crate::error::{SmtpError, SmtpResult};
 
-/// The implicit-TLS submission port (RFC 8314).
 pub const SMTPS_PORT: u16 = 465;
 
-/// The `STARTTLS` submission port (RFC 6409).
 pub const SUBMISSION_PORT: u16 = 587;
 
-/// How long a connection attempt may take before it is abandoned.
 pub use postio_transport::DEFAULT_CONNECT_TIMEOUT;
 
-/// Everything needed to open a session, minus the password.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConnectionSettings {
-    /// The server host name. Also the name the certificate must match.
     pub host: String,
-    /// The TCP port.
     pub port: u16,
-    /// How the connection is protected.
     pub security: TransportSecurity,
-    /// The login name. Usually the full address; some providers template it.
     pub username: String,
-    /// Which SASL mechanism the credential is presented with.
-    ///
-    /// The IMAP side of the same account carries the identical field, and for
-    /// the same reason: the credential is one `SecretString` either way — a
-    /// stored app password or whatever a `TokenSource` returned — and this
-    /// says how to present it. Defaults to [`AuthMethod::Password`], so an
-    /// account that never mentions auth authenticates as it always has (#193).
+    /// Defaults to [`AuthMethod::Password`], so an account that never mentions auth authenticates
+    /// as it always has (#193).
     pub auth: AuthMethod,
-    /// How long a connect or handshake may take.
     pub connect_timeout: Duration,
 }
 
 impl ConnectionSettings {
-    /// Settings for an arbitrary server.
     pub fn new(
         host: impl Into<String>,
         port: u16,
@@ -62,7 +43,6 @@ impl ConnectionSettings {
         }
     }
 
-    /// Settings from an account's stored outgoing-server configuration.
     pub fn from_server_config(config: &ServerConfig) -> Self {
         Self::new(
             config.host.clone(),
@@ -72,24 +52,18 @@ impl ConnectionSettings {
         )
     }
 
-    /// Sets which SASL mechanism the credential is presented with.
     pub fn with_auth(mut self, auth: AuthMethod) -> Self {
         self.auth = auth;
         self
     }
 
-    /// `host:port`, for logs and error messages.
     pub fn endpoint(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
 
-    /// Rejects settings that would put a password on the wire in the clear.
-    ///
-    /// `TransportSecurity::None` is allowed only against the loopback
-    /// interface, where the "network" is a test server on the same machine.
-    /// Anywhere else it is refused *before* a socket is opened, because a
-    /// mistyped port is not a reason to hand an app-specific password to
-    /// whoever is listening.
+    /// `TransportSecurity::None` is allowed only against loopback; anywhere else it is refused
+    /// before a socket is opened, so a mistyped port cannot hand a password to whoever is
+    /// listening.
     pub fn validate(&self) -> SmtpResult<()> {
         if self.host.trim().is_empty() {
             return Err(SmtpError::Configuration {

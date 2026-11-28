@@ -1,32 +1,25 @@
-//! The command bar, drawn (terminal.md, "The command bar").
-//!
-//! A rounded box `min(100, W - 4)` wide, centred, under the top bar and as
-//! tall as its lines: the saved searches, the input, an echo of what was
-//! typed with its chips, the lines, and the footer. Whatever does not fit
-//! scrolls with the chosen line.
+//! The command bar: a rounded box `min(100, W - 4)` wide, centred under the top bar.
 
-use chrono::{DateTime, Local};
+use postio_core::CommandId;
+use postio_focus::{BarLineKind, DropdownRow, DropdownView, Run};
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
-use ratatui::style::Modifier;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear};
 use unicode_width::UnicodeWidthStr;
 
-use crate::bar::{Bar, Ctx, Entry, Line};
+use crate::bar::{Bar, Shown};
 use crate::theme::{Role, Theme};
 use crate::view::fit;
 use crate::view::hit::{Hits, Target};
-use postio_core::CommandId;
 
-/// The widest the box is.
 const WIDEST: u16 = 100;
 
 fn cells(text: &str) -> u16 {
     u16::try_from(text.width()).unwrap_or(u16::MAX)
 }
 
-/// The box the bar takes in `area`.
 pub fn outer(area: Rect, height: u16) -> Rect {
     let width = WIDEST.min(area.width.saturating_sub(4));
     Rect::new(
@@ -37,7 +30,6 @@ pub fn outer(area: Rect, height: u16) -> Rect {
     )
 }
 
-/// The top bar's field while the bar is open: the input, in the field.
 pub fn field(frame: &mut Frame, area: Rect, typed: &str, theme: &Theme) {
     frame.render_widget(
         Text::from(vec![
@@ -51,30 +43,203 @@ pub fn field(frame: &mut Frame, area: Rect, typed: &str, theme: &Theme) {
     );
 }
 
-/// Draw `bar` over `area`.
+struct Drawn {
+    spans: Vec<Span<'static>>,
+    pills: Vec<(usize, u16, u16)>,
+    right: Option<(String, Style)>,
+    stop: Option<usize>,
+    heading: bool,
+}
+
+fn runs(runs: &[Run], base: Style, accent: Style) -> Vec<Span<'static>> {
+    use postio_focus::RunStyle;
+    runs.iter()
+        .map(|run| {
+            let style = match (run.highlighted, run.style) {
+                (true, _) => accent.add_modifier(Modifier::BOLD),
+                (_, RunStyle::Strong) => base.add_modifier(Modifier::BOLD),
+                _ => base,
+            };
+            Span::styled(
+                postio_ui::terminal::SafeText::new(&run.text).to_string(),
+                style,
+            )
+        })
+        .collect()
+}
+
+fn lines_of(bar: &Bar, theme: &Theme) -> Vec<Drawn> {
+    let (dim, text, accent) = (
+        theme.style(Role::Dim),
+        theme.style(Role::Text),
+        theme.style(Role::Accent),
+    );
+    let stops = bar.stops();
+    let stop_of = |token: u64| stops.iter().position(|stop| *stop == token);
+    let mut out = Vec::new();
+    match bar.shown() {
+        Shown::Lines(view) => {
+            if let Some(echo) = &view.echo {
+                out.push(Drawn {
+                    spans: vec![Span::styled(format!(" {echo}"), dim)],
+                    right: None,
+                    stop: None,
+                    pills: Vec::new(),
+                    heading: false,
+                });
+            }
+            for line in &view.lines {
+                if line.kind == BarLineKind::Heading {
+                    out.push(Drawn {
+                        spans: vec![Span::styled(
+                            format!(" {}", line.title),
+                            dim.add_modifier(Modifier::BOLD),
+                        )],
+                        right: None,
+                        stop: None,
+                        pills: Vec::new(),
+                        heading: true,
+                    });
+                    continue;
+                }
+                let mut spans = vec![Span::styled(
+                    line.title.clone(),
+                    if line.selectable { text } else { dim },
+                )];
+                if let Some(detail) = &line.detail {
+                    spans.push(Span::styled(format!("  {detail}"), dim));
+                }
+                out.push(Drawn {
+                    spans,
+                    right: line.key.clone().map(|key| (key, accent)),
+                    stop: stop_of(line.token).filter(|_| line.selectable),
+                    pills: Vec::new(),
+                    heading: false,
+                });
+            }
+        }
+        Shown::Dropdown(view) => {
+            if !view.understood.is_empty() {
+                let said: Vec<String> = view
+                    .understood
+                    .iter()
+                    .map(|tile| format!("{}:{}", tile.op, tile.value))
+                    .collect();
+                out.push(Drawn {
+                    spans: vec![Span::styled(format!(" {}", said.join("  ")), accent)],
+                    right: None,
+                    stop: None,
+                    pills: Vec::new(),
+                    heading: false,
+                });
+            }
+            for section in &view.sections {
+                out.push(Drawn {
+                    spans: vec![Span::styled(
+                        format!(" {}", section.title),
+                        dim.add_modifier(Modifier::BOLD),
+                    )],
+                    right: section.note.clone().map(|note| (note, dim)),
+                    stop: None,
+                    pills: Vec::new(),
+                    heading: true,
+                });
+                for row in &section.rows {
+                    out.push(dropdown_row(row, text, dim, accent, stop_of(row.token)));
+                }
+                if !section.pills.is_empty() {
+                    let mut spans = vec![Span::raw("  ")];
+                    let mut at = 3;
+                    let mut pills = Vec::new();
+                    for pill in &section.pills {
+                        let mut said = pill.label.clone();
+                        for extra in [&pill.count, &pill.fresh, &pill.key].into_iter().flatten() {
+                            said.push(' ');
+                            said.push_str(extra);
+                        }
+                        let width = cells(&said);
+                        if let Some(stop) = stop_of(pill.token) {
+                            pills.push((stop, at, width));
+                        }
+                        spans.push(Span::styled(said, text));
+                        spans.push(Span::raw("  "));
+                        at += width + 2;
+                    }
+                    out.push(Drawn {
+                        spans,
+                        right: None,
+                        stop: None,
+                        pills,
+                        heading: false,
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+fn dropdown_row(
+    row: &DropdownRow,
+    text: Style,
+    dim: Style,
+    accent: Style,
+    stop: Option<usize>,
+) -> Drawn {
+    let mut spans = runs(&row.title, text, accent);
+    if !row.detail.is_empty() {
+        spans.push(Span::raw("  "));
+        spans.extend(runs(&row.detail, dim, accent));
+    }
+    let right = match (&row.right, &row.key) {
+        (Some(right), _) => Some((right.clone(), dim)),
+        (None, Some(key)) => Some((key.clone(), accent)),
+        _ => None,
+    };
+    Drawn {
+        spans,
+        right,
+        stop: stop.filter(|_| row.selectable),
+        pills: Vec::new(),
+        heading: false,
+    }
+}
+
+fn footer_of(bar: &Bar) -> String {
+    match bar.shown() {
+        Shown::Dropdown(DropdownView { hints, count, .. }) => {
+            let mut said: Vec<String> = hints
+                .iter()
+                .map(|hint| format!("{} {}", hint.key, hint.label))
+                .collect();
+            said.extend(count.clone());
+            said.join("  ")
+        }
+        Shown::Lines(_) => format!(
+            "\u{2191}\u{2193} move  \u{21b5} run  {} commands only",
+            postio_ui::finder::COMMANDS_ONLY
+        ),
+    }
+}
+
 pub fn draw(
     frame: &mut Frame,
     area: Rect,
     bar: &Bar,
-    ctx: &Ctx<'_>,
-    now: DateTime<Local>,
+    hint: &dyn Fn(CommandId) -> Option<String>,
     theme: &Theme,
     hits: &mut Hits,
 ) {
-    let entries = bar.entries(ctx);
-    let saved = bar.saved();
+    let lines = lines_of(bar, theme);
+    let saved: &[String] = match bar.shown() {
+        Shown::Lines(view) => &view.saved,
+        Shown::Dropdown(_) => &[],
+    };
     let typed = bar.typed();
-    let echo = !typed.trim().is_empty();
-    // Borders, saved, input, echo, a rule, the footer; and a rule above the
-    // footer when there are lines.
-    let chips_row = !bar.chips().is_empty();
-    let fixed =
-        2 + u16::from(!saved.is_empty()) + 1 + u16::from(chips_row) + u16::from(echo) + 1 + 1;
+    let fixed = 2 + u16::from(!saved.is_empty()) + 1 + 1 + 1;
     let room = area.height.saturating_sub(2).saturating_sub(fixed);
-    let body = u16::try_from(entries.len()).unwrap_or(u16::MAX).min(room);
-    let rule_over_footer = u16::from(body > 0);
-    let height = fixed + body + rule_over_footer;
-    let box_ = outer(area, height);
+    let body = u16::try_from(lines.len()).unwrap_or(u16::MAX).min(room);
+    let box_ = outer(area, fixed + body + u16::from(body > 0));
     if box_.width < 30 || box_.height < 5 {
         return;
     }
@@ -88,9 +253,11 @@ pub fn draw(
     );
     hits.add(box_, Target::Overlay);
     let inner = Rect::new(box_.x + 1, box_.y + 1, box_.width - 2, box_.height - 2);
-    let dim = theme.style(Role::Dim);
-    let accent = theme.style(Role::Accent);
-    let text = theme.style(Role::Text);
+    let (dim, accent, text) = (
+        theme.style(Role::Dim),
+        theme.style(Role::Accent),
+        theme.style(Role::Text),
+    );
     let rule = |frame: &mut Frame, y: u16| {
         frame.render_widget(
             Text::styled("─".repeat(usize::from(inner.width)), dim),
@@ -98,26 +265,18 @@ pub fn draw(
         );
     };
     let mut y = inner.y;
-
     if !saved.is_empty() {
         let mut spans = vec![Span::styled("Saved", dim)];
         let mut x = inner.x + 5;
         let end = inner.x + inner.width;
-        let save_hint = ctx
-            .key(CommandId::SaveSearch)
-            .filter(|_| echo)
-            .map(|key| format!("{key} saves"));
-        let reserved = save_hint.as_deref().map_or(0, |hint| cells(hint) + 2);
-        for (index, (name, _)) in saved.iter().enumerate() {
-            let key = ctx
-                .key(postio_ui::command_bar::SAVED[index.min(3)])
-                .filter(|_| index < 4);
+        for (index, name) in saved.iter().enumerate() {
+            let key = hint(postio_ui::command_bar::SAVED[index.min(3)]).filter(|_| index < 4);
             let label = format!(
                 "  {name}{}",
                 key.as_deref().map(|k| format!(" {k}")).unwrap_or_default()
             );
             let width = cells(&label);
-            if x + width + reserved > end {
+            if x + width + 12 > end {
                 break;
             }
             spans.push(Span::styled(format!("  {name}"), text));
@@ -128,33 +287,31 @@ pub fn draw(
             x += width;
         }
         frame.render_widget(Text::from(spans), Rect::new(inner.x, y, inner.width, 1));
-        if let Some(hint) = save_hint {
-            let w = cells(&hint);
-            frame.render_widget(Text::styled(hint, dim), Rect::new(end - w, y, w, 1));
-            hits.add(
-                Rect::new(end - w, y, w, 1),
-                Target::Command(CommandId::SaveSearch.as_str()),
-            );
+        if let Some(save) = hint(CommandId::SaveSearch).filter(|_| !typed.trim().is_empty()) {
+            let said = format!("{save} saves");
+            let w = cells(&said);
+            let at = Rect::new(end - w, y, w, 1);
+            frame.render_widget(Text::styled(said, dim), at);
+            hits.add(at, Target::Command(CommandId::SaveSearch.as_str()));
         }
         y += 1;
     }
-
-    // The input, with Esc at its right.
-    let esc = ctx
-        .key(CommandId::Back)
+    let esc = hint(CommandId::Back)
         .unwrap_or_default()
         .replace("Escape", "Esc");
     let mut spans = vec![Span::styled("⌕ ", accent)];
+    let room = usize::from(inner.width).saturating_sub(4 + usize::from(cells(&esc)));
     if typed.is_empty() {
         spans.push(Span::styled(postio_ui::focus_row::COMMAND_PROMPT, dim));
     } else {
-        spans.push(Span::styled(
-            fit(
-                typed,
-                usize::from(inner.width).saturating_sub(4 + usize::from(cells(&esc))),
-            ),
-            text,
-        ));
+        spans.push(Span::styled(fit(typed, room), text));
+        if let Shown::Dropdown(DropdownView {
+            ghost: Some(ghost), ..
+        }) = bar.shown()
+        {
+            let left = room.saturating_sub(typed.width());
+            spans.push(Span::styled(fit(ghost, left), dim));
+        }
     }
     frame.render_widget(Text::from(spans), Rect::new(inner.x, y, inner.width, 1));
     if !esc.is_empty() {
@@ -169,79 +326,74 @@ pub fn draw(
         y,
     ));
     y += 1;
-
-    if chips_row {
-        let mut spans = vec![Span::raw(" ")];
-        let mut x = inner.x + 1;
-        for (index, chip) in bar.chips().iter().enumerate() {
-            let style = if bar.editing() == Some(index) {
-                accent.add_modifier(Modifier::BOLD | Modifier::REVERSED)
-            } else {
-                accent.add_modifier(Modifier::BOLD)
-            };
-            let w = cells(chip);
-            hits.add(Rect::new(x, y, w, 1), Target::BarChip(index));
-            spans.push(Span::styled(chip.clone(), style));
-            spans.push(Span::raw("  "));
-            x += w + 2;
-        }
-        frame.render_widget(Text::from(spans), Rect::new(inner.x, y, inner.width, 1));
-        y += 1;
-    }
-    if echo {
-        let said = match (bar.editing(), bar.words()) {
-            (Some(at), Some(words)) => {
-                let chip = bar.chips().get(at).map(String::as_str).unwrap_or_default();
-                let editing = chip
-                    .split_once(':')
-                    .map_or(chip.to_owned(), |(op, _)| format!("{op}:"));
-                let mut said = format!(
-                    "You typed \u{201c}{words}\u{201d} \u{b7} editing {editing} \u{b7} {}",
-                    postio_ui::hints::line([&postio_ui::hints::fixed(
-                        "Tab",
-                        "next chip",
-                        "Tab moves between the bar's chips: the toolkit's focus order, not a command",
-                    )])
-                );
-                if let Some(key) = ctx.key(CommandId::BackToWords) {
-                    said.push_str(&format!(" \u{b7} {key} back to plain words"));
-                }
-                said
-            }
-            _ => postio_ui::command_bar::echo(typed.trim()),
-        };
-        frame.render_widget(
-            Text::styled(fit(&format!(" {said}"), usize::from(inner.width)), dim),
-            Rect::new(inner.x, y, inner.width, 1),
-        );
-        y += 1;
-    }
     rule(frame, y);
     y += 1;
 
-    let chosen = bar.chosen(&entries);
+    let chosen = bar
+        .selected()
+        .and_then(|token| bar.stops().iter().position(|stop| *stop == token));
     let shown = usize::from(body);
+    let chosen_line = lines
+        .iter()
+        .position(|line| line.stop.is_some() && line.stop == chosen)
+        .unwrap_or(0);
     let first = if shown == 0 {
         0
     } else {
-        (chosen + 1).saturating_sub(shown)
+        (chosen_line + 1).saturating_sub(shown)
     };
-    for (offset, (index, entry)) in entries
-        .iter()
-        .enumerate()
-        .skip(first)
-        .take(shown)
-        .enumerate()
-    {
+    for (offset, line) in lines.iter().skip(first).take(shown).enumerate() {
         let row = Rect::new(
             inner.x,
             y + u16::try_from(offset).unwrap_or(0),
             inner.width,
             1,
         );
-        draw_entry(frame, row, entry, index == chosen, theme);
-        if entry.row.is_selectable() {
-            hits.add(row, Target::BarRow(index));
+        let on = line.stop.is_some() && line.stop == chosen;
+        if on {
+            frame
+                .buffer_mut()
+                .set_style(row, theme.style(Role::Surface));
+        }
+        let mut spans = vec![Span::styled(
+            if on { "▌" } else { " " },
+            theme.style(Role::Focus),
+        )];
+        let right_width = line.right.as_ref().map_or(0, |(said, _)| cells(said) + 1);
+        let room = usize::from(row.width).saturating_sub(usize::from(right_width) + 2);
+        let mut used = 0;
+        for span in &line.spans {
+            let content = fit(&span.content, room.saturating_sub(used));
+            used += content.width();
+            let style = if on && !line.heading {
+                span.style.add_modifier(Modifier::BOLD)
+            } else {
+                span.style
+            };
+            spans.push(Span::styled(content, style));
+        }
+        frame.render_widget(Text::from(spans), row);
+        if let Some((said, style)) = &line.right {
+            let w = cells(said);
+            frame.render_widget(
+                Text::styled(said.clone(), *style),
+                Rect::new(row.x + row.width - w - 1, row.y, w, 1),
+            );
+        }
+        if let Some(stop) = line.stop {
+            hits.add(row, Target::BarRow(stop));
+        }
+        for (stop, at, width) in &line.pills {
+            hits.add(
+                Rect::new(row.x + at, row.y, *width, 1),
+                Target::BarRow(*stop),
+            );
+            if chosen == Some(*stop) {
+                frame.buffer_mut().set_style(
+                    Rect::new(row.x + at, row.y, *width, 1),
+                    theme.style(Role::Surface),
+                );
+            }
         }
     }
     y += body;
@@ -249,166 +401,43 @@ pub fn draw(
         rule(frame, y);
         y += 1;
     }
-    let mut footer = String::from("\u{2191}\u{2193} move  \u{21b5} run");
-    footer.push_str(&format!(
-        "  {} commands only",
-        postio_ui::finder::COMMANDS_ONLY
-    ));
-    // `↑↓ move`, `↵ run` and `> commands only`, the last two a click each.
-    let move_width = cells("\u{2191}\u{2193} move");
-    let run_width = cells("\u{21b5} run");
-    let commands_width = cells(&format!(
-        "{} commands only",
-        postio_ui::finder::COMMANDS_ONLY
-    ));
-    let footer_x = inner.x + 1;
-    let footer_room = inner.width.saturating_sub(1);
-    for (offset, width, target) in [
-        (move_width + 2, run_width, Target::BarRun),
-        (
-            move_width + 2 + run_width + 2,
-            commands_width,
-            Target::BarCommands,
-        ),
-    ] {
-        if offset + width <= footer_room {
-            hits.add(Rect::new(footer_x + offset, y, width, 1), target);
-        }
-    }
-    let right = "Local index";
     frame.render_widget(
         Text::styled(
-            fit(
-                &footer,
-                usize::from(inner.width).saturating_sub(usize::from(cells(right)) + 2),
-            ),
+            fit(&footer_of(bar), usize::from(inner.width).saturating_sub(2)),
             dim,
         ),
         Rect::new(inner.x + 1, y, inner.width.saturating_sub(1), 1),
     );
-    let w = cells(right);
-    frame.render_widget(
-        Text::styled(right, dim),
-        Rect::new(inner.x + inner.width - w - 1, y, w, 1),
-    );
-    let _ = now;
-}
-
-fn draw_entry(frame: &mut Frame, row: Rect, entry: &Entry, chosen: bool, theme: &Theme) {
-    let dim = theme.style(Role::Dim);
-    let text = theme.style(Role::Text);
-    let width = usize::from(row.width);
-    match &entry.line {
-        Line::Heading(title) => {
-            frame.render_widget(
-                Text::styled(
-                    fit(title, width.saturating_sub(1)),
-                    dim.add_modifier(Modifier::BOLD),
-                ),
-                Rect::new(row.x + 1, row.y, row.width.saturating_sub(1), 1),
-            );
-        }
-        Line::Row { title, detail, key } => {
-            if chosen {
-                frame
-                    .buffer_mut()
-                    .set_style(row, theme.style(Role::Surface));
+    if matches!(bar.shown(), Shown::Lines(_)) {
+        let move_width = cells("\u{2191}\u{2193} move");
+        let run_width = cells("\u{21b5} run");
+        let commands_width = cells(&format!(
+            "{} commands only",
+            postio_ui::finder::COMMANDS_ONLY
+        ));
+        for (offset, width, target) in [
+            (move_width + 2, run_width, Target::BarRun),
+            (
+                move_width + 2 + run_width + 2,
+                commands_width,
+                Target::BarCommands,
+            ),
+        ] {
+            if offset + width <= inner.width.saturating_sub(1) {
+                hits.add(Rect::new(inner.x + 1 + offset, y, width, 1), target);
             }
-            let key = key.clone().unwrap_or_default();
-            let room = width.saturating_sub(usize::from(cells(&key)) + 3);
-            let mut spans = vec![mark(chosen, theme)];
-            let title = fit(title, room);
-            let mut used = 1 + title.width();
-            spans.push(Span::styled(
-                title,
-                if chosen {
-                    text.add_modifier(Modifier::BOLD)
-                } else {
-                    text
-                },
-            ));
-            if let Some(detail) = detail {
-                let left = room.saturating_sub(used + 2);
-                if left > 3 {
-                    let detail = fit(detail, left);
-                    used += 2 + detail.width();
-                    spans.push(Span::styled(format!("  {detail}"), dim));
-                }
-            }
-            spans.push(Span::raw(
-                " ".repeat(width.saturating_sub(used + key.width() + 1)),
-            ));
-            spans.push(Span::styled(key, theme.style(Role::Accent)));
-            frame.render_widget(Text::from(spans), row);
-        }
-        Line::Message(found) => {
-            if chosen {
-                frame
-                    .buffer_mut()
-                    .set_style(row, theme.style(Role::Surface));
-            }
-            let now = Local::now();
-            let time = postio_ui::row::timestamp(found.at, now);
-            let place = found
-                .place
-                .as_ref()
-                .map(|p| p.as_str().to_owned())
-                .unwrap_or_default();
-            let tail = format!(
-                "{}{time}",
-                if place.is_empty() {
-                    String::new()
-                } else {
-                    format!("{place}  ")
-                }
-            );
-            let sender = fit(found.sender.as_str(), 18);
-            let after_sender = 1 + 18 + 2;
-            let room = width.saturating_sub(after_sender + tail.width() + 2);
-            let subject = fit(found.subject.as_str(), room);
-            let snippet_room = room.saturating_sub(subject.width() + 2);
-            let snippet = if snippet_room > 3 {
-                fit(found.snippet.as_str(), snippet_room)
-            } else {
-                String::new()
-            };
-            let used = after_sender
-                + subject.width()
-                + if snippet.is_empty() {
-                    0
-                } else {
-                    2 + snippet.width()
-                };
-            let mut spans = vec![
-                mark(chosen, theme),
-                Span::styled(format!("{sender:<18}"), text.add_modifier(Modifier::BOLD)),
-                Span::raw("  "),
-                Span::styled(subject, text),
-            ];
-            if !snippet.is_empty() {
-                spans.push(Span::styled(format!("  {snippet}"), dim));
-            }
-            spans.push(Span::raw(
-                " ".repeat(width.saturating_sub(used + tail.width() + 1)),
-            ));
-            spans.push(Span::styled(tail, dim));
-            frame.render_widget(Text::from(spans), row);
         }
     }
-}
-
-fn mark(chosen: bool, theme: &Theme) -> Span<'static> {
-    Span::styled(if chosen { "▌" } else { " " }, theme.style(Role::Focus))
 }
 
 #[cfg(test)]
 mod tests {
     use crate::app::{App, update};
     use crate::test_support::{
-        app, ctrl, open_list, places, press, saved_search, screen, seed_places, serve, type_text,
+        app, ctrl, open_list, places, places_arrive, press, saved_search, screen, seed_places,
+        serve, type_text,
     };
 
-    /// A mail box of three saved searches, with the list open behind.
     fn with_saved(size: (u16, u16)) -> App {
         let mut app = app(size);
         let mut contents = places();
@@ -423,62 +452,51 @@ mod tests {
         app
     }
 
-    #[test]
-    fn slash_opens_a_box_under_the_top_bar_with_the_saved_row_the_input_and_the_footer() {
-        let mut app = with_saved((120, 36));
-        update(&mut app, press('/'));
-        type_text(&mut app, "arch");
-        let drawn = screen(120, 36, &app);
-        let lines: Vec<&str> = drawn.lines().collect();
-        // min(100, W - 4) wide, centred: columns 10 to 109, from the second row.
-        let cell = |line: &str, at: usize| line.chars().nth(at);
-        assert_eq!(cell(lines[1], 10), Some('╭'), "{drawn}");
-        assert_eq!(cell(lines[1], 109), Some('╮'), "{drawn}");
-        assert!(
-            lines[2]
-                .contains("Saved  Waiting on reply alt+1  Atlas alt+2  Receipts this month alt+3"),
-            "{drawn}"
-        );
-        assert!(lines[2].contains("ctrl+s saves"), "{drawn}");
-        assert!(lines[3].contains("⌕ arch"), "{drawn}");
-        assert!(lines[3].contains("Esc │"), "{drawn}");
-        assert!(drawn.contains("↑↓ move"), "{drawn}");
-        assert!(drawn.contains("> commands only"), "{drawn}");
-        assert!(drawn.contains("Local index"), "{drawn}");
+    fn opened(app: &mut App, keys: impl FnOnce(&mut App) -> Vec<crate::app::Effect>) {
+        let effects = keys(app);
+        let folders = app.folders_for_tests();
+        places_arrive(app, &effects, &folders, &[], &[]);
     }
 
     #[test]
-    fn typing_lists_commands_places_and_the_search_row_each_with_its_key() {
+    fn slash_opens_a_box_under_the_top_bar_with_the_saved_searches_the_input_and_the_hints() {
         let mut app = with_saved((120, 36));
-        update(&mut app, press('/'));
-        type_text(&mut app, "arch");
+        opened(&mut app, |app| update(app, press('/')));
         let drawn = screen(120, 36, &app);
-        let line_of = |needle: &str| {
-            drawn
-                .lines()
-                .find(|line| line.contains(needle))
-                .unwrap_or_else(|| panic!("no {needle}:\n{drawn}"))
-                .to_owned()
-        };
-        assert!(drawn.contains("Commands"), "{drawn}");
-        assert!(line_of("Archive").contains(" e "), "{}", line_of("Archive"));
-        assert!(drawn.contains("Go to"), "{drawn}");
-        assert!(line_of("in:Archive").contains("g a"), "{drawn}");
-        assert!(drawn.contains("Search mail for “arch”"), "{drawn}");
+        let lines: Vec<&str> = drawn.lines().collect();
+        let cell = |line: &str, at: usize| line.chars().nth(at);
+        assert_eq!(cell(lines[1], 10), Some('╭'), "{drawn}");
+        assert_eq!(cell(lines[1], 109), Some('╮'), "{drawn}");
+        assert!(lines[2].contains("⌕ Search mail"), "{drawn}");
+        assert!(lines[2].contains("Esc │"), "{drawn}");
+        assert!(drawn.contains("Saved searches"), "{drawn}");
         assert!(
-            line_of("Archive").contains('▌'),
-            "the first row is chosen: {}",
-            line_of("Archive")
+            drawn.contains("Waiting on reply alt+1") && drawn.contains("Atlas alt+2"),
+            "{drawn}"
         );
+        assert!(drawn.contains("from:"), "{drawn}");
+    }
+
+    #[test]
+    fn typing_goes_to_the_controller_and_what_it_says_is_drawn() {
+        let mut app = with_saved((120, 36));
+        opened(&mut app, |app| update(app, press('/')));
+        type_text(&mut app, "from:ada tide");
+        let drawn = screen(120, 36, &app);
+        assert!(drawn.contains("⌕ from:ada tide"), "{drawn}");
+        assert!(
+            !drawn.contains("Saved searches"),
+            "the empty state is gone:\n{drawn}"
+        );
+        assert!(drawn.contains("Return open"), "{drawn}");
     }
 
     #[test]
     fn ctrl_k_opens_it_with_commands_only() {
         let mut app = with_saved((120, 36));
-        update(&mut app, ctrl('k'));
+        opened(&mut app, |app| update(app, ctrl('k')));
         let drawn = screen(120, 36, &app);
         assert!(drawn.contains("⌕ >"), "{drawn}");
-        assert!(drawn.contains("Commands"), "{drawn}");
         assert!(!drawn.contains("Go to"), "{drawn}");
     }
 }

@@ -23,7 +23,7 @@ the cursor goes (spec FR-025, 009 FR-004).
 |---|---|
 | `Splice { anchor, children: Vec<ChildRowView> }` | Insert child rows after the anchor (Mac `insertRows`, GTK model splice); no animation under reduced motion |
 | `Unsplice { anchor }` | Remove them |
-| `Footer(FooterView)` | Draw the footer: scope title, then keycap + label pairs, then the right-hand sentence |
+| `Footer(FooterView)` | Draw the footer: scope title, then keycap + label pairs, then the right-hand sentence. It speaks for the surface that has the keyboard, and one with an empty title is not drawn: the composer, Settings and the popovers that show their own keys have none (#2218, #2227) |
 | `ThreadRow(position, ThreadRowView)` | Redraw one row in place (participants, count, new, muted, time) |
 | `ThreadBar(ThreadBarView)` | Draw the label column, chips and Thread ▾ |
 | `Kicker(String)`, `OlderBanner(Option<BannerView>)`, `NewReply(Option<BannerView>)`, `MatchBanner(Option<BannerView>)`, `ReplyTo(Option<String>)` | Draw them above, or in, the sender block |

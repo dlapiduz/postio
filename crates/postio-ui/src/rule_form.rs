@@ -1,17 +1,11 @@
-//! What the digest rule dialog holds, whichever toolkit draws it.
-//!
-//! The terminal, the desktop app and the controller the Mac drives each kept
-//! their own copy of this: the heading, the name and queries a new rule
-//! starts with, what typing a query does to them, and the check that the
-//! schedule reads. The controls, the focus order and the drawing stay with
-//! each frontend; the rules are here.
+//! The digest rule dialog's content and rules, shared by every frontend; controls, focus and
+//! drawing stay per frontend.
 
 use postio_config::{DigestRule, Due};
 use postio_model::{EmailAddress, MessageId};
 
 use crate::digest::{self, Schedule};
 
-/// The rule dialog's content. See the module.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleForm {
     heading: String,
@@ -24,19 +18,15 @@ pub struct RuleForm {
     note: &'static str,
 }
 
-/// What Create writes: the rule's name and queries, and when it is due.
 pub type Written = (String, Vec<String>, Due);
 
 impl RuleForm {
-    /// A new rule holding mail from `senders`. `like_this` is the message
-    /// "Digest mail like this" would check other mail against, when the
-    /// person has a model for it.
+    /// `like_this` is the message "Digest mail like this" checks other mail against, when a model
+    /// exists.
     pub fn new_rule(senders: &[EmailAddress], like_this: Option<MessageId>) -> Self {
         Self::new_rule_clean(senders, like_this, str::to_owned)
     }
 
-    /// As [`new_rule`](Self::new_rule), with `clean` applied to every sender
-    /// name and line that will be shown (a terminal strips controls).
     pub fn new_rule_clean(
         senders: &[EmailAddress],
         like_this: Option<MessageId>,
@@ -58,16 +48,12 @@ impl RuleForm {
         }
     }
 
-    /// `rule` edited where it stands in `config.toml`. A rule whose every
-    /// query is a `from:` reads as senders; anything else opens in the query
-    /// entry it was made with. "Digest mail like this" is never offered
-    /// while editing.
+    /// A rule whose queries are all `from:` reads as senders. "Digest mail like this" is never
+    /// offered while editing.
     pub fn edit(rule: &DigestRule) -> Self {
         Self::edit_clean(rule, str::to_owned)
     }
 
-    /// As [`edit`](Self::edit), with `clean` applied to the heading and the
-    /// queries as shown.
     pub fn edit_clean(rule: &DigestRule, clean: impl Fn(&str) -> String) -> Self {
         let text = rule.queries.join(", ");
         let senders = digest::is_sender_rule(&rule.queries);
@@ -83,60 +69,47 @@ impl RuleForm {
         }
     }
 
-    /// The heading: "Digest this sender", or the rule's name.
     pub fn heading(&self) -> &str {
         &self.heading
     }
 
-    /// The name the rule will have.
     pub fn name(&self) -> &str {
         &self.name
     }
 
-    /// The queries the rule will hold.
     pub fn queries(&self) -> &[String] {
         &self.queries
     }
 
-    /// The name of the rule being edited, as it stands in the config.
     pub fn replacing(&self) -> Option<&str> {
         self.replacing.as_deref()
     }
 
-    /// Whether a rule is being edited rather than made.
     pub fn editing(&self) -> bool {
         self.replacing.is_some()
     }
 
-    /// The note under the preview.
     pub fn note(&self) -> &'static str {
         self.note
     }
 
-    /// The senders as one line; `None` once the rule is typed queries.
     pub fn senders(&self) -> Option<&str> {
         self.query.is_none().then_some(self.senders.as_str())
     }
 
-    /// The typed queries as one line; `None` while the rule is senders.
     pub fn query(&self) -> Option<&str> {
         self.query.as_deref()
     }
 
-    /// Whether the rule is typed queries rather than senders.
     pub fn query_mode(&self) -> bool {
         self.query.is_some()
     }
 
-    /// The message "Digest mail like this" would check, while it is offered:
-    /// the senders are showing and a model is there to ask.
     pub fn like_this(&self) -> Option<MessageId> {
         self.like_this.filter(|_| !self.query_mode())
     }
 
-    /// The query entry holds `text` (also: "Match a list or a search
-    /// instead...", with nothing yet). One query per comma-separated piece
-    /// is the rule's `match`, and its name until it is given one.
+    /// One query per comma-separated piece; also the rule's name until it is given one.
     pub fn set_query(&mut self, text: &str) {
         let queries = digest::split_queries(text);
         self.name = queries.join(", ");
@@ -144,8 +117,6 @@ impl RuleForm {
         self.query = Some(text.to_owned());
     }
 
-    /// The rule as the dialog says it, with the schedule its controls hold,
-    /// or the sentence saying why it cannot be written.
     pub fn written(&self, schedule: &Schedule) -> Result<Written, String> {
         Ok((self.name.clone(), self.queries.clone(), schedule.due()?))
     }

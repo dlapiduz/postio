@@ -1,11 +1,3 @@
-//! A search that found nothing offers the word that was meant. #1524, ADR 0037.
-//!
-//! The ranking is unit-tested in `postio-search` with no database at all.
-//! What those tests cannot see is whether the vocabulary they rank is
-//! actually there: on this engine it is rebuilt from `search_documents`,
-//! the table the triggers keep in step with `messages` — and a suggestion
-//! drawn from an empty term list is a feature that silently never fires.
-
 use super::executor::at;
 use postio_index::{SearchRequest, search};
 use postio_model::AccountScope;
@@ -109,8 +101,6 @@ async fn a_word_the_mailbox_does_not_resemble_gets_no_offer() {
 
 #[tokio::test]
 async fn a_quoted_word_is_taken_at_its_word() {
-    // Quotes say "this word, exactly": the one way to search for `hanah`
-    // itself once the box answers a bare `hanah` with `hannah`.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -127,8 +117,6 @@ async fn a_quoted_word_is_taken_at_its_word() {
 
 #[tokio::test]
 async fn a_query_with_a_filter_is_left_alone() {
-    // `from:ada hanah` found nothing, and the filter is at least as likely to
-    // be why. Correcting the word would answer a question nobody asked.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -145,9 +133,6 @@ async fn a_query_with_a_filter_is_left_alone() {
 
 #[tokio::test]
 async fn an_unfinished_address_is_answered_with_the_one_in_the_mailbox() {
-    // Terms match whole words, so the first twenty letters of a list's
-    // address are a different word from the address -- and the search found
-    // nothing for what was, to the person typing it, obviously the list.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -171,9 +156,6 @@ async fn an_unfinished_address_is_answered_with_the_one_in_the_mailbox() {
 
 #[tokio::test]
 async fn a_word_only_a_body_holds_is_offered_too() {
-    // The old vocabulary was the newest few thousand senders and subjects,
-    // so a word that only ever appeared in a message's text was never
-    // offered, however common it was.
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");
     postio_index::index::ensure_schema(&connection)
@@ -205,10 +187,6 @@ async fn a_word_only_a_body_holds_is_offered_too() {
 
 #[tokio::test]
 async fn a_zero_hit_search_reads_what_resembles_the_word_not_the_mailbox() {
-    // Terms match whole words, so a name typed letter by letter is a
-    // zero-hit search at every pause until it is complete (#1613). The
-    // offer is looked up through the index, so its cost follows how much
-    // mail resembles the word, not how much mail there is.
     use postio_storage::test_support::counting::counted_async;
     let database = test_support::memory().await;
     let connection = database.connect().await.expect("checkout");

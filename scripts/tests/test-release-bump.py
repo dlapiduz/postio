@@ -24,8 +24,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -36,9 +34,6 @@ SCRIPT = HERE / "release-bump.py"
 METAINFO_PATH = "crates/postio-gtk/data/dev.postio.Postio.metainfo.xml"
 PLIST_PATH = "macos/Resources/Info.plist"
 
-# The macOS bundle's two version keys (#1714). It ships as a release asset
-# now, so it says the version it was released as -- it said 0.1.0 for three
-# releases because nothing moved it.
 PLIST = """\
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -108,17 +103,12 @@ def world(base: Path) -> Path:
     (root / "macos" / "Resources").mkdir(parents=True)
     (root / PLIST_PATH).write_text(PLIST, encoding="utf-8")
 
-    # A pin that must be bumped: names the current workspace version and a
-    # sibling path.
     (root / "crates" / "postio-storage" / "Cargo.toml").write_text(
         '[package]\nname = "postio-storage"\nversion.workspace = true\n\n'
         "[dependencies]\n"
         'postio-model = { version = "0.2.0", path = "../postio-model" }\n',
         encoding="utf-8",
     )
-    # A pin that must NOT be bumped: it is not a sibling path dependency, so
-    # matching it would be the same bug as touching an unrelated third-party
-    # crate that happens to share the old version number.
     (root / "crates" / "postio-gtk" / "Cargo.toml").write_text(
         '[package]\nname = "postio-gtk"\nversion.workspace = true\n\n'
         "[dependencies]\n"
@@ -139,7 +129,6 @@ def run(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 
 def main() -> int:
-    # ── the happy path ────────────────────────────────────────────────
     with tempfile.TemporaryDirectory() as directory:
         root = world(Path(directory))
         notes = root / "notes.txt"
@@ -208,9 +197,6 @@ def main() -> int:
         )
 
         metainfo = (root / METAINFO_PATH).read_text(encoding="utf-8")
-        # `type="development"` is AppStream's word for a pre-release. GNOME
-        # Software and Flathub read it; without it a 0.x build is listed as
-        # a stable release, which 0.x is not.
         case(
             "a new release entry is added with the given version and date, marked development",
             '<release version="0.3.0" date="2026-09-10" type="development">' in metainfo,
@@ -221,9 +207,6 @@ def main() -> int:
             "did a thing" in metainfo and "did another thing" in metainfo,
             f"notes text is missing from the changelog:\n{metainfo}",
         )
-        # Bullets become a list and paragraphs stay paragraphs: a release
-        # note written by hand for the release page reads as one on the
-        # software centre's page too, rather than as a run-on `<p>`.
         case(
             "bullets in the notes become a list",
             "<ul>" in metainfo
@@ -244,7 +227,6 @@ def main() -> int:
             f"an older release entry was lost or altered:\n{metainfo}",
         )
 
-    # ── a stable release, and prose notes ────────────────────────────
     with tempfile.TemporaryDirectory() as directory:
         root = world(Path(directory))
         notes = root / "notes.txt"
@@ -275,7 +257,6 @@ def main() -> int:
             f"the list is out of order with its paragraphs:\n{metainfo}",
         )
 
-    # ── refusals ──────────────────────────────────────────────────────
     with tempfile.TemporaryDirectory() as directory:
         root = world(Path(directory))
         notes = root / "notes.txt"
@@ -303,7 +284,6 @@ def main() -> int:
             f"expected a non-zero exit, got {result.returncode}",
         )
 
-        # And nothing was left half-changed by the refusals above.
         cargo_toml = (root / "Cargo.toml").read_text(encoding="utf-8")
         case(
             "a refused run leaves the workspace version untouched",

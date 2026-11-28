@@ -46,7 +46,6 @@ def expect(name: str, result: subprocess.CompletedProcess[str], *, status: int =
 
 
 def main() -> int:
-    # ── no target/tmp at all: the ordinary state for a fresh worktree ──────
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         result = run(root)
@@ -56,7 +55,6 @@ def main() -> int:
                 f"a tree with no target/tmp should say so on stdout: {result.stdout!r}"
             )
 
-    # ── an empty target/tmp: nothing has leaked ────────────────────────────
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / "target" / "tmp").mkdir(parents=True)
@@ -67,7 +65,6 @@ def main() -> int:
         if "passed" not in result.stdout:
             FAILURES.append(f"an empty target/tmp should say passed: {result.stdout!r}")
 
-    # ── a handful of small leftovers: under both thresholds ────────────────
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         tmp = root / "target" / "tmp"
@@ -82,7 +79,6 @@ def main() -> int:
                 f"a handful of small leftovers should print nothing on stderr: {result.stderr!r}"
             )
 
-    # ── past the entry-count threshold: noticed, but still exit 0 ──────────
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         tmp = root / "target" / "tmp"
@@ -97,7 +93,6 @@ def main() -> int:
         if "rm -rf" not in result.stderr:
             FAILURES.append(f"a growth warning should name the one-line fix: {result.stderr!r}")
 
-    # ── past the byte-size threshold with few entries: still noticed ───────
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         tmp = root / "target" / "tmp"

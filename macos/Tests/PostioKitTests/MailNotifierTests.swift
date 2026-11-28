@@ -1,13 +1,6 @@
 import Testing
 @testable import PostioKit
 
-/// When new mail is worth interrupting somebody for, and what it may say.
-///
-/// The decision is pure and the delivery is not, which is the only way this is
-/// testable at all: `UNUserNotificationCenter` needs a bundled, authorised
-/// application, and a test that needed one would prompt on a developer's
-/// machine and hang every headless run — the same reason `MessageRowSource`
-/// exists.
 @Suite("New-mail notifications")
 struct MailNotifierTests {
     private func arrival(mailbox: Int64 = 1, messages: [Int64] = [10]) -> MailArrival {
@@ -25,9 +18,7 @@ struct MailNotifierTests {
 
     @Test("an empty arrival is not a notification")
     func nothingArrived() {
-        // The engine can emit a `NewMail` whose messages were all already
-        // known. Interrupting somebody to say nothing happened is the worst
-        // available outcome.
+        // A `NewMail` whose messages were all known must not interrupt anyone.
         #expect(decide(arrival(messages: [])) == .suppress(.nothingArrived))
     }
 
@@ -40,9 +31,8 @@ struct MailNotifierTests {
 
     @Test("the same folder in a window you are not looking at still notifies")
     func sameFolderButNotFocused() {
-        // "On screen" means both halves. A folder left open behind another
-        // application is not something the user is watching, and this is the
-        // case a naive "is this the open mailbox" check gets wrong.
+        // "On screen" needs the folder open and the app active: a folder behind another application
+        // is not being watched.
         let decision = decide(arrival(mailbox: 5), showing: 5, active: false)
         #expect(decision != .suppress(.alreadyOnScreen))
     }
@@ -94,9 +84,8 @@ struct MailNotifierTests {
 
     @Test("a second batch for one folder replaces the first rather than stacking")
     func oneNotificationPerFolder() {
-        // The identifier is what `UNUserNotificationCenter` treats as "replace
-        // what is showing". Several IDLE wake-ups in a row have to settle into
-        // one notification saying the current total, not five popups.
+        // The identifier is what `UNUserNotificationCenter` replaces on, so several IDLE wake-ups
+        // settle into one notification, not five.
         guard case let .deliver(first) = decide(arrival(mailbox: 7, messages: [1])),
               case let .deliver(second) = decide(arrival(mailbox: 7, messages: [2, 3]))
         else {
@@ -126,10 +115,8 @@ struct MailNotifierTests {
 
     @Test("no message content reaches the notification")
     func carriesNoContent() {
-        // `PRODUCT.md`: logs carry ids, counts and outcomes only, and a
-        // notification is a log the lock screen reads out. The boundary helps
-        // here — `UiEvent.newMail` carries ids and nothing else — and this
-        // asserts nobody later adds a lookup to "improve" it.
+        // Logs carry ids, counts and outcomes only, and a notification is a log the lock screen
+        // reads out; this asserts nobody adds a lookup.
         guard case let .deliver(notification) = decide(arrival(messages: [42])) else {
             Issue.record("expected a notification")
             return

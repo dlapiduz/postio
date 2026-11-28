@@ -1,8 +1,3 @@
-//! Who the person has written to (spec 007, data-model.md
-//! "`correspondents`"): one row per address, counting the messages sent
-//! with it in To, Cc or Bcc. What the filter's "you wrote to them" guard
-//! (FR-111) and completion's "wrote N times" (FR-052) read.
-
 use chrono::{DateTime, TimeZone, Utc};
 use postio_model::{Account, EmailAddress, Identity, Message, MessageId};
 use postio_storage::Connection;
@@ -18,8 +13,6 @@ fn address(address: &str) -> EmailAddress {
     EmailAddress::new(None::<String>, address)
 }
 
-/// An account that sends as `ada@example.com` and, through a second
-/// identity, as `Ada@Harbour.Example`, with a Sent folder.
 async fn sender(connection: &Connection) -> (Account, postio_model::MailboxId) {
     let mut account = Account::new("Ada", address("ada@example.com"));
     let mut identity = Identity::new(
@@ -36,7 +29,6 @@ async fn sender(connection: &Connection) -> (Account, postio_model::MailboxId) {
     (account, sent)
 }
 
-/// A message sent at `hour` to `to`, copying `cc`, blind-copying `bcc`.
 async fn sent(
     connection: &Connection,
     (account, mailbox): (&Account, postio_model::MailboxId),
@@ -70,8 +62,6 @@ async fn sending_to_three_addresses_adds_one_to_each() {
     let connection = database.connect().await.expect("checkout");
     let (account, mailbox) = sender(&connection).await;
     let here = (&account, mailbox);
-    // Three people -- one of them twice -- and the sender's own two
-    // addresses, which are nobody the person "wrote to".
     let message = sent(
         &connection,
         here,
@@ -101,8 +91,6 @@ async fn sending_to_three_addresses_adds_one_to_each() {
     for own in ["ada@example.com", "ada@harbour.example"] {
         assert_eq!(written(&connection, own).await, None, "{own} is the sender");
     }
-    // The instrument counts reads: the sender's own addresses, once, and
-    // nothing per recipient -- the counts are one write whatever the send.
     assert_eq!(counts.statements, 1, "{counts:?}");
 }
 
@@ -133,7 +121,6 @@ async fn each_message_counts_once_and_a_send_that_failed_takes_its_one_back() {
         "two messages, the later one last"
     );
 
-    // The later send failed: nothing was delivered, so nothing was written.
     correspondents
         .unrecord_sent(account.id, second)
         .await
@@ -263,7 +250,6 @@ async fn the_people_written_to_are_found_in_one_statement_and_counted() {
     assert_eq!(counts["grace@example.com"], 2);
     assert_eq!(counts["linus@example.org"], 1);
 
-    // A send that failed takes its count back; zero is not "written to".
     correspondents
         .unrecord_sent(account.id, first)
         .await

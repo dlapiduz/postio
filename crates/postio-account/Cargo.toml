@@ -11,74 +11,46 @@ repository.workspace = true
 [features]
 default = ["imap"]
 
-# The io-imap-backed implementation, and everything it drags in: the protocol
-# crate, its SASL companion, and our own TLS stack. On by default.
-#
-# Turn it off and what is left is the MailBackend seam, its mock, autoconfig
-# discovery and the keyring. That is all `postio-sync` needs, and it is what
-# keeps a pre-1.0 protocol crate — and the CI rule that bans io-imap from
-# the view layer — out of everything above this one. See ADR 0001.
+# The io-imap-backed implementation, on by default. Off leaves the MailBackend seam, mock,
+# autoconfig discovery and keyring, which keeps a pre-1.0 protocol crate out of everything above
+# this one (ADR 0001).
 imap = [
     "dep:io-imap",
     "dep:io-sasl",
     "dep:postio-transport",
 ]
 
-# The maildir-backed implementation (#1278): mail already on this machine,
-# behind the same seam as a server. Off by default — a build that never
-# opens one should not carry `io-maildir` or its parser.
+# Off by default: a build that never opens a maildir should not carry `io-maildir` (#1278).
 maildir = ["dep:io-maildir"]
 
-# Test-only: lets `MockMailbox::corpus` seed mailboxes from the shared `.eml`
-# fixtures. Off by default so nothing in a normal build carries them; the
-# self dev-dependency below turns it on for this crate's own test suite.
+# Test-only: seeds `MockMailbox::corpus` from the shared `.eml` fixtures; the self dev-dependency
+# enables it.
 test-corpus = ["postio-model/test-corpus"]
 
-# Test-only: the in-process IMAP server in `test_server`. Off by default so a
-# shipped build carries no listening socket at all. It implies `test-corpus`
-# because its mailboxes are seeded from the shared `.eml` fixtures rather than
-# from fixtures invented here, and it deliberately does *not* imply `imap`:
-# the server is written against the wire, not against `io-imap`, so a bug in
-# the protocol crate cannot hide inside the thing meant to catch it.
+# Test-only in-process IMAP server, so a shipped build has no listening socket. Implies
+# `test-corpus` but not `imap`:
+# it is written against the wire, so a bug in the protocol crate cannot hide inside what catches it.
 test-server = ["test-corpus"]
 
 [dependencies]
-# Not a choice about error handling in this crate: io-pim-discovery's
-# `with_factory` hook is typed `FnMut(&Url) -> anyhow::Result<S>`, so
-# supplying a stream of our own (discovery/transport.rs, #57) means naming
-# the type. Already in the graph underneath that crate, so it costs nothing.
+# io-pim-discovery's `with_factory` is typed `anyhow::Result<S>`, so supplying our own stream names
+# the type (discovery/transport.rs, #57).
 anyhow = "1.0.104"
 async-trait = { workspace = true }
-# PKCE's S256 challenge (`oauth::pkce`) and the `code_verifier`/`state`
-# randomness behind it. Both already resolve at these exact versions
-# transitively under `io-pim-discovery`'s `pacc` feature (unused here), so
-# depending on them directly adds no new version to the graph.
 base64 = { workspace = true }
 chrono = { workspace = true, features = ["serde", "std"] }
-# `oauth::exchange`'s token POST and RFC 8414 metadata GET: the same
-# io-http coroutines `io-pim-discovery` already builds on for autoconfig,
-# used directly here because that crate has no POST-capable coroutine of
-# its own (ADR 0006 Q3 -- "no new dependency class"). `default-features =
-# false`: `io-pim-discovery`'s own `rustls-ring` feature already turns on
-# `io-http/client`, which is all `HttpClientStd` needs.
+# io-http's coroutines for the token POST and metadata GET, since `io-pim-discovery` has no
+# POST-capable one (ADR 0006 Q3).
+# `default-features = false`: its `rustls-ring` feature already turns on `io-http/client`.
 io-http = { version = "0.8", default-features = false }
 io-imap = { version = "0.11.2", default-features = false, features = ["client"], optional = true }
-# The OAuth 2.0 wire core (#537): RFC 6749 token request/response types
-# and encodings, RFC 7636 PKCE, the RFC 6749 §10.12 state value — the
-# maintained upstream for what `oauth/exchange.rs` and `oauth/pkce.rs`
-# hand-rolled first. `client` is only the random generators (rand); the
-# HTTP itself stays on this crate's own cancellable pimalaya-stream
-# transport, because io-oauth's optional client wrapper consumes the HTTP
-# status that the 200-with-error-body shim in `exchange.rs` needs.
-# The DNS wire format, for the MX query #94 adds. `io-pim-discovery` carries
-# the exchange (`DiscoveryDnsExchange`) and the stream pool but publishes no
-# MX lookup of its own, and this is the crate it builds its own TXT and SRV
-# queries with -- so this is the family's own extension point rather than a
-# second DNS stack. Already in the graph transitively under
-# `io-pim-discovery`; naming it here adds no new version.
+# The OAuth 2.0 wire core (#537). `client` is only the random generators; HTTP stays on this crate's
+# cancellable transport, because io-oauth's client wrapper consumes the status the
+# 200-with-error-body shim in `exchange.rs` needs. The DNS wire format for the MX query (#94):
+# `io-pim-discovery` publishes no MX lookup of its own.
 domain = { version = "0.12", default-features = false, features = ["alloc", "std", "unstable-new"] }
 io-oauth = { version = "0.7", default-features = false, features = ["client"] }
-io-pim-discovery = { version = "0.13", default-features = false, features = ["autoconfig", "rfc6186", "rfc8414", "rustls-ring"] }
+io-pim-discovery = { version = "0.13", default-features = false, features = ["autoconfig", "rfc6186", "rfc6764", "rfc8414", "rustls-ring"] }
 io-sasl = { workspace = true, optional = true }
 oo7 = "0.7.1"
 
@@ -88,8 +60,6 @@ postio-model.workspace = true
 postio-transport = { workspace = true, optional = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
-# `oauth::exchange`'s token responses, and RFC 8414 metadata's own parsing
-# (`io_pim_discovery::rfc8414`) -- already in the graph underneath it.
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
@@ -97,16 +67,12 @@ toml = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
 zeroize = { workspace = true }
-# Only this crate reads a maildir, so it stays a direct dependency rather
-# than a workspace one: the shared table is for versions two or more members
-# have to agree on.
 io-maildir = { version = "0.5.0", default-features = false, features = ["client", "parser"], optional = true }
 postio-workspace-hack.workspace = true
 
 
-# `providers_toml.rs` is compiled a second time by build.rs (`#[path]`), the
-# same idiom `postio-widgets/build.rs` uses for design tokens (ARCHITECTURE.md
-# §10) -- so the build script needs everything that module needs.
+# build.rs compiles `providers_toml.rs` a second time (`#[path]`), so it needs everything that
+# module needs.
 [build-dependencies]
 postio-config.workspace = true
 serde = { workspace = true }
@@ -114,41 +80,27 @@ toml = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-# The protocol crate, for the handful of commands `postio-account` does not wrap
-# yet — QRESYNC SELECT, ENABLE, STORE, COPY, APPEND — which `tests/imap_loopback.rs`
-# drives against the in-process server directly. Same exact pin as above, so
-# cargo resolves one copy and the types match.
+# For the commands `postio-account` does not wrap yet (QRESYNC SELECT, ENABLE, STORE, COPY, APPEND),
+# driven by `tests/imap_loopback.rs`.
 io-imap = { version = "0.11.2", default-features = false, features = ["client"] }
 postio-account = { path = ".", features = ["maildir", "test-corpus", "test-server"] }
 postio-model = { path = "../postio-model", features = ["test-corpus"] }
-# The shared deadline dial: every wall-clock wait in a test answers to
-# `POSTIO_TEST_PATIENCE` (#842, #957).
 postio-test-support.workspace = true
 serde-xml-rs = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util", "time"] }
 
-# The Keychain store (ADR 0019). Already in `Cargo.lock` via
-# `rustls-platform-verifier`, so this adds no new dependency class -- only a
-# direct edge to something the graph already contains.
-#
-# Platform sections live at the foot of the manifest, after every plain
-# dependency table. A TOML table runs until the next header, so one of these
-# placed mid-list silently makes everything below it conditional --
-# `check-target-sections-last.py` and #642.
+# Platform sections stay at the foot: a TOML table runs to the next header, so a mid-list one makes
+# everything below it conditional (`check-target-sections-last.py`, #642).
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7.0"
 
 [lints.rust]
-# Not the workspace floor: see EXCEPTIONS in scripts/checks/check-lint-floor.py.
 unsafe_code = "deny"
 
-# A crate that keeps its own `[lints.rust]` inherits none of the workspace
-# lints, so the clippy floor's most load-bearing rule is restated here:
-# `let _ = some_async_call()` drops the future unpolled, which is how a sent
-# draft went on existing. See the workspace `[lints.clippy]`.
+# A crate with its own `[lints.rust]` inherits no workspace lints, so the clippy floor's
+# `let_underscore_future` rule is restated.
 [lints.clippy]
 let_underscore_future = "deny"
 
-# Restated from the workspace `[lints.cargo]`, for the same reason.
 [lints.cargo]
 unused_dependencies = "allow"

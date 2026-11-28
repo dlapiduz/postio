@@ -1,19 +1,8 @@
-//! Every command in the registry is reachable from the terminal (SC-001).
-//!
-//! By key, as this terminal can send it -- the registry's own binding or,
-//! where a terminal without the kitty keyboard protocol cannot deliver that,
-//! its alternate -- pressed as crossterm events through the terminal's own
-//! `Keys`, so the translation from a terminal key to a chord is part of what
-//! is proven. And by the palette, from a surface the terminal's palette can be
-//! opened on. A command added to the registry that the terminal cannot reach
-//! fails here, by name: this is what keeps parity from drifting.
-
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
 use postio_core::{Availability, Context, Keymap, Scope, registry};
 use postio_tui::input::Keys;
 use postio_ui::keymap::{Binding, Chord, Key, KeyContext, Modifiers, Outcome};
 
-/// The surfaces the terminal's palette opens on: where its keyboard can be.
 const PALETTE_SURFACES: &[Context] = &[
     Context::List,
     Context::Search,
@@ -25,13 +14,11 @@ const PALETTE_SURFACES: &[Context] = &[
     Context::Digest,
     Context::Filtered,
     Context::Capture,
+    Context::Calendar,
 ];
 
-/// Commands whose surface the terminal does not have yet, each with the task
-/// that brings it. Taking a name off this list is how that task proves it.
 const NOT_YET: &[(&str, &str)] = &[];
 
-/// `chord` as a terminal reports it.
 fn key_event(chord: &Chord) -> KeyEvent {
     let mut modifiers = KeyModifiers::NONE;
     for (keymap, terminal) in [
@@ -73,14 +60,12 @@ fn key_event(chord: &Chord) -> KeyEvent {
     }
 }
 
-/// Whether pressing `binding` in `context` runs `command`.
 fn runs(keymap: &Keymap, binding: &str, context: Context, command: &str) -> bool {
     let Ok(parsed) = binding.parse::<Binding>() else {
         return false;
     };
     let mut keys = Keys::new(keymap).0;
-    // The composer and the palette are text entry, as the terminal asks
-    // them. Search's own keys are pressed over its results, not in the bar.
+    // The composer and palette are text entry; Search's keys are pressed over its results.
     let typing = matches!(context, Context::Composer | Context::Palette);
     let mut outcome = Outcome::Unhandled;
     for chord in parsed.chords() {
@@ -92,8 +77,6 @@ fn runs(keymap: &Keymap, binding: &str, context: Context, command: &str) -> bool
 #[test]
 fn every_command_is_reachable_by_a_key_this_terminal_sends_and_by_the_palette() {
     let keymap = Keymap::for_terminal(&Default::default());
-    // As this terminal asks: its composer's `$EDITOR` and preview are
-    // offered here and nowhere else (`Requirement::Terminal`).
     let open = Availability {
         frontend: postio_core::Frontend::Terminal,
         ..Availability::open(Scope::Account(postio_model::AccountId::new(1)))
@@ -104,9 +87,6 @@ fn every_command_is_reachable_by_a_key_this_terminal_sends_and_by_the_palette() 
         if NOT_YET.iter().any(|(pending, _)| *pending == id) {
             continue;
         }
-        // A command a terminal never offers -- one that changes how a
-        // message is drawn as pixels (`Requirement::Graphical`) -- owes it
-        // no key.
         if !spec.requires.met_by(open) {
             continue;
         }
@@ -147,8 +127,6 @@ fn every_command_is_reachable_by_a_key_this_terminal_sends_and_by_the_palette() 
 
 #[test]
 fn nothing_waits_on_a_task_that_is_already_done() {
-    // Every NOT_YET entry names a real command: a stale one would hide a
-    // command that was renamed.
     for (id, _) in NOT_YET {
         assert!(
             registry::all().any(|spec| spec.id.as_str() == *id),

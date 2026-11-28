@@ -1,24 +1,6 @@
-//! The person's model, answering the needs-action question in the built-in
-//! detector's place (spec 007 FR-107, FR-170, US12 scenario 6).
-//!
-//! [`NeedsActionModel`] is `postio-classify`'s [`ModelLayer`]. The classifier
-//! decides whether to ask at all -- only mail sent directly to the person,
-//! and never text that speaks to a machine (FR-106, ADR 0009 Q4) -- and this
-//! asks the model the rest, in a fixed schema:
-//!
-//! - **`kind`**: `question`, `todo` or `none`;
-//! - **`quote`**: the sentence that asks, copied as written;
-//! - **`due`**: the day a to-do names, `YYYY-MM-DD`, or nothing.
-//!
-//! **The quote is found, not believed.** It becomes a span only if it is in
-//! the message's own text byte for byte; a model that paraphrases, or
-//! quotes the history or the headers, is dropped, and the message goes
-//! unmarked rather than mismarked. So a marker quotes the message's own
-//! words by construction, whichever detector found it (FR-104).
-//!
-//! **When the model cannot answer** -- it is not running, too slow, or off
-//! its schema -- the answer is [`Unavailable`], and the classifier asks the
-//! built-in detector instead. Nothing waits for the model (FR-107).
+//! The person's model answering the needs-action question in the built-in detector's place. The
+//! quote is found, not believed: it counts only if it is in the message's own text byte for byte.
+//! When the model cannot answer the answer is `Unavailable` and the built-in detector asks instead.
 
 use std::sync::Arc;
 
@@ -32,7 +14,6 @@ use serde_json::{Map, Value};
 use crate::client::{Client, Question};
 use crate::schema::{Field, Kind, Schema};
 
-/// The answer's shape.
 const SCHEMA: Schema = Schema {
     name: "needs_action",
     fields: &[
@@ -51,7 +32,6 @@ const SCHEMA: Schema = Schema {
     ],
 };
 
-/// What the model is asked, in Postio's words.
 const ASKED: &str = "You help one person sort their email. The email you are given was \
     sent to them. Decide whether its author asks them a direct question they are expected \
     to answer, or asks them to do something.\n\
@@ -65,29 +45,22 @@ const ASKED: &str = "You help one person sort their email. The email you are giv
     - due: for a todo whose sentence names a day, that day as YYYY-MM-DD, counted from the \
     day the email was sent. Otherwise empty.";
 
-/// The morning a to-do falls due when its sentence names only a day: the
-/// hour `parse_when` gives a day with no time, as the built-in detector
-/// reads it.
+/// The hour `parse_when` gives a day with no time, as the built-in detector reads it.
 const DUE_AT: NaiveTime = NaiveTime::from_hms_opt(8, 0, 0).expect("a real time");
 
-/// The person's model, as the needs-action question's answerer.
 #[derive(Debug, Clone)]
 pub struct NeedsActionModel {
     client: Arc<Client>,
 }
 
 impl NeedsActionModel {
-    /// Ask `client`'s model.
     pub fn new(client: Arc<Client>) -> Self {
         Self { client }
     }
 }
 
 impl ModelLayer for NeedsActionModel {
-    /// Focus asks the model no filter question: filtering decides by guards,
-    /// structure, rules and corrections, and leaves the rest in the inbox
-    /// (FR-167). This answers "stay", which is what an open question comes
-    /// to anyway.
+    /// Asks no filter question: filtering decides by guards, structure, rules and corrections.
     fn filter(&self, _: &FiledMessage<'_>) -> Result<Option<ReasonKind>, Unavailable> {
         Ok(None)
     }
@@ -126,8 +99,6 @@ impl ModelLayer for NeedsActionModel {
     }
 }
 
-/// The names and addresses the reader goes by, from their identities: who
-/// "you" is.
 fn reader(message: &BodyMessage<'_>) -> String {
     let named: Vec<String> = message
         .identities
@@ -144,9 +115,7 @@ fn reader(message: &BodyMessage<'_>) -> String {
     }
 }
 
-/// The model's answer as the classifier takes it: a kind, the quote found in
-/// `text` as a span of characters, and a to-do's due date. A quote not in
-/// the text verbatim is no answer.
+/// A quote not in the text verbatim is no answer.
 fn read(answer: &Map<String, Value>, text: &OwnText<'_>) -> Option<NeedsAction> {
     let kind = match answer.get("kind")?.as_str()? {
         "question" => MarkerKind::Question,
@@ -165,9 +134,7 @@ fn read(answer: &Map<String, Value>, text: &OwnText<'_>) -> Option<NeedsAction> 
     Some(NeedsAction { kind, span, due_at })
 }
 
-/// Where `quote` is in `text`, in characters, if it is there byte for byte.
-/// Surrounding whitespace is not part of a sentence, and is let go; nothing
-/// else is.
+/// Surrounding whitespace is let go; nothing else is.
 pub(crate) fn span_of(quote: &str, text: &OwnText<'_>) -> Option<std::ops::Range<usize>> {
     let quote = quote.trim();
     if quote.chars().filter(|c| c.is_alphanumeric()).count() < 3 {
@@ -178,7 +145,6 @@ pub(crate) fn span_of(quote: &str, text: &OwnText<'_>) -> Option<std::ops::Range
     Some(start..start + quote.chars().count())
 }
 
-/// `day` at [`DUE_AT`], on this computer's clock.
 fn morning_of(day: NaiveDate) -> Option<DateTime<Utc>> {
     Local
         .from_local_datetime(&day.and_time(DUE_AT))
@@ -266,16 +232,12 @@ mod tests {
 
     #[test]
     fn a_quote_that_is_not_verbatim_in_the_text_is_dropped() {
-        // FR-104, FR-170: a paraphrase is the model's words, not the
-        // message's, and a marker never quotes anything but the message.
+        // A paraphrase is the model's words, not the message's.
         for quote in [
             "Could you approve these by Friday so finance can close the quarter?",
             "can you approve these by friday so finance can close the quarter?",
             "Approve the Q3 figures by Friday.",
-            // Quoted history is not the own text, so a quote from it is not
-            // found there.
             "Could you look at the draft when you have a moment?",
-            // Too little to be a sentence, even where it matches.
             "Hi",
         ] {
             let answer = answered(&format!(
@@ -351,8 +313,6 @@ mod tests {
         );
     }
 
-    // --- Through the classifier, as the body stage asks it ------------------
-
     struct NoFacts;
 
     impl Facts for NoFacts {
@@ -403,8 +363,6 @@ mod tests {
 
     #[test]
     fn with_a_model_connected_the_marker_is_the_model_s() {
-        // US12 scenario 6, first half: the model says it is a to-do, where
-        // the built-in detector would have said question.
         let runtime = FakeRuntime::always(Reply::content(format!(
             r#"{{"kind":"todo","quote":"{APPROVE}","due":""}}"#
         )));
@@ -417,7 +375,6 @@ mod tests {
 
     #[test]
     fn with_the_model_not_running_the_built_in_detector_answers() {
-        // US12 scenario 6, second half: nothing waits for the model.
         let runtime = FakeRuntime::refusing();
         let marker = classified(&runtime).expect("the built-in detector's marker");
         assert_eq!(marker.by, MarkedBy::Detector);

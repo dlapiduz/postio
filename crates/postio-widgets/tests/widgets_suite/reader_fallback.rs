@@ -1,17 +1,3 @@
-//! A render past its deadline shows the message's own plain text (spec 006
-//! FR-023; specs/007-postio-focus research R1).
-//!
-//! The view has always drawn whatever plain text it was handed, under a
-//! notice that says the original could not be shown. The reader never handed
-//! it any: the fallback was the notice alone, over an empty page, for every
-//! message -- including the ones that came with a text part saying exactly
-//! what the HTML said.
-//!
-//! The render is held on the render thread past the reader's own deadline,
-//! and what is asserted is the snapshot on screen: what a person would read.
-//!
-//! Skips without a display. Nothing here touches the network.
-
 use std::rc::Rc;
 
 use gtk::gdk;
@@ -40,7 +26,6 @@ fn reader_in_a_window() -> Option<(gtk::Window, Reader, tempfile::TempDir)> {
     Some((window, reader, dir))
 }
 
-/// The snapshot's text once the render has fallen back at its deadline.
 fn fallen_back(reader: &Reader) -> String {
     let view = reader.view();
     crate::support_reader::settle_until("the held render to fall back at its deadline", || {

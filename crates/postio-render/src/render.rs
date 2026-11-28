@@ -1,6 +1,5 @@
-//! One request, laid out, recorded and measured -- synchronously, on the
-//! caller's thread. The render thread (research R6) runs this; nothing else
-//! should call it on the UI thread.
+//! One request, laid out, recorded and measured synchronously on the caller's thread; never call it
+//! on the UI thread.
 
 use std::sync::Arc;
 
@@ -11,34 +10,23 @@ use blitz_traits::shell::ColorScheme;
 use crate::fonts::FontSet;
 use crate::{Outcome, RenderCounts, RenderRequest, RenderedDocument};
 
-/// What relative URLs resolve against. Without a base Blitz resolves
-/// against a `data:` URL, which cannot be one, and panics on the first
-/// `<img src="x">` (research R1).
+/// Without a base Blitz resolves against a `data:` URL, which cannot be one, and panics on the
+/// first `<img src="x">`.
 pub const BASE_URL: &str = "postio-message://message/";
 
-/// What this renderer asks of every document, above the author's rules.
-///
-/// A message's box does not scroll inside the snapshot: the view has one
-/// scroller, the page. Content wider than the pane widens the document
-/// instead, and the view scrolls it sideways (FR-021a, SC-009). The shared
-/// `reader.css` keeps `overflow-x: auto` for the macOS reader's web view.
-///
-/// What `overflow-x: auto` also did there, implicitly, is kept explicitly:
-/// the box clips vertically and is its own formatting context, so a
-/// sender's negative margin or float cannot reach the next message
-/// (#1346). `flow-root` keeps a float's height inside the box, so the clip
-/// cuts only what escaped it.
+/// A message's box does not scroll inside the snapshot: wider content widens the
+/// document and the view scrolls it sideways. The box clips vertically and is its
+/// own formatting context, so a sender's negative margin or float cannot reach
+/// the next message (#1346).
 const RENDERER_CSS: &str = ".postio-body { overflow-x: visible !important; \
                             overflow-y: clip !important; display: flow-root !important; }";
 
-/// Lay out and record `request`'s document, drawing with `fonts`.
 pub fn render(request: &RenderRequest, fonts: &FontSet) -> RenderedDocument {
     render_unless(request, fonts, &|| false).expect("a render that is never stale finishes")
 }
 
-/// [`render`], giving up between passes once `stale` says nobody will see
-/// the result: a layout cannot be interrupted, but a superseded render
-/// need not start another (T218).
+/// Gives up between passes once `stale` says nobody will see the result: a layout cannot be
+/// interrupted.
 pub(crate) fn render_unless(
     request: &RenderRequest,
     fonts: &FontSet,
@@ -49,8 +37,6 @@ pub(crate) fn render_unless(
     let mut doc = lay_out(request, fonts, None, zoom);
     let (resolved, unresolved) = request.resources.counts();
     let placeholdered = request.resources.placeholdered();
-    // The theme rule (research R10): classify, then repair against what is
-    // actually painted, in a second layout if anything changes.
     let plan = crate::present::plan(&doc, request);
     let mut style_passes = 1;
     if !plan.is_empty() {
@@ -65,12 +51,9 @@ pub(crate) fn render_unless(
             style_passes = 2;
         }
     }
-    // Paper wider than the column is zoomed to fit (T207, T212): a 640px
-    // newsletter in a 480px column is drawn whole and smaller, never cut
-    // off and never scrolled sideways -- until fitting would take it under
-    // `PAPER_FIT_FLOOR`, below which it stays at that scale and scrolls.
-    // The fit multiplies the reader's own zoom rather than replacing it, so
-    // Ctrl+plus still means "larger" on a fitted sheet.
+    // Paper wider than the column is zoomed to fit, down to `PAPER_FIT_FLOOR`,
+    // below which it scrolls. The fit multiplies the reader's own zoom, so Ctrl+plus
+    // still means "larger" on a fitted sheet.
     let fit = paper_fit(&doc);
     if fit < 1.0 {
         if stale() {
@@ -81,10 +64,8 @@ pub(crate) fn render_unless(
         doc = lay_out(request, fonts, plan, zoom);
         style_passes += 1;
     }
-    // Zoom (research R11): the document lays out at the pane's width over
-    // the zoom, and is painted at the device scale times the zoom. The
-    // snapshot's geometry is then in the view's own pixels -- CSS pixels
-    // times the zoom -- so the widget never does zoom arithmetic.
+    // The document lays out at the pane's width over the zoom and paints at the
+    // device scale times the zoom, so the snapshot's geometry is in the view's pixels.
     let mut size = doc.root_element().final_layout().size;
     // Wider than the pane -- a fixed 600px table at 150% -- widens the
     // document, so the view scrolls it sideways rather than losing it.
@@ -149,18 +130,10 @@ pub(crate) fn render_unless(
     Some(document)
 }
 
-/// The least a paper body is scaled to fit its column: postio-body's, so
-/// the Mac's web view fits paper to the same floor.
 pub const PAPER_FIT_FLOOR: f64 = postio_body::treatment::PAPER_FIT_FLOOR;
 
-/// The scale that fits every paper body in the document into its own box,
-/// at least [`PAPER_FIT_FLOOR`]; 1.0 when each already fits, or when nothing
-/// in the document is on paper.
-///
-/// Measured against the sheet, not the page: the sheet is as wide as the
-/// column, and what overflows it is the sender's layout. Zooming by the
-/// sheet's share of the layout lays the document out wider by exactly as
-/// much, so the layout fits the sheet at the new scale.
+/// 1.0 when each fits or nothing is on paper. Measured against the sheet, not the
+/// page: zooming by the sheet's share lays the document out wider by exactly as much.
 fn paper_fit(doc: &blitz_dom::BaseDocument) -> f64 {
     let selector = format!(
         "div.{}[{}=\"{}\"]",
@@ -181,9 +154,7 @@ fn paper_fit(doc: &blitz_dom::BaseDocument) -> f64 {
         .fold(1.0, f64::min)
 }
 
-/// How far `wide` CSS pixels of content must be scaled to fit `width`,
-/// within `[PAPER_FIT_FLOOR, 1.0]`. Half a pixel of slack: a layout that
-/// rounds a fraction past the column is not one to shrink.
+/// Half a pixel of slack: a layout that rounds a fraction past the column is not one to shrink.
 pub fn fit_scale(wide: f64, width: f64) -> f64 {
     if wide <= width + 0.5 {
         return 1.0;
@@ -191,13 +162,10 @@ pub fn fit_scale(wide: f64, width: f64) -> f64 {
     (width / wide).clamp(PAPER_FIT_FLOOR, 1.0)
 }
 
-/// The right edge of the furthest laid-out box, in CSS pixels.
 fn content_width(doc: &blitz_dom::BaseDocument) -> f32 {
     right_edge(doc, doc.root_element().id)
 }
 
-/// The right edge of the furthest laid-out box under `root`, `root`'s own
-/// included, in CSS pixels.
 fn right_edge(doc: &blitz_dom::BaseDocument, root: blitz_dom::NodeId) -> f32 {
     let mut widest = 0.0f32;
     let mut stack = vec![root];
@@ -216,7 +184,6 @@ fn right_edge(doc: &blitz_dom::BaseDocument, root: blitz_dom::NodeId) -> f32 {
     widest
 }
 
-/// Every rect of the snapshot from CSS pixels into the view's, at `zoom`.
 fn zoom_geometry(document: &mut RenderedDocument, zoom: f64) {
     if zoom == 1.0 {
         return;
@@ -243,8 +210,6 @@ fn zoom_geometry(document: &mut RenderedDocument, zoom: f64) {
     document.anchors.iter_mut().for_each(|(_, y)| *y *= zoom);
 }
 
-/// Parse, style and lay out `request`'s document, with a plan's overrides
-/// if there is one.
 fn lay_out(
     request: &RenderRequest,
     fonts: &FontSet,
@@ -269,7 +234,6 @@ fn lay_out(
                     ColorScheme::Light
                 },
             );
-            // Kept apart from the device scale, never folded into it.
             blitz.set_zoom(zoom as f32);
             blitz
         }),
@@ -300,12 +264,9 @@ fn lay_out(
     doc
 }
 
-/// Point every `<img>` whose `postio-cid:` names no part of the message at
-/// a placeholder, before the first style pass. Left alone it would keep
-/// the size it declares and draw nothing in it: a blank band that says
-/// neither that a picture is there nor that it is not shown (#1764). Only
-/// an `<img>`: a missing part named by a CSS background stays unpainted,
-/// because a placeholder tiled behind text would cover it.
+/// Left alone it keeps its declared size and draws nothing: a blank band (#1764).
+/// Only an `<img>`: a CSS background naming a missing part stays unpainted, since
+/// a placeholder tiled behind text would cover it.
 fn mark_missing_parts(doc: &mut blitz_dom::BaseDocument, resources: &crate::Resources) {
     let src = blitz_dom::local_name!("src");
     let missing: Vec<blitz_dom::NodeId> = doc
@@ -328,11 +289,8 @@ fn mark_missing_parts(doc: &mut blitz_dom::BaseDocument, resources: &crate::Reso
     }
 }
 
-/// The most bytes the low-resolution copy may take.
 const LOW_RES_BUDGET: usize = 16 * 1024 * 1024;
 
-/// The whole document at a quarter of its scale, or smaller still if a
-/// quarter would not fit the budget: what shows where a tile is not ready.
 fn low_res(doc: &RenderedDocument) -> Raster {
     let (width, height) = (doc.size.width * doc.scale, doc.size.height * doc.scale);
     let mut factor = 0.25;
@@ -343,24 +301,17 @@ fn low_res(doc: &RenderedDocument) -> Raster {
     raster_at(doc, factor)
 }
 
-/// A whole document's pixels, at the scale it was rendered for.
 #[derive(Clone, Debug)]
 pub struct Raster {
-    /// Device pixels across.
     pub width: u32,
-    /// Device pixels down.
     pub height: u32,
-    /// Premultiplied RGBA, row by row.
     pub rgba: Vec<u8>,
 }
 
-/// Rasterise all of `doc` at once. Tiles (T056) replace this for the
-/// widget; tests and one-shot captures keep it.
 pub fn rasterize(doc: &RenderedDocument) -> Raster {
     raster_at(doc, 1.0)
 }
 
-/// All of `doc`, at `factor` times the scale it was recorded at.
 fn raster_at(doc: &RenderedDocument, factor: f64) -> Raster {
     let width = (doc.size.width * doc.scale * factor).ceil().max(1.0) as u32;
     let height = (doc.size.height * doc.scale * factor).ceil().max(1.0) as u32;
@@ -383,12 +334,9 @@ fn raster_at(doc: &RenderedDocument, factor: f64) -> Raster {
     }
 }
 
-/// The attribute `postio-ui` stamps on every `<details>` it composes: the
-/// fold's stable id, the same across re-renders.
+/// The fold's stable id, the same across re-renders.
 pub const FOLD_ATTRIBUTE: &str = "data-postio-fold";
 
-/// Flip `open` on every fold `toggled` names, before the first style pass,
-/// so the document is laid out once, already in the state asked for.
 fn toggle_folds(doc: &mut blitz_dom::BaseDocument, toggled: &[String]) {
     if toggled.is_empty() {
         return;

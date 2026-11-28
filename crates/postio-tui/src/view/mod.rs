@@ -1,12 +1,12 @@
-//! Drawing: the app's state onto a ratatui frame.
-//!
-//! Nothing here decides anything about mail; it draws what `App` holds.
+//! Drawing: the app's state onto a ratatui frame; nothing here decides anything about mail.
 
 pub mod bar;
 pub mod bottom;
 pub mod boxed;
+pub mod calendar;
 pub mod capture;
 pub mod composer;
+pub mod confirm;
 pub mod digest;
 pub mod filtered;
 pub mod first_run;
@@ -17,6 +17,7 @@ pub mod open;
 pub mod palette;
 pub mod pane;
 pub mod picker;
+pub mod results;
 pub mod rule_dialog;
 pub mod rules;
 pub mod settings;
@@ -34,7 +35,6 @@ use ratatui::text::Line;
 use crate::app::{App, Focus, Front};
 use crate::theme::{Role, Theme};
 
-/// Draw the whole screen, and answer what is where on it, for the mouse.
 pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -> hit::Hits {
     let mut hits = hit::Hits::default();
     let area = frame.area();
@@ -51,19 +51,26 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         if let Some(open) = app.palette() {
             palette::draw(frame, area, &open, theme);
         }
-        if let Some((bar, ctx)) = app.bar() {
-            bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);
+        if let Some(bar) = app.bar() {
+            bar::draw(
+                frame,
+                area,
+                bar,
+                &|command| app.hint(command),
+                theme,
+                &mut hits,
+            );
         }
     } else if let Some(run) = app.first_run() {
         first_run::draw(frame, area, run, theme);
     } else {
         let window = app.window();
         topbar::draw(frame, window.top, app, theme, &mut hits);
-        // A draft in a tab of its own has the whole screen between the top
-        // bar and the bottom line while it is in front.
         let tab = app.composer_detached() && app.focus() == Focus::Composer;
         if !tab {
-            if app.filtered().is_some() {
+            if let Some(view) = app.calendar() {
+                calendar::strip(frame, window.strip, view, app.calendar_typing(), theme);
+            } else if app.filtered().is_some() {
                 filtered::strip(frame, window.strip, app, theme, &mut hits);
             } else if app.rules().is_some() {
                 rules::strip(frame, window.strip, app, theme, &mut hits);
@@ -82,20 +89,22 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
             state::banner(frame, row, &banner, app, theme, &mut hits);
         }
         match app.front() {
-            // Filtered takes the strip's place and the list's.
+            _ if let Some(view) = app.calendar() => {
+                calendar::body(frame, body, view, app.editor_field(), theme, &mut hits);
+            }
             _ if app.filtered().is_some() => {
-                filtered::body(frame, body, app, theme, now, &mut hits);
+                filtered::body(frame, body, app, theme, &mut hits);
             }
             _ if app.rules().is_some() => {
                 rules::body(frame, body, app, theme, now, &mut hits);
             }
-            // A detached draft has the whole body to itself.
+            _ if app.results().is_some() && app.pane().is_none() => {
+                results::body(frame, body, app, theme, &mut hits);
+            }
             Front::Composer if app.composer().is_some() && tab => {
                 composer::screen(frame, body, app, theme, now, &mut hits);
             }
             _ => {
-                // Beside the reading pane the list keeps the left of the
-                // rows, and the pane the rest.
                 let beside = app
                     .pane()
                     .and_then(|_| crate::layout::split_pane(window.list));
@@ -125,7 +134,6 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         if app.front() == Front::Reader && app.pane().is_none() {
             open::over_list(frame, area, app, theme, now, &mut hits);
         }
-        // The draft being written, in the frame over the list.
         if app.front() == Front::Composer
             && !tab
             && app.composer().is_some()
@@ -133,18 +141,23 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
         {
             composer::screen(frame, inside, app, theme, now, &mut hits);
         }
-        // A digest's window, in the message frame.
         digest::over_list(frame, area, app, theme, now, &mut hits);
-        // The sweep's question, and the one over removing a rule.
-        filtered::sweep(frame, body, app, theme, &mut hits);
+        confirm::draw(frame, body, app, theme, &mut hits);
         rules::remove(frame, body, app, theme, &mut hits);
-        rule_dialog::draw(frame, body, app, theme, now, &mut hits);
+        rule_dialog::draw(frame, body, app, theme, &mut hits);
         capture::draw(frame, body, app, theme, &mut hits);
         // Over everything: a click there lands on nothing underneath.
-        if let Some((bar, ctx)) = app.bar() {
-            bar::draw(frame, area, bar, &ctx, now, theme, &mut hits);
+        if let Some(bar) = app.bar() {
+            bar::draw(
+                frame,
+                area,
+                bar,
+                &|command| app.hint(command),
+                theme,
+                &mut hits,
+            );
         }
-        if let Some((open, keymap)) = app.picker() {
+        if let Some(open) = app.picker() {
             let beside = app
                 .pane()
                 .and_then(|_| crate::layout::split_pane(window.list));
@@ -163,18 +176,16 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
                 frame,
                 &place,
                 open,
-                keymap,
                 &|command| app.hint(command),
                 theme,
                 &mut hits,
             );
         }
-        if let Some((open, reach)) = app.folders() {
+        if let Some(open) = app.folders() {
             folders::draw(
                 frame,
                 area,
                 open,
-                &reach,
                 &|command| app.hint(command),
                 theme,
                 &mut hits,
@@ -200,10 +211,6 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &Theme, now: DateTime<Local>) -
     hits
 }
 
-/// The bottom line: the bulk bar while anything is selected; otherwise what
-/// just happened -- a failure marked `✕` in the error colour, a success `✓`
-/// in the success colour with its undo key in the accent -- and a draft left
-/// open.
 fn status_line(
     frame: &mut Frame,
     area: Rect,
@@ -237,7 +244,6 @@ fn status_line(
     let left = Line::from(spans);
     let used = left.width();
     if used > width {
-        // Too long for the line: the words, cut, without their colours.
         let words: String = left
             .spans
             .iter()
@@ -253,11 +259,8 @@ fn status_line(
     bottom::toast_targets(hits, area.x, area.y, undo.as_ref(), offer.as_ref());
 }
 
-/// `text`, cut to at most `width` terminal columns, ending in `…` when cut.
-///
-/// By display width, not characters or bytes: a CJK character is two
-/// columns and a combining mark none, and a list that counted characters
-/// would push its date column out of line on the first Japanese subject.
+/// `text` cut to `width` terminal columns, ending in `…`. By display width: a CJK character is two
+/// columns.
 pub fn fit(text: &str, width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
     let full: usize = text.chars().map(|c| c.width().unwrap_or(0)).sum();
@@ -300,7 +303,6 @@ mod tests {
         with_places_and_keys(size, &Default::default())
     }
 
-    /// Mail from one account with an Inbox of four unread and a saved search.
     fn with_places_and_keys(size: (u16, u16), bindings: &postio_config::KeyBindings) -> App {
         let mut app = app_with_keys(size, bindings);
         let mut contents = places();
@@ -369,7 +371,6 @@ mod tests {
         for word in ["Send later", "Attach", "Remind"] {
             assert!(foot.contains(word), "{word} in {foot}");
         }
-        // And it is something to click.
         let (y, line) = screen
             .lines()
             .enumerate()
@@ -432,7 +433,6 @@ mod tests {
                 )),
             );
         }
-        // Contact names are harvested from received mail's headers.
         let hostile = postio_model::contact_group::RecipientCandidate::Contact(
             postio_model::EmailAddress::new(Some("Ada\u{1b}[2J"), "ada@example.com"),
         );
@@ -462,7 +462,6 @@ mod tests {
             "application/pdf",
             12_288,
         );
-        // A forward carries the sender's file names.
         pdf.filename = Some("fixture\u{1b}]0;x\u{7}.pdf".into());
         draft.attachments = vec![pdf];
         app.compose(draft);
@@ -502,8 +501,6 @@ mod tests {
 
     #[test]
     fn the_preview_shows_bold_where_the_source_says_so() {
-        // T057, toggle mode: one key swaps the text for the message as it
-        // will arrive.
         let mut app = with_places((160, 16));
         writing_bold(&mut app);
         update(
@@ -589,31 +586,10 @@ mod tests {
 
     #[test]
     fn a_click_on_the_third_list_row_is_that_row() {
-        // T070.
-        use postio_ui::paging::Page;
         let mut app = with_places((160, 16));
-        let effects = update(
+        crate::test_support::show_rows(
             &mut app,
-            Input::Opened {
-                scope: postio_model::ListScope::Mailbox(postio_model::MailboxId::new(1)),
-                total: 5,
-            },
-        );
-        let generation = effects
-            .iter()
-            .find_map(|effect| match effect {
-                crate::app::Effect::Fetch { generation, .. } => Some(*generation),
-                _ => None,
-            })
-            .expect("a page asked for");
-        let rows = (0..5).map(crate::test_support::row).collect();
-        update(
-            &mut app,
-            Input::Page {
-                generation,
-                page: 0,
-                rows: Ok(Page { rows, total: 5 }),
-            },
+            &(0..5).map(crate::test_support::row).collect::<Vec<_>>(),
         );
         let screen = screen(160, 16, &app);
         let (y, line) = screen
@@ -627,7 +603,6 @@ mod tests {
             .at(x, u16::try_from(y).unwrap())
             .expect("something is there");
         assert_eq!(hit.target, hit::Target::Row(2));
-        // A plain row is one line, and a click on it is on it.
         let lines_of_row_2 = (0..16u16)
             .filter(|row| {
                 hits.at(x, *row)
@@ -639,7 +614,6 @@ mod tests {
 
     #[test]
     fn an_empty_store_opens_on_the_first_run() {
-        // T084: the empty-store screen.
         use crossterm::event::{KeyCode, KeyEvent};
         let mut app = crate::test_support::app((120, 30));
         update(&mut app, Input::Places(crate::places::Places::default()));
@@ -784,8 +758,6 @@ mod tests {
 
     #[test]
     fn the_filtering_section_says_what_filtering_does_and_where_it_lives() {
-        // The desktop's words (`postio_ui::filtering`), and the file is where
-        // the terminal edits it, as every section that owns a table.
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
         let mut app = with_places((200, 30));
         update(
@@ -912,7 +884,6 @@ mod tests {
     fn a_hostile_subject_in_the_composer_reaches_the_screen_harmless() {
         let mut app = with_places((160, 16));
         let mut draft = postio_model::Draft::new(postio_model::AccountId::new(1));
-        // What a reply copies from the message it answers.
         draft.subject = "Re: \u{1b}]0;pwned\u{7}\u{1b}[2J".into();
         app.compose(draft);
         let screen = screen(160, 16, &app);
@@ -974,7 +945,6 @@ mod tests {
                 "the undo key in the accent: {text}"
             );
         }
-        // Without colour the marks still say it.
         let (text, _, _) = status_of(&app, Colour::None);
         assert!(text.starts_with(" ✓"), "{text}");
     }
@@ -987,11 +957,7 @@ mod tests {
         let mut app = with_places((160, 30));
         app.set_reading_for_tests(crate::conversation::Reading {
             row: postio_model::MessageId::new(1),
-            members: vec![crate::conversation::tests::member_saying(
-                1,
-                &words.join(" "),
-            )],
-            current: 0,
+            shown: crate::conversation::tests::member_saying(1, &words.join(" ")),
             own: None,
         });
         let screen = screen(160, 30, &app);

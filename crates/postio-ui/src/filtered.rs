@@ -1,7 +1,4 @@
-//! What Focus's Filtered view says (spec 007 US9, screen 21): its tabs, a
-//! row's reason pill, the line on the right of the tabs, and the footer.
-//! The view is `postio-gtk`'s; the words are here, where a test holds
-//! them.
+//! What Focus's Filtered view says: tabs, reason pill, the note beside the tabs, the footer.
 
 use chrono::NaiveDate;
 use postio_core::{CommandId, Keymap};
@@ -9,21 +6,16 @@ use postio_core::{CommandId, Keymap};
 use crate::focus_dialog::Verb;
 use crate::hints::{self, Hint};
 
-/// The view's title.
 pub const TITLE: &str = "Filtered";
 
-/// The line under the title.
 pub const SUBTITLE: &str = "Archived automatically \u{b7} newest first";
 
-/// The line on the right of the tabs (spec C4: archived, never deleted).
 pub const NOTE: &str =
     "Nothing here is deleted automatically \u{b7} nothing here ever reached the inbox";
 
-/// What the focused row's restore button says.
 pub const RESTORE: &str = "Restore, never filter this sender";
 
-/// The tabs, in order, `1` to `7`: each reason as the store spells it --
-/// `None` for All -- and its name.
+/// Tabs `1` to `7`: each reason as the store spells it (`None` for All) and its name.
 pub const TABS: [(Option<&str>, &str); 7] = [
     (None, "All"),
     (Some("spam"), "Spam"),
@@ -34,7 +26,6 @@ pub const TABS: [(Option<&str>, &str); 7] = [
     (Some("social"), "Social"),
 ];
 
-/// The number keys of the tabs, in order.
 pub const TAB_COMMANDS: [CommandId; 7] = [
     CommandId::FilteredTab1,
     CommandId::FilteredTab2,
@@ -45,9 +36,6 @@ pub const TAB_COMMANDS: [CommandId; 7] = [
     CommandId::FilteredTab7,
 ];
 
-/// Each tab's count, in [`TABS`]' order, from each reason's count as the
-/// store gives them: All is their sum, and a reason the store did not name
-/// has none.
 pub fn tab_counts(reasons: &[(String, u32)]) -> [u32; 7] {
     let mut counts = [0; 7];
     for (index, (reason, _)) in TABS.iter().enumerate() {
@@ -62,27 +50,20 @@ pub fn tab_counts(reasons: &[(String, u32)]) -> [u32; 7] {
     counts
 }
 
-/// The header strip's count: "186 filtered today".
 pub fn today(count: u32) -> String {
     format!("{count} filtered today")
 }
 
-/// The folders popover's count beside Filtered: "186 today".
 pub fn today_short(count: u32) -> String {
     format!("{count} today")
 }
 
-/// The Filtered view's button that asks for a sweep.
 pub const SWEEP_BUTTON: &str = "Sweep the inbox\u{2026}";
 
-/// The sweep's question (FR-118): what `F` asks before anything moves.
 pub const SWEEP_HEADING: &str = "Sweep the inbox?";
 
-/// What a sweep that would move nothing says instead of asking.
 pub const SWEEP_NOTHING: &str = "Nothing in the inbox would be filtered";
 
-/// What the sweep's question says: how many would move, where, and how
-/// to take it back.
 pub fn sweep_body(count: u32, undo: Option<&str>) -> String {
     let messages = if count == 1 { "message" } else { "messages" };
     let mut said =
@@ -93,12 +74,10 @@ pub fn sweep_body(count: u32, undo: Option<&str>) -> String {
     said
 }
 
-/// The sweep's button: "Move 2 to Filtered".
 pub fn sweep_action(count: u32) -> String {
     format!("Move {count} to Filtered")
 }
 
-/// A row's reason pill: "notification · Forge", or the reason alone.
 pub fn pill(reason: &str, source: Option<&str>) -> String {
     match source.map(str::trim).filter(|source| !source.is_empty()) {
         Some(source) => format!("{reason} \u{b7} {source}"),
@@ -106,10 +85,8 @@ pub fn pill(reason: &str, source: Option<&str>) -> String {
     }
 }
 
-/// The footer's hints, read from the keymap.
 pub fn footer(keymap: &Keymap, rows: bool) -> Vec<Hint> {
     let mut said = Vec::new();
-    // Nothing to restore or open on an empty tab.
     if rows {
         said.extend(hints::hint(
             keymap,
@@ -133,14 +110,10 @@ pub fn footer(keymap: &Keymap, rows: bool) -> Vec<Hint> {
     said
 }
 
-/// What an empty tab says, once its count has been read: nothing there is
-/// wrong, and Back or `g i` goes to the inbox.
 pub const EMPTY: &str = "Nothing is filtered here";
 
-/// The verbs the selection bar offers over Filtered, in order: the first is
-/// the one a selection is usually for. Delete and Flag stay keys, as Delete
-/// is off the main list's bar (screen 01); Archive is not here at all,
-/// since Filtered mail is archived already.
+/// The selection bar's verbs over Filtered. Delete and Flag stay keys; Archive is absent since the
+/// mail is archived already.
 pub const BAR_VERBS: &[Verb] = &[
     Verb {
         command: CommandId::RestoreFiltered,
@@ -154,8 +127,6 @@ pub const BAR_VERBS: &[Verb] = &[
     },
 ];
 
-/// The selection's own keys, on the right of its bar: "x toggle",
-/// "J/K extend", "Esc clear". Read from the keymap, so a rebinding shows.
 pub fn bar_hints(keymap: &Keymap) -> Vec<Hint> {
     let mut said = Vec::new();
     said.extend(hints::hint(keymap, CommandId::ToggleSelection, "toggle"));
@@ -169,28 +140,22 @@ pub fn bar_hints(keymap: &Keymap) -> Vec<Hint> {
     said
 }
 
-/// How many rows a page of Filtered reads.
 pub const PAGE: u32 = 50;
 
-/// Whether a page of `read` rows was full, so there may be more.
 pub fn page_is_full(read: usize) -> bool {
     read as u32 == PAGE
 }
 
-/// The reason a tab narrows to: `Some(None)` for All, `None` for a tab
-/// that does not exist.
+/// `Some(None)` for All, `None` for a tab that does not exist.
 pub fn tab_reason(index: usize) -> Option<Option<&'static str>> {
     TABS.get(index).map(|(reason, _)| *reason)
 }
 
-/// A tab's tooltip: its name and the key that shows it.
 pub fn tab_tooltip(name: &str, key: &str) -> String {
     format!("{name} ({key})")
 }
 
-/// The heading each row of Filtered sits under: `Some` for the first row of
-/// each local day -- "Today · 9", the day and how many of its rows are
-/// here -- and `None` for the rest. `days` is each row's local day, newest
+/// `Some` for the first row of each local day ("Today · 9"), `None` for the rest; `days` is newest
 /// first.
 pub fn day_headings(days: &[NaiveDate], today: NaiveDate) -> Vec<Option<String>> {
     let mut previous = None;

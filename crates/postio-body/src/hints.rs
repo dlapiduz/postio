@@ -1,43 +1,26 @@
-//! Presentational attributes, translated into the inline style they mean.
-//!
-//! Spec 006 FR-007, research R9. Mail is still written with the attributes
-//! HTML 4 gave it -- `<font color>`, `valign`, `cellpadding`, `<table
-//! border>`, `align=center` -- because that is what renders in the mail
-//! clients senders test against. Browsers honour every one of them through
-//! presentational hints; a renderer that does not honour them collapses the
-//! layout. So they are rewritten here, into the declarations a browser would
-//! derive from them, where it is a pure function of markup and provable in
-//! milliseconds -- and where every frontend's renderer inherits it.
-//!
-//! What this writes goes into the element's `style` *before* the sender's own
-//! inline style, so where a sender wrote both, their declaration wins, as it
-//! would in a browser. Everything written here then passes through the
-//! sanitizer's refusals like anything a sender writes.
+//! Presentational attributes (`<font color>`, `valign`, `cellpadding`, `<table border>`, `align`)
+//! rewritten into the inline style a browser would derive.
+//! Written before the sender's own `style`, so theirs wins; the result still passes the sanitizer's
+//! refusals.
 
 use html5ever::tendril::StrTendril;
 use html5ever::{Attribute, LocalName, QualName, ns};
 use markup5ever_rcdom::{Handle, NodeData};
 
-use crate::sanitize::{is_colour, is_remote};
+use crate::sanitize::{is_colour, is_remote, split_declarations};
 
-/// The largest length, in pixels, a numeric presentational attribute is
-/// taken at. A `cellpadding="99999"` is not a layout anyone meant.
+/// Pixel cap: a `cellpadding="99999"` is not a layout anyone meant.
 const MAX_PX: u32 = 200;
 
-/// The grey browsers draw a `<table border>` in.
 const BORDER_GREY: &str = "#808080";
 
-/// What a `<table>` says about the cells directly inside it.
 #[derive(Clone, Copy, Default)]
 struct Table {
     padding: Option<u32>,
     bordered: bool,
 }
 
-/// Rewrite the presentational attributes under `node` into inline style.
-///
-/// Returns whether anything changed, so the caller serializes the document
-/// again only when there is something to serialize.
+/// Returns whether anything changed, so the caller serializes only then.
 pub(crate) fn apply(node: &Handle) -> bool {
     let mut changed = false;
     walk(node, None, &mut changed);
@@ -81,8 +64,6 @@ fn walk(node: &Handle, table: Option<Table>, changed: &mut bool) {
                     Some(side @ ("left" | "right")) => hint.push(format!("float: {side}")),
                     _ => {}
                 }
-                // A nested table starts over: its cells answer to it, not to
-                // the table around it.
                 inner = Some(Table {
                     padding: get("cellpadding").as_deref().and_then(pixels),
                     bordered: border > 0,
@@ -99,10 +80,8 @@ fn walk(node: &Handle, table: Option<Table>, changed: &mut bool) {
                 }
             }
             "img" => {
-                // Declared width and height are the image's proportions:
-                // a browser keeps them under `height: auto` (the reader's
-                // own rule), so a picture arriving late takes the box it
-                // declared and nothing below it moves (FR-026).
+                // Declared width and height keep the box under `height: auto`, so a late picture
+                // moves nothing below it.
                 let size = |name: &str| {
                     get(name)
                         .and_then(|v| v.parse::<u32>().ok())
@@ -132,18 +111,15 @@ fn walk(node: &Handle, table: Option<Table>, changed: &mut bool) {
         if matches!(element.as_str(), "table" | "td" | "th")
             && let Some(background) = get("background")
         {
-            // Written as the sender would have written it in CSS; the
-            // declaration then takes the same road any sender `url()` does,
-            // which rewrites a `cid:` to this message's part and holds a
-            // remote one back unless allowed.
+            // Written as CSS so it takes the road any sender `url()` does: `cid:` rewritten, remote
+            // held back unless allowed.
             if plain_url(&background) && (background.starts_with("cid:") || is_remote(&background))
             {
                 hint.push(format!("background-image: url({background})"));
             }
         }
         if !hint.is_empty() {
-            prepend_style(&mut attrs.borrow_mut(), &hint.join("; "));
-            *changed = true;
+            *changed |= prepend_style(&mut attrs.borrow_mut(), &hint);
         }
     }
     for child in node.children.borrow().iter() {
@@ -151,28 +127,44 @@ fn walk(node: &Handle, table: Option<Table>, changed: &mut bool) {
     }
 }
 
-/// Put `hint` in front of the element's own style, so the sender's own
-/// declarations come later and win.
-fn prepend_style(attrs: &mut Vec<Attribute>, hint: &str) {
-    if let Some(style) = attrs
+fn prepend_style(attrs: &mut Vec<Attribute>, hints: &[String]) -> bool {
+    let style = attrs
         .iter_mut()
-        .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, "style"))
-    {
-        let own = style.value.trim().to_owned();
-        style.value = StrTendril::from(if own.is_empty() {
-            hint.to_owned()
-        } else {
-            format!("{hint}; {own}")
-        });
-        return;
+        .find(|attr| str::eq_ignore_ascii_case(&attr.name.local, "style"));
+    let own = style.as_ref().map_or("", |style| style.value.trim());
+    let declared: Vec<String> = split_declarations(own)
+        .into_iter()
+        .filter_map(property)
+        .collect();
+    let hint = hints
+        .iter()
+        .flat_map(|hint| hint.split("; "))
+        .filter(|declaration| property(declaration).is_some_and(|name| !declared.contains(&name)))
+        .collect::<Vec<_>>()
+        .join("; ");
+    if hint.is_empty() {
+        return false;
     }
-    attrs.push(Attribute {
-        name: QualName::new(None, ns!(), LocalName::from("style")),
-        value: StrTendril::from(hint),
-    });
+    let value = if own.is_empty() {
+        hint
+    } else {
+        format!("{hint}; {own}")
+    };
+    match style {
+        Some(style) => style.value = StrTendril::from(value),
+        None => attrs.push(Attribute {
+            name: QualName::new(None, ns!(), LocalName::from("style")),
+            value: StrTendril::from(value),
+        }),
+    }
+    true
 }
 
-/// A URL that can sit in an unquoted `url()` without ending it early.
+fn property(declaration: &str) -> Option<String> {
+    let (name, _) = declaration.split_once(':')?;
+    Some(name.trim().to_ascii_lowercase())
+}
+
 fn plain_url(value: &str) -> bool {
     !value.is_empty()
         && value
@@ -180,14 +172,12 @@ fn plain_url(value: &str) -> bool {
             .all(|c| !matches!(c, '(' | ')' | '"' | '\'' | '\\') && !c.is_whitespace())
 }
 
-/// A non-negative pixel count, as HTML's numeric attributes spell one.
 fn pixels(value: &str) -> Option<u32> {
     let digits = value.trim().trim_end_matches("px");
     let number: u32 = digits.parse().ok()?;
     Some(number.min(MAX_PX))
 }
 
-/// A font list and nothing else: names, spaces, commas, hyphens and quotes.
 fn is_font_list(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 200
@@ -196,10 +186,7 @@ fn is_font_list(value: &str) -> bool {
             .all(|c| c.is_alphanumeric() || matches!(c, ' ' | ',' | '-' | '_' | '\'' | '"'))
 }
 
-/// HTML's legacy `<font size>` scale, as the CSS keywords it maps to.
-///
-/// 1 to 7, 3 the default; `+n` and `-n` count from 3; out-of-range values
-/// clamp, as browsers do.
+/// `+n` and `-n` count from 3; out-of-range values clamp, as browsers do.
 fn legacy_font_size(value: &str) -> Option<&'static str> {
     const SCALE: [&str; 7] = [
         "x-small",
@@ -242,8 +229,6 @@ mod tests {
         assert!(html.contains("Show"), "{html}");
     }
 
-    /// HTML's legacy scale: 1 is x-small, 3 the default, 7 xxx-large; `+n`
-    /// and `-n` count from 3.
     #[test]
     fn font_size_follows_the_legacy_scale() {
         for (size, expected) in [
@@ -359,16 +344,21 @@ mod tests {
         );
     }
 
-    /// The sender's own inline style comes after the hint, so it wins.
+    #[test]
+    fn a_second_pass_adds_no_hint_twice() {
+        let once = clean(
+            r#"<table cellspacing="4" border="1"><tr><td valign="top"><img src="cid:a" width="2" height="1"></td></tr></table>"#,
+        );
+        assert!(once.contains("aspect-ratio: 2 / 1"), "{once}");
+        assert_eq!(clean(&once), once);
+    }
+
     #[test]
     fn a_senders_own_style_outranks_the_hint() {
         let html = clean(
             r#"<table><tr><td valign="top" style="vertical-align: bottom">a</td></tr></table>"#,
         );
-        let hint = html.find("vertical-align: top").expect("the hint");
-        let own = html
-            .find("vertical-align: bottom")
-            .expect("the sender's own");
-        assert!(hint < own, "{html}");
+        assert!(html.contains("vertical-align: bottom"), "{html}");
+        assert!(!html.contains("vertical-align: top"), "{html}");
     }
 }

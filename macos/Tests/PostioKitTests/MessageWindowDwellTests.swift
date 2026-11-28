@@ -4,18 +4,8 @@ import Testing
 
 @testable import PostioKit
 
-/// A message left open in the message window is read; one stepped past, or
-/// closed before the clock ran out, is not (#71, #1159, and again after
-/// spec 009 rebuilt the Mac as Focus and the wiring went with the old list).
-///
-/// The rule and the delay are `postio_ui::dwell`'s, through `DwellClock`.
-/// What these pin is the window's half, mirroring GTK's `open.rs`: the
-/// clock follows the message on screen, stops when the window closes or
-/// Postio is not the active app, starts again on its return, and leaves a
-/// message alone once the person has set its read state.
 @MainActor
 struct MessageWindowDwellTests {
-    /// A scheduler a test drives by hand.
     @MainActor
     final class Clock {
         private var pending: [(id: Int, work: () -> Void)] = []
@@ -27,7 +17,6 @@ struct MessageWindowDwellTests {
             return Handle(clock: self, id: next)
         }
 
-        /// Let every clock still armed run out.
         func advance() {
             let due = pending
             pending = []
@@ -106,7 +95,6 @@ struct MessageWindowDwellTests {
     }
 
     @Test func readStateSetByThePersonIsNotOverruled() {
-        // `u` on an open message keeps it unread while it stays open (T237).
         let (model, clock, marked) = Self.model()
         model.open(message: 7, index: 0, total: 3, mainWidth: 1440)
         model.readStateSet()

@@ -1,12 +1,6 @@
-//! Schema and typed-deserialization tests for `postio-config`.
-//!
-//! Written before the implementation, per the TDD rule in `CLAUDE.md`.
-
 use std::path::Path;
 
 use postio_config::{Config, Density, Theme, keys::KeyBindings};
-
-// ---------------------------------------------------------------- defaults --
 
 #[test]
 fn missing_file_yields_defaults() {
@@ -44,8 +38,6 @@ fn sync_defaults_are_sane() {
     assert!(sync.poll_interval_secs > 0);
     assert!(sync.max_connections >= 1);
 }
-
-// -------------------------------------------------------------------- [ui] --
 
 #[test]
 fn parses_every_ui_value() {
@@ -100,14 +92,8 @@ fn an_unknown_enum_value_is_a_parse_error() {
     assert!(msg.contains("density") || msg.contains("enormous"), "{msg}");
 }
 
-// ------------------------------------------------------------------ [keys] --
-
 #[test]
 fn an_untouched_file_binds_nothing_of_its_own() {
-    // The defaults are the command registry's, and this crate cannot see it
-    // (#1227) -- `[keys]` is overrides, and `KeyBindings` says so. What key a
-    // command actually answers to is `postio_core::config::Keymap`, which is
-    // where `reply = "e"` is asserted now.
     let k = KeyBindings::default();
     assert_eq!(k.binding("reply"), None);
     assert_eq!(k.binding("archive"), None);
@@ -139,8 +125,6 @@ fn the_override_table_holds_exactly_what_the_file_said() {
     assert_eq!(overrides.len(), 1);
 }
 
-// -------------------------------------------------------------- [accounts] --
-
 const ICLOUD: &str = r#"
 [accounts.personal]
 email = "ada@example.com"
@@ -157,8 +141,6 @@ host = "smtp.example.com"
 port = 465
 security = "implicit-tls"
 "#;
-
-// ------------------------------------------------------- [sync] / [saved_searches] --
 
 #[test]
 fn parses_the_sync_section() {
@@ -182,10 +164,8 @@ fn parses_the_sync_section() {
 
 #[test]
 fn attachments_are_fetched_on_open_unless_the_file_says_otherwise() {
-    // ADR 0017's payload axis. ~90% of a mailbox by weight is attachment
-    // bytes nothing can index, so the default has to be the one that leaves
-    // them where they are -- and it has to hold for a file that has never
-    // mentioned `[sync]` at all.
+    // ADR 0017: ~90% of a mailbox by weight is attachment bytes nothing can index, so the default
+    // leaves them where they are, for a file that never mentions `[sync]`.
     let cfg = Config::from_toml_str("").unwrap();
     assert_eq!(
         cfg.sync.attachment_fetch,
@@ -217,8 +197,6 @@ fn parses_named_filters() {
     assert_eq!(f.query, "is:unread from:team");
     assert!(f.pinned);
 }
-
-// ------------------------------------------------------------- round-trips --
 
 #[test]
 fn defaults_round_trip() {
@@ -283,8 +261,6 @@ filter_future = 1
     );
 }
 
-// -------------------------------------------------------------- file paths --
-
 #[test]
 fn loads_from_a_real_file_and_saves_back() {
     let dir = std::env::temp_dir().join(format!("postio-config-test-{}", std::process::id()));
@@ -293,10 +269,6 @@ fn loads_from_a_real_file_and_saves_back() {
     std::fs::write(&path, ICLOUD).unwrap();
 
     let cfg = Config::load_from_path(&path).unwrap();
-    // `[accounts]` is retired (#470), so this file's account tables now
-    // round-trip as unknown keys rather than parsing into a schema. That is
-    // the property worth asserting here: the file survives a load and save
-    // without losing what it holds.
     let out = cfg.to_toml_string().unwrap();
     assert!(
         out.contains("[accounts.personal]"),
@@ -335,14 +307,8 @@ fn the_default_path_is_the_xdg_one() {
     assert!(postio_config::paths::config_dir_from(|_| None, Platform::Freedesktop).is_err());
 }
 
-// ------------------------------------------------------------- mailboxes --
-
 #[test]
 fn parses_a_mailbox_role_mapping() {
-    // Keyed by role and valued by the server's own path, which is the way
-    // round a person can write: they know what they want archived and they
-    // can read the folder name off their own server. `[keys]` is the same
-    // shape -- the thing you mean on the left, the spelling on the right.
     let cfg = Config::from_toml_str(
         r#"
         [mailboxes]
@@ -364,8 +330,6 @@ fn parses_a_mailbox_role_mapping() {
 
 #[test]
 fn a_mailbox_mapping_becomes_role_overrides() {
-    // The point of the section: it has to arrive at resolution as the model's
-    // own type, or every consumer reinvents the role parsing.
     let cfg = Config::from_toml_str(
         r#"
         [mailboxes]
@@ -393,9 +357,6 @@ fn no_mailboxes_section_means_no_overrides() {
 
 #[test]
 fn an_unparseable_role_is_dropped_rather_than_guessed() {
-    // `role_overrides` cannot report an error -- validation is where problems
-    // are reported, with a line number. What it must not do is guess: a typo
-    // that silently became Archive would move mail somewhere nobody chose.
     let cfg = Config::from_toml_str(
         r#"
         [mailboxes]
@@ -406,8 +367,6 @@ fn an_unparseable_role_is_dropped_rather_than_guessed() {
     assert!(cfg.role_overrides().is_empty());
 }
 
-/// Spec 007 T132: a `[[focus.digests]]` rule is read, and its cadence, day
-/// and time are when it comes due.
 #[test]
 fn a_digest_rule_says_when_it_comes_due() {
     use chrono::{NaiveTime, Weekday};
@@ -460,9 +419,6 @@ at      = "09:00"
     );
 }
 
-/// Spec 007 T123: `[focus] filtering` is on unless the file turns it off
-/// (FR-119), and `[focus.filter] never` lists the senders Focus never files
-/// away: an address, or a whole domain (contracts/config.md).
 #[test]
 fn focus_filtering_is_on_unless_turned_off() {
     let config = postio_config::Config::from_toml_str("").expect("parse");
@@ -485,9 +441,6 @@ never = ["pinned@example.org", "@example.net"]
     );
 }
 
-/// Which senders `[focus.filter] never` covers: an address, in any case,
-/// and every address at a domain named whole -- that domain only, not the
-/// ones under it. An entry that is neither pins nobody.
 #[test]
 fn a_never_entry_names_an_address_or_a_whole_domain() {
     let config = postio_config::Config::from_toml_str(

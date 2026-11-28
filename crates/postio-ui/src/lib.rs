@@ -1,20 +1,13 @@
-//! Toolkit-free presentation logic, shared by every frontend (ADR 0019).
-//!
-//! The classic app accumulated ~2,850 lines of logic with no toolkit in it —
-//! selection semantics, the reader's document assembly, keymap resolution,
-//! design tokens — which a second frontend would otherwise have to
-//! reimplement, fork, or link GTK to borrow. This crate is where that logic
-//! lives instead: **one implementation, called by both frontends**, which is
-//! the structural answer to ADR 0019 Q6's risk that the privacy invariants
-//! silently fork.
-//!
-//! Nothing toolkit-shaped may enter — no GTK, no WebKit, no SQL —
-//! and `check-crate-boundaries.py` enforces it, dev-dependencies included.
+//! Toolkit-free presentation logic shared by every frontend (ADR 0019): one implementation, so the
+//! privacy invariants cannot fork.
+//! No GTK, WebKit or SQL may enter; `check-crate-boundaries.py` enforces it.
 
 pub mod account;
 pub mod agent_access;
 pub mod allowlist;
+pub mod author;
 pub mod auto_empty;
+pub mod calendar;
 pub mod capture;
 pub mod cheatsheet;
 pub mod clock;

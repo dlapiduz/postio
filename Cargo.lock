@@ -540,6 +540,7 @@ dependencies = [
 [[package]]
 name = "blitz-dom"
 version = "0.3.0-beta.4"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 dependencies = [
  "app_units",
  "atomic_refcell",
@@ -584,8 +585,7 @@ dependencies = [
 [[package]]
 name = "blitz-html"
 version = "0.3.0-beta.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eddd638e05f3f3efb9f2d37f0406e7834ea023727e1678524488aa70eb639615"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 dependencies = [
  "blitz-dom",
  "blitz-traits",
@@ -596,6 +596,7 @@ dependencies = [
 [[package]]
 name = "blitz-paint"
 version = "0.3.0-beta.4"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 dependencies = [
  "anyrender",
  "anyrender_svg",
@@ -617,8 +618,7 @@ dependencies = [
 [[package]]
 name = "blitz-traits"
 version = "0.3.0-beta.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d339c3ff7fe8bed623e27695a4c15dd1ec8faa9bf9158b7475bf180280e4018c"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 dependencies = [
  "atomic_refcell",
  "bitflags",
@@ -1421,7 +1421,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 2.0.119",
+ "syn 3.0.10",
 ]
 
 [[package]]
@@ -1531,8 +1531,7 @@ checksum = "11c0bd7d22989969a619bae09147b992a6aa7f31dd4f9d9af6345f533744781f"
 [[package]]
 name = "debug_timer"
 version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da220af51a1a335e9a930beaaef53d261e41ea9eecfb3d973a3ddae1a7284b9c"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 
 [[package]]
 name = "deranged"
@@ -1628,7 +1627,7 @@ dependencies = [
  "bytes",
  "domain-macros",
  "hashbrown 0.17.1",
- "jiff",
+ "jiff 0.2.46",
  "octseq",
  "serde",
 ]
@@ -2677,6 +2676,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ical-rs"
+version = "0.7.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87c99e9e61b28da43ab66a0c676ba4678b3060cd4ba6690e6295f5e0085b6496"
+dependencies = [
+ "jiff 1.0.2",
+ "jiff-tzdb",
+ "memchr",
+]
+
+[[package]]
 name = "icu_collator"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3044,7 +3054,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5992425f089d8eb98b68d71f8264b1177ac188a8ad7dddd6485dbd58b00f8fc2"
 dependencies = [
  "base64-codec",
- "io-http",
+ "io-http 0.8.0",
  "log",
  "serde",
  "serde_json",
@@ -3063,6 +3073,20 @@ dependencies = [
  "httparse",
  "log",
  "pimalaya-stream",
+ "secrecy",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "io-http"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "80214cd8fd62f9ce721483416c1f4cf1b924c2a11f6fd9151f0d3dfa627856ed"
+dependencies = [
+ "base64-codec",
+ "httparse",
+ "log",
  "secrecy",
  "thiserror",
  "url",
@@ -3090,7 +3114,7 @@ version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0590fe7ab8e2bac4b3bcb219dc4f9a300505ad1bbf544163b9a05c36a2f6be8d"
 dependencies = [
- "io-http",
+ "io-http 0.8.0",
  "log",
  "secrecy",
  "serde",
@@ -3119,7 +3143,7 @@ checksum = "1a1e90de37723f2e56f2e91aaf42e6bf5c6980ae018de265eb6ad4fb4d88af41"
 dependencies = [
  "base64-codec",
  "getrandom 0.4.3",
- "io-http",
+ "io-http 0.8.0",
  "log",
  "secrecy",
  "serde",
@@ -3137,7 +3161,7 @@ checksum = "8cf9ed427711221b6a9235184408ac552811dfd0a473470c1415d273233acb6c"
 dependencies = [
  "anyhow",
  "domain",
- "io-http",
+ "io-http 0.8.0",
  "ipconfig",
  "log",
  "pimalaya-stream",
@@ -3199,6 +3223,22 @@ dependencies = [
  "bitflags",
  "cfg-if",
  "libc",
+]
+
+[[package]]
+name = "io-webdav"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cf4e05eb97fb5c974f872beb03117c43a0dfc4519b4dc87f27ee86fa28ee876"
+dependencies = [
+ "anyhow",
+ "io-http 0.9.0",
+ "log",
+ "memchr",
+ "pimalaya-stream",
+ "serde",
+ "thiserror",
+ "url",
 ]
 
 [[package]]
@@ -3285,9 +3325,23 @@ version = "0.2.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "175dc66334db3b9ab9985bf8b61cfed50dc16d20964bb47f9e479adcae984a7f"
 dependencies = [
- "jiff-core",
- "jiff-static",
+ "jiff-core 0.1.8",
+ "jiff-static 0.2.46",
  "log",
+ "portable-atomic",
+ "portable-atomic-util",
+ "serde_core",
+]
+
+[[package]]
+name = "jiff"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c5e77cbfb9fff4798e283c2d69dff39fc2c45e7da017e5ce95b654e46ea41236"
+dependencies = [
+ "jiff-core 1.0.1",
+ "jiff-static 1.0.2",
+ "jiff-tzdb",
  "portable-atomic",
  "portable-atomic-util",
  "serde_core",
@@ -3303,16 +3357,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "jiff-core"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6b46a105a9874634dd96231021526bf24ca04955a5998c59a9c7666e634b7b8"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "jiff-static"
 version = "0.2.46"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c7b1af7547d47354bc438d797e3854601bde8f8d185780c5ba4ab27afa54f1ba"
 dependencies = [
- "jiff-core",
+ "jiff-core 0.1.8",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "jiff-static"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9067a0b23e5be3147d56b2dcf652b18e6b1364caca93fb157653b6fbcab23a9"
+dependencies = [
+ "jiff-core 1.0.1",
+ "proc-macro2",
+ "quote",
+ "syn 3.0.10",
+]
+
+[[package]]
+name = "jiff-tzdb"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12e71a1b68a875a44a33bb7a1dd84392cb77145a3367a552a3cfe6a4f5cf3afc"
 
 [[package]]
 name = "jni"
@@ -3673,8 +3754,7 @@ dependencies = [
 [[package]]
 name = "mail-parser"
 version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d4ea9311ef3ca6189aa85c5f984bd47b2f12079bcabae28917d900ab26c9ecc"
+source = "git+https://github.com/dlapiduz/mail-parser?tag=main-a56d5f1-fork.1#769dc691ec17e1793ce2a0203c1553b35541689e"
 dependencies = [
  "encodify",
  "encoding_rs",
@@ -4750,7 +4830,7 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "domain",
- "io-http",
+ "io-http 0.8.0",
  "io-imap",
  "io-maildir",
  "io-oauth",
@@ -4783,7 +4863,7 @@ name = "postio-ai"
 version = "0.6.2"
 dependencies = [
  "chrono",
- "io-http",
+ "io-http 0.8.0",
  "postio-classify",
  "postio-config",
  "postio-model",
@@ -4833,6 +4913,7 @@ dependencies = [
  "htmd",
  "html5ever",
  "markup5ever_rcdom",
+ "postio-body",
  "postio-model",
  "postio-workspace-hack",
  "pulldown-cmark",
@@ -4844,6 +4925,7 @@ version = "0.6.2"
 dependencies = [
  "calcard",
  "chrono",
+ "ical-rs",
  "postio-model",
  "postio-workspace-hack",
  "thiserror",
@@ -4919,6 +5001,20 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "postio-dav"
+version = "0.6.2"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "io-http 0.9.0",
+ "io-webdav",
+ "postio-workspace-hack",
+ "thiserror",
+ "tokio",
+ "url",
 ]
 
 [[package]]
@@ -5217,7 +5313,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures-util",
- "io-http",
+ "io-http 0.8.0",
  "mimalloc",
  "pimalaya-stream",
  "postio-account",
@@ -5257,6 +5353,7 @@ dependencies = [
  "postio-account",
  "postio-body",
  "postio-calendar",
+ "postio-classify",
  "postio-config",
  "postio-core",
  "postio-demo",
@@ -5275,6 +5372,7 @@ dependencies = [
  "postio-workspace-hack",
  "rustix 1.1.6",
  "secrecy",
+ "serde_json",
  "tempfile",
  "tokio",
  "toml",
@@ -5282,6 +5380,7 @@ dependencies = [
  "tracing-journald",
  "tracing-log",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]
@@ -5348,8 +5447,10 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "postio-account",
+ "postio-calendar",
  "postio-classify",
  "postio-config",
+ "postio-dav",
  "postio-index",
  "postio-model",
  "postio-smtp",
@@ -5402,6 +5503,7 @@ dependencies = [
  "postio-client",
  "postio-config",
  "postio-core",
+ "postio-focus",
  "postio-host",
  "postio-mcp",
  "postio-model",
@@ -5536,7 +5638,7 @@ dependencies = [
  "idna",
  "inout 0.1.4",
  "inout 0.2.6",
- "io-http",
+ "io-http 0.8.0",
  "itertools 0.14.0",
  "libc",
  "linux-raw-sys 0.12.1",
@@ -5589,6 +5691,7 @@ dependencies = [
  "tokio",
  "toml",
  "toml_datetime",
+ "toml_edit",
  "toml_parser",
  "toml_writer",
  "tracing",
@@ -6972,8 +7075,7 @@ dependencies = [
 [[package]]
 name = "stylo_taffy"
 version = "0.3.0-beta.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d932deb3145f9e1c4159d09237f7999a29632fba9125896abb364dab080e0c0"
+source = "git+https://github.com/dlapiduz/blitz?tag=main-92b11f1-fork.1#c390b8dfeb9f8cc29e7a1bf5a7543c41d629cf38"
 dependencies = [
  "bitflags",
  "stylo",
@@ -7665,7 +7767,7 @@ dependencies = [
 [[package]]
 name = "turso"
 version = "0.8.4"
-source = "git+https://github.com/dlapiduz/turso?rev=fa342b793f8a8b006da570fb6bca6196cb65dacc#fa342b793f8a8b006da570fb6bca6196cb65dacc"
+source = "git+https://github.com/dlapiduz/turso?tag=v0.8.4-fork.1#ee93db1cce5d7088f3da66ae323c01cd70b6cd0a"
 dependencies = [
  "thiserror",
  "tracing",
@@ -7678,7 +7780,7 @@ dependencies = [
 [[package]]
 name = "turso_core"
 version = "0.8.4"
-source = "git+https://github.com/dlapiduz/turso?rev=fa342b793f8a8b006da570fb6bca6196cb65dacc#fa342b793f8a8b006da570fb6bca6196cb65dacc"
+source = "git+https://github.com/dlapiduz/turso?tag=v0.8.4-fork.1#ee93db1cce5d7088f3da66ae323c01cd70b6cd0a"
 dependencies = [
  "aegis",
  "aes 0.8.4",
@@ -7754,7 +7856,7 @@ dependencies = [
 [[package]]
 name = "turso_ext"
 version = "0.8.4"
-source = "git+https://github.com/dlapiduz/turso?rev=fa342b793f8a8b006da570fb6bca6196cb65dacc#fa342b793f8a8b006da570fb6bca6196cb65dacc"
+source = "git+https://github.com/dlapiduz/turso?tag=v0.8.4-fork.1#ee93db1cce5d7088f3da66ae323c01cd70b6cd0a"
 dependencies = [
  "chrono",
  "getrandom 0.4.3",
@@ -7764,7 +7866,7 @@ dependencies = [
 [[package]]
 name = "turso_macros"
 version = "0.8.4"
-source = "git+https://github.com/dlapiduz/turso?rev=fa342b793f8a8b006da570fb6bca6196cb65dacc#fa342b793f8a8b006da570fb6bca6196cb65dacc"
+source = "git+https://github.com/dlapiduz/turso?tag=v0.8.4-fork.1#ee93db1cce5d7088f3da66ae323c01cd70b6cd0a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7774,7 +7876,7 @@ dependencies = [
 [[package]]
 name = "turso_parser"
 version = "0.8.4"
-source = "git+https://github.com/dlapiduz/turso?rev=fa342b793f8a8b006da570fb6bca6196cb65dacc#fa342b793f8a8b006da570fb6bca6196cb65dacc"
+source = "git+https://github.com/dlapiduz/turso?tag=v0.8.4-fork.1#ee93db1cce5d7088f3da66ae323c01cd70b6cd0a"
 dependencies = [
  "bitflags",
  "memchr",
@@ -7788,7 +7890,7 @@ dependencies = [
 [[package]]
 name = "turso_sdk_kit"
 version = "0.8.4"
-source = "git+https://github.com/dlapiduz/turso?rev=fa342b793f8a8b006da570fb6bca6196cb65dacc#fa342b793f8a8b006da570fb6bca6196cb65dacc"
+source = "git+https://github.com/dlapiduz/turso?tag=v0.8.4-fork.1#ee93db1cce5d7088f3da66ae323c01cd70b6cd0a"
 dependencies = [
  "bindgen",
  "env_logger",
@@ -7804,7 +7906,7 @@ dependencies = [
 [[package]]
 name = "turso_sdk_kit_macros"
 version = "0.8.4"
-source = "git+https://github.com/dlapiduz/turso?rev=fa342b793f8a8b006da570fb6bca6196cb65dacc#fa342b793f8a8b006da570fb6bca6196cb65dacc"
+source = "git+https://github.com/dlapiduz/turso?tag=v0.8.4-fork.1#ee93db1cce5d7088f3da66ae323c01cd70b6cd0a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7814,7 +7916,7 @@ dependencies = [
 [[package]]
 name = "turso_sync_engine"
 version = "0.8.4"
-source = "git+https://github.com/dlapiduz/turso?rev=fa342b793f8a8b006da570fb6bca6196cb65dacc#fa342b793f8a8b006da570fb6bca6196cb65dacc"
+source = "git+https://github.com/dlapiduz/turso?tag=v0.8.4-fork.1#ee93db1cce5d7088f3da66ae323c01cd70b6cd0a"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -7836,7 +7938,7 @@ dependencies = [
 [[package]]
 name = "turso_sync_sdk_kit"
 version = "0.8.4"
-source = "git+https://github.com/dlapiduz/turso?rev=fa342b793f8a8b006da570fb6bca6196cb65dacc#fa342b793f8a8b006da570fb6bca6196cb65dacc"
+source = "git+https://github.com/dlapiduz/turso?tag=v0.8.4-fork.1#ee93db1cce5d7088f3da66ae323c01cd70b6cd0a"
 dependencies = [
  "bindgen",
  "env_logger",

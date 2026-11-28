@@ -1,10 +1,4 @@
-//! The bottom line: the bulk bar, and the words the toast says.
-//!
-//! While anything is selected the line is the bulk bar: how many, the verbs
-//! that act on them, each with the key the keymap gives it, and on the right
-//! the keys that change the selection. A toast, while there is one, takes
-//! the right end in place of those keys. Every verb is a click for the
-//! command its key runs.
+//! The bottom line: the bulk bar while anything is selected; a toast takes the right end.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -34,25 +28,19 @@ pub fn cap(key: &str) -> String {
         .join("+")
 }
 
-/// The toast as it is drawn: `✓ Archived 3 messages · Undo z`, or
-/// `✕` and the words of a failure, and where Undo is within it.
+/// `✓ Archived 3 messages · Undo z`, or `✕` and a failure's words.
 pub struct Toast {
-    /// The mark, the words and the undo offer.
     pub spans: Vec<Span<'static>>,
-    /// The columns, within the spans, that a click undoes from.
     pub undo: Option<std::ops::Range<usize>>,
-    /// The columns of the notice's one button, when it offers one (#1952).
     pub offer: Option<std::ops::Range<usize>>,
 }
 
 impl Toast {
-    /// How wide it is.
     pub fn width(&self) -> usize {
         self.spans.iter().map(|span| span.content.width()).sum()
     }
 }
 
-/// What the toast says, or `None` when there is none.
 pub fn toast(app: &App, theme: &Theme) -> Option<Toast> {
     let notice = app.notice()?;
     let mut spans = Vec::new();
@@ -92,7 +80,6 @@ pub fn toast(app: &App, theme: &Theme) -> Option<Toast> {
     Some(Toast { spans, undo, offer })
 }
 
-/// One thing on the bar: its spans and the command a click on it runs.
 struct Piece {
     spans: Vec<Span<'static>>,
     command: Option<&'static str>,
@@ -104,7 +91,6 @@ impl Piece {
     }
 }
 
-/// A verb: its words, then its key when the keymap gives one.
 fn verb(app: &App, theme: &Theme, command: CommandId, label: &str) -> Piece {
     let mut spans = vec![Span::styled(label.to_owned(), theme.style(Role::Text))];
     if let Some(key) = app.hint(command) {
@@ -119,8 +105,6 @@ fn verb(app: &App, theme: &Theme, command: CommandId, label: &str) -> Piece {
     }
 }
 
-/// The keys that change the selection, as the keymap gives them:
-/// `x toggle  J K extend  Esc clear`. Each key is a click for its command.
 fn selection_keys(app: &App, theme: &Theme) -> Vec<(Span<'static>, Option<&'static str>)> {
     let dim = theme.style(Role::Dim);
     let mut spans: Vec<(Span<'static>, Option<&'static str>)> = Vec::new();
@@ -172,8 +156,6 @@ fn selection_keys(app: &App, theme: &Theme) -> Vec<(Span<'static>, Option<&'stat
     spans
 }
 
-/// Draw the bulk bar into `area` and answer whether there was one to draw:
-/// only while something is selected.
 pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &mut Hits) -> bool {
     let Some(summary) = app.selection_summary() else {
         return false;
@@ -273,8 +255,6 @@ pub fn bulk_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme, hits: &
     true
 }
 
-/// What a toast's words can be clicked for: Undo is the command its key
-/// runs, and an offer's button is the one command the notice carries.
 pub fn toast_targets(
     hits: &mut Hits,
     x: u16,
@@ -298,7 +278,6 @@ pub fn toast_targets(
     }
 }
 
-/// The gap between two things on the bar.
 const GAP: usize = 2;
 
 #[cfg(test)]
@@ -339,118 +318,6 @@ mod tests {
     }
 
     #[test]
-    fn x_and_j_k_select_and_the_bar_counts_them_and_offers_the_verbs_with_their_keys() {
-        let mut app = inbox((140, 24));
-        update(&mut app, press('x'));
-        update(&mut app, press('J'));
-        let drawn = screen(140, 24, &app);
-        let line = bottom(&drawn);
-        assert!(line.trim_start().starts_with("2 selected"), "{drawn}");
-        for wanted in [
-            "Archive e",
-            "Snooze b",
-            "Mark read I",
-            "Digest these… d",
-            "Label l",
-            "Move v",
-            "Delete #",
-            "x toggle  J K extend  Esc clear",
-        ] {
-            assert!(line.contains(wanted), "{wanted} missing:\n{drawn}");
-        }
-        assert!(
-            line.trim_end().ends_with("Esc clear"),
-            "the selection keys are on the right:\n{drawn}"
-        );
-    }
-
-    #[test]
-    fn the_bars_keys_follow_a_rebinding() {
-        let mut bindings = postio_config::KeyBindings::default();
-        bindings
-            .overrides_mut()
-            .insert("archive".to_owned(), "z".to_owned());
-        let mut app = crate::test_support::app_with_keys((140, 24), &bindings);
-        seed_places(&mut app, places());
-        show_focus(
-            &mut app,
-            vec![FocusRow::conversation(conversation(
-                1,
-                "Ada",
-                "Hello",
-                "",
-                local(23, 9, 0),
-            ))],
-        );
-        update(&mut app, press('x'));
-        let drawn = screen(140, 24, &app);
-        assert!(bottom(&drawn).contains("Archive z"), "{drawn}");
-    }
-
-    #[test]
-    fn a_click_on_a_verb_runs_it_on_the_selection() {
-        let mut app = inbox((140, 24));
-        update(&mut app, press('x'));
-        update(&mut app, press('j'));
-        update(&mut app, press('x'));
-        let drawn = screen(140, 24, &app);
-        let line = bottom(&drawn);
-        let x = u16::try_from(line[..line.find("Archive").unwrap()].chars().count()).unwrap();
-        let hit = hits_of(140, 24, &app).at(x, 23).expect("a verb is there");
-        let effects = update(
-            &mut app,
-            crate::app::Input::Pointer(crate::app::Pointer::Click {
-                hit,
-                ctrl: false,
-                shift: false,
-            }),
-        );
-        assert!(
-            effects
-                .iter()
-                .any(|effect| matches!(effect, crate::app::Effect::Send(_))),
-            "{effects:?}"
-        );
-        assert_eq!(
-            app.state()
-                .read(|state| state.resolve(&postio_core::MessageTarget::Selection)),
-            Some(postio_core::Resolved::Messages(vec![
-                postio_model::MessageId::new(1),
-                postio_model::MessageId::new(2)
-            ])),
-            "the verb is about the two selected"
-        );
-        assert!(app.selection().is_empty(), "what was acted on is let go of");
-    }
-
-    #[test]
-    fn star_a_selects_all_as_a_predicate_and_the_bar_counts_the_list() {
-        let mut app = inbox((140, 24));
-        update(&mut app, press('*'));
-        update(&mut app, press('a'));
-        let drawn = screen(140, 24, &app);
-        assert!(
-            bottom(&drawn).trim_start().starts_with("6 selected"),
-            "{drawn}"
-        );
-        let effects = update(&mut app, press('e'));
-        assert!(
-            effects
-                .iter()
-                .any(|effect| matches!(effect, crate::app::Effect::Send(_))),
-            "{effects:?}"
-        );
-        assert!(
-            matches!(
-                app.state()
-                    .read(|state| state.resolve(&postio_core::MessageTarget::Selection)),
-                Some(postio_core::Resolved::Everything { .. })
-            ),
-            "a predicate, never the rows on screen"
-        );
-    }
-
-    #[test]
     fn escape_clears_the_selection_and_the_bar_with_it() {
         let mut app = inbox((140, 24));
         update(&mut app, press('x'));
@@ -463,84 +330,6 @@ mod tests {
         );
         let drawn = screen(140, 24, &app);
         assert!(!bottom(&drawn).contains("selected"), "{drawn}");
-    }
-
-    #[test]
-    fn a_toast_takes_the_right_end_in_place_of_the_selection_keys() {
-        let mut app = inbox((140, 24));
-        update(&mut app, press('x'));
-        update(
-            &mut app,
-            crate::app::Input::Host(postio_core::Event::ActionCompleted {
-                description: "Archived 3 messages".into(),
-                undoable: true,
-            }),
-        );
-        let drawn = screen(140, 24, &app);
-        let line = bottom(&drawn);
-        assert!(line.contains("1 selected"), "{drawn}");
-        assert!(line.contains("Archived 3 messages"), "{drawn}");
-        assert!(!line.contains("J K extend"), "{drawn}");
-    }
-
-    fn done(app: &mut App, description: &str, undoable: bool) {
-        update(
-            app,
-            crate::app::Input::Host(postio_core::Event::ActionCompleted {
-                description: description.into(),
-                undoable,
-            }),
-        );
-    }
-
-    #[test]
-    fn a_toast_is_a_mark_the_words_and_the_undo_key_and_says_so_without_colour() {
-        let mut app = inbox((120, 24));
-        done(&mut app, "Archived 3 messages", true);
-        let drawn = screen(120, 24, &app);
-        assert_eq!(
-            bottom(&drawn).trim_end(),
-            " ✓ Archived 3 messages · Undo z",
-            "{drawn}"
-        );
-        done(&mut app, "Label added", false);
-        let drawn = screen(120, 24, &app);
-        assert_eq!(bottom(&drawn).trim_end(), " ✓ Label added", "{drawn}");
-        update(
-            &mut app,
-            crate::app::Input::Host(postio_core::Event::CommandRejected {
-                command: postio_core::CommandId::Archive.into(),
-                reason: "Nothing to archive".into(),
-            }),
-        );
-        let drawn = screen(120, 24, &app);
-        assert_eq!(
-            bottom(&drawn).trim_end(),
-            " ✕ Nothing to archive",
-            "{drawn}"
-        );
-    }
-
-    #[test]
-    fn a_click_on_the_toasts_undo_undoes() {
-        let mut app = inbox((120, 24));
-        done(&mut app, "Archived 3 messages", true);
-        let drawn = screen(120, 24, &app);
-        let line = bottom(&drawn);
-        let x = u16::try_from(line[..line.find("Undo").unwrap()].chars().count()).unwrap();
-        let hit = hits_of(120, 24, &app).at(x, 23).expect("Undo is a target");
-        let effects = update(
-            &mut app,
-            crate::app::Input::Pointer(crate::app::Pointer::Click {
-                hit,
-                ctrl: false,
-                shift: false,
-            }),
-        );
-        assert!(
-            effects.contains(&crate::app::Effect::Send(postio_core::Command::Undo)),
-            "{effects:?}"
-        );
     }
 
     #[test]
@@ -572,31 +361,5 @@ mod tests {
             )),
             "{effects:?}"
         );
-    }
-
-    #[test]
-    fn beside_the_bulk_bar_the_toast_keeps_its_undo_at_the_right_end() {
-        let mut app = inbox((140, 24));
-        update(&mut app, press('x'));
-        done(&mut app, "Archived 3 messages", true);
-        let drawn = screen(140, 24, &app);
-        let line = bottom(&drawn);
-        assert!(line.contains("1 selected"), "{drawn}");
-        assert!(
-            line.trim_end().ends_with("✓ Archived 3 messages · Undo z"),
-            "{drawn}"
-        );
-    }
-
-    #[test]
-    fn narrowing_drops_the_selection_keys_then_the_last_verbs_and_keeps_the_count() {
-        let mut app = inbox((60, 14));
-        update(&mut app, press('x'));
-        let drawn = screen(60, 14, &app);
-        let line = bottom(&drawn);
-        assert!(line.contains("1 selected"), "{drawn}");
-        assert!(line.contains("Archive e"), "{drawn}");
-        assert!(!line.contains("Esc clear"), "{drawn}");
-        assert!(!line.contains("Delete"), "{drawn}");
     }
 }

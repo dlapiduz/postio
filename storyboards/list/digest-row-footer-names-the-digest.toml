@@ -1,0 +1,27 @@
+# The footer names the digest the cursor is on (#2203).
+#
+# The defect: with the cursor on the inbox's digest row (the small demo's
+# "Weekly · digest", second row), the footer under the list still named
+# the row before it, "Invitation: Harbor design review", and offered that
+# row's keys: reply, forward and archive, for a message the cursor had
+# left. The controller made no footer for a digest, so the last one stayed
+# up. A digest's footer is its rule and size, with only what acts on a
+# digest: move, open, and archive, which archives the delivery.
+apps   = ["focus"]
+source = { kind = "issue", ref = "#2203" }
+proof  = "base"
+
+[[step]]
+wait   = { until = { cursor.index = 0 } }
+check  = { keyboard.region = "list", cursor.index = 0, app.focus.footer.title = "Invitation: Harbor design review" }
+expect = "The inbox opens with the cursor on its first row, and the footer names that row."
+
+[[step]]
+command = "next_message"
+check   = { keyboard.region = "list", cursor.index = 1, cursor.subject = "Newsletters", app.focus.footer.title = "Newsletters · 6 messages" }
+expect  = "j moves the cursor onto the digest, and the footer follows it: it names the Newsletters digest and its size, and offers move, open and archive digest, with no reply or forward."
+
+[[step]]
+command = "next_message"
+check   = { cursor.index = 2, app.focus.footer.title = "Re: Atlas Q3 budget, final numbers · 3 messages" }
+expect  = "j moves on to the next conversation, and the footer names that thread and its reply, forward and archive keys again."

@@ -1,77 +1,28 @@
-//! What the `?` cheat sheet contains.
-//!
-//! # Generated, so it cannot be wrong
-//!
-//! A hand-written key reference is out of date by the next release — that is
-//! the whole reason [`postio_core::registry`] exists (docs/PRODUCT.md §8: one
-//! table, every surface). The sheet is rendered from that table and from the
-//! live [`Keymap`], so rebinding a key in `config.toml` changes what the
-//! overlay says without anybody editing a list.
-//!
-//! # Why it is here rather than in a frontend
-//!
-//! [`sections`] decides what the sheet *contains*, and that is a product
-//! decision every frontend must answer identically — the same argument that
-//! moved the palette matcher (#658), the search chips (#1157) and the one
-//! box's modes here. The classic app's `CheatSheet` widget drew these
-//! sections; a second frontend draws the same ones instead of flattening the
-//! reference into an ungrouped list.
-//!
-//! # It answers "what can I do *now*"
-//!
-//! The sheet lists what is reachable where the reader is standing — their
-//! context, and the scope on screen — rather than the whole vocabulary. A
-//! key that would do nothing here is not a key worth teaching, and `?` is
-//! pressed by somebody who is stuck rather than by somebody browsing. The
-//! complete reference is `docs/keybindings.md`, generated from the same
-//! table.
-//!
-//! # Grouping
-//!
-//! Two headings, because after filtering there are only two useful answers:
-//! **Everywhere** for commands reachable in every context, and the reader's
-//! own surface for the rest — plus the one box's prefixes, and one section
-//! per extension namespace, last and never interleaved.
+//! The `?` cheat sheet, rendered from the registry and the live `Keymap` so rebinding changes it.
+//! Lists what is reachable where the reader stands; the full reference is `docs/keybindings.md`.
 
 use postio_core::{ActionId, Availability, Context, ContextSet, Keymap, registry};
 
-/// One key the sheet lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
-    /// The command it runs, when it runs one.
-    ///
-    /// `None` for the one box's prefixes: `>` and `#` and `@` are not
-    /// commands, they are what you type *inside* a surface a command opened.
-    /// They belong on the sheet all the same — a user who never reads docs
-    /// would otherwise never discover two thirds of the box.
-    ///
-    /// An [`ActionId`], so a command registered at runtime is taught here on
-    /// the same footing as a built-in. `?` is half of what makes this app
-    /// learnable, and a command absent from it is one the user will not find.
+    /// The command, or `None` for the one box's prefixes (`>`, `#`, `@`), which are typed inside a
+    /// surface.
     pub id: Option<ActionId>,
-    /// Its title, as the registry gives it.
     pub title: &'static str,
-    /// The binding in force. `None` means palette-only — still worth listing,
-    /// because "this exists and has no key" is an answer.
+    /// The binding in force; `None` means palette-only.
     pub binding: Option<String>,
 }
 
-/// A group of keys under one heading.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Section {
-    /// The heading, as the sheet prints it.
     pub title: &'static str,
-    /// Its keys, in registry order.
     pub rows: Vec<Row>,
 }
 
-/// The heading a command reachable in every context is filed under.
 const EVERYWHERE: &str = "Everywhere";
 
-/// The heading the one box's prefixes are filed under.
 const IN_THE_BOX: &str = "In the search box";
 
-/// The heading for each context, in the order the sheet lays them out.
 fn heading(context: Context) -> &'static str {
     match context {
         Context::List => "Message list",
@@ -80,19 +31,12 @@ fn heading(context: Context) -> &'static str {
         Context::Composer => "Composing",
         Context::Search => "Search",
         Context::Palette => "Command palette",
-        // "Folders" rather than "Sidebar": the vocabulary table says folder
-        // in UI copy, and the section is about what is in the pane, not about
-        // the pane.
+        // "Folders", not "Sidebar": UI copy says folder.
         Context::Sidebar => "Folders",
         Context::Parts => "Parts",
-        // "Accounts" rather than "Settings": the section is about the account
-        // list, which is the only part of the settings panel these keys reach
-        // (ADR 0005 Q6c).
+        // The only part of the settings panel these keys reach (ADR 0005 Q6c).
         Context::Accounts => "Accounts",
-        // Same reasoning as `Accounts`, one section down: these keys reach
-        // only the keybinding list, not the whole settings panel.
         Context::Keys => "Keybindings",
-        // Focus's three (spec 007), named as Focus's key map names them.
         Context::Picker => "Pickers",
         Context::Digest => "Digests",
         Context::Filtered => "Filtered",
@@ -102,13 +46,11 @@ fn heading(context: Context) -> &'static str {
         Context::ContactPopover => "Contact popover",
         Context::Outline => "Thread outline",
         Context::ForwardChooser => "Forward",
+        Context::Calendar => "Calendar",
+        Context::CalendarWindow => "Calendar window",
     }
 }
 
-/// The whole sheet, in the order it is laid out.
-///
-/// Empty sections are dropped: a heading with nothing under it is worse than no
-/// heading, and which sections have content depends on what the registry holds.
 pub fn sections(keymap: &Keymap, context: Context, state: Availability) -> Vec<Section> {
     let mut everywhere = Section {
         title: EVERYWHERE,
@@ -119,13 +61,9 @@ pub fn sections(keymap: &Keymap, context: Context, state: Availability) -> Vec<S
         rows: Vec::new(),
     };
 
-    // Not what this platform has no surface for: the sheet teaches keys, and
-    // a key for a missing surface is one the application would ignore.
+    // Not what this platform has no surface for: the sheet would teach a key the app ignores.
     for spec in registry::reachable_in(context, state).filter(|spec| keymap.offers(spec.id)) {
-        let ActionId::Builtin(id) = spec.id else {
-            // Registered commands get their own sections, by provenance.
-            continue;
-        };
+        let ActionId::Builtin(id) = spec.id;
         let row = Row {
             id: Some(spec.id),
             title: spec.title,
@@ -145,60 +83,15 @@ pub fn sections(keymap: &Keymap, context: Context, state: Availability) -> Vec<S
     if !everywhere.rows.is_empty() {
         out.push(everywhere);
     }
-    // Right after the keys that *open* the box, so the sheet reads "here is
-    // how to get there" and then "here is what you can type once you are".
     if let Some(prefixes) = prefix_section() {
         out.push(prefixes);
     }
     out.extend(sections.into_iter().filter(|s| !s.rows.is_empty()));
-    out.extend(extension_sections(keymap));
     out
 }
 
-/// One section per namespace, for the commands registered at runtime.
-///
-/// Grouped by where they came from rather than folded into the built-in
-/// sections by context, because provenance is the thing a user needs here:
-/// `?` answers "what can I do", and "this came from the MCP server you
-/// connected" is part of the answer in a way that "this works in the message
-/// list" already is for a built-in.
-///
-/// Last, and never interleaved. The built-in sheet is a stable thing people
-/// learn; a plugin must not be able to reorder it by registering early.
-fn extension_sections(keymap: &Keymap) -> Vec<Section> {
-    let mut sections: Vec<Section> = Vec::new();
-    for spec in registry::every_action() {
-        let ActionId::Ext(id) = spec.id else {
-            continue;
-        };
-        let row = Row {
-            id: Some(spec.id),
-            title: spec.title,
-            binding: keymap.binding(spec.id).map(str::to_owned),
-        };
-        match sections
-            .iter_mut()
-            .find(|section| section.title == id.namespace())
-        {
-            Some(section) => section.rows.push(row),
-            None => sections.push(Section {
-                title: id.namespace(),
-                rows: vec![row],
-            }),
-        }
-    }
-    sections
-}
-
-/// What the one box does with a leading `>`, `#` or `@`.
-///
-/// Generated from [`crate::finder::MODES`], which is documented as being in
-/// the order the sheet should list them. A mode added later appears here with
-/// no other edit — that is the whole point, and it is the acceptance
-/// criterion of `postio-2ee`.
-///
-/// Search is skipped: it has no prefix because it is what the box already
-/// is, and the key that opens it is `/`, which the registry lists.
+/// Generated from `crate::finder::MODES`, in sheet order, so a new mode appears with no other edit.
+/// Search is skipped: it has no prefix.
 fn prefix_section() -> Option<Section> {
     let rows: Vec<Row> = crate::finder::MODES
         .iter()
@@ -216,10 +109,7 @@ fn prefix_section() -> Option<Section> {
     })
 }
 
-/// How a row reads to a screen reader.
-///
-/// The visual row is a title and a key set apart from each other; read aloud
-/// that becomes "Archive a", which is not a sentence. This is.
+/// Read aloud, a separate title and key become "Archive a"; this is a sentence.
 pub fn spoken(row: &Row) -> String {
     match &row.binding {
         Some(binding) => format!("{}, press {binding}", row.title),
@@ -237,8 +127,6 @@ mod tests {
         Keymap::resolve(&postio_config::KeyBindings::default())
     }
 
-    /// The vocabulary table (`ux-architect`) says Thread, never
-    /// Conversation (#2171).
     #[test]
     fn no_heading_says_conversation() {
         for context in Context::ALL {
@@ -252,8 +140,6 @@ mod tests {
 
     #[test]
     fn a_command_the_platform_does_not_offer_is_not_taught_there() {
-        // `g a` on a Mac sidebar with no account strip is a key the sheet
-        // would teach and the application would ignore (#1573).
         use postio_config::paths::Platform;
         let (context, state) = in_the_list();
         for platform in [Platform::Freedesktop, Platform::Apple] {
@@ -273,8 +159,6 @@ mod tests {
         }
     }
 
-    /// The reader's ordinary position: standing in the message list, with one
-    /// account's mailboxes on screen.
     fn in_the_list() -> (Context, Availability) {
         (
             Context::List,
@@ -291,8 +175,6 @@ mod tests {
             .flat_map(|section| section.rows)
             .filter_map(|row| row.id)
             .collect();
-        // What this platform offers; the rest is
-        // `a_command_the_platform_does_not_offer_is_not_taught_there`'s.
         let offered =
             || registry::reachable_in(context, scope).filter(|spec| keymap.offers(spec.id));
 
@@ -307,8 +189,6 @@ mod tests {
         assert_eq!(listed.len(), offered().count());
     }
 
-    /// The sheet answers "what can I do *now*", so it must not advertise a
-    /// key that would do nothing where the reader is standing.
     #[test]
     fn the_sheet_lists_only_what_is_reachable_here() {
         let (context, scope) = in_the_list();
@@ -329,22 +209,7 @@ mod tests {
         );
     }
 
-    /// #182's acceptance, on the second surface it names.
-    /// Every composer command is discoverable in both surfaces, with its key.
-    ///
-    /// Constitution II: a command has a binding, a palette entry and an
-    /// accessible control, and all three come from one table — so "the
-    /// composer is keyboard friendly" is not a claim about the composer, it
-    /// is a claim about whether the registry's composer commands actually
-    /// reach the two surfaces a person discovers them in.
-    ///
-    /// Both surfaces in one test on purpose. They are generated from the same
-    /// registry but by different code in different crates — `palette::entries`
-    /// in `postio-ui`, `sections` here — and a command reaching one and not
-    /// the other is exactly the drift having one table is supposed to prevent.
-    /// Neither half needs a display.
-    ///
-    /// Spec 002 FR-001, FR-002.
+    /// Every composer command reaches both the palette and the sheet, with its key.
     #[test]
     fn every_composer_command_is_in_the_palette_and_the_sheet() {
         let keymap = defaults();
@@ -384,9 +249,6 @@ mod tests {
             );
         }
 
-        // And the sheet teaches the key, not only the name. A row with no
-        // binding is a row that tells a reader what exists and not how to
-        // reach it.
         let keyless: Vec<ActionId> = sections(&keymap, Context::Composer, scope)
             .into_iter()
             .flat_map(|section| section.rows)
@@ -401,11 +263,7 @@ mod tests {
 
     #[test]
     fn a_window_with_no_store_is_taught_only_what_it_can_do() {
-        // #1114: the sheet is "what can I do now", and before the store
-        // opens the honest answer is short. It must not teach `a` for
-        // archive at a window with nothing to archive -- a reader who tries
-        // it gets a key that cannot work, which is worse than not having
-        // been told about it.
+        // Before the store opens the sheet must not teach keys that cannot work (#1114).
         let ids = |state| -> Vec<ActionId> {
             sections(&defaults(), Context::List, state)
                 .into_iter()
@@ -490,9 +348,6 @@ mod tests {
              the list, the sheet says so under the list"
         );
 
-        // The same command, read from a different surface, files under that
-        // surface — which is the whole reason this stopped keying off the
-        // command's own first context.
         let from_the_reader = sections(&defaults(), Context::Reader, in_the_list().1);
         let reading = from_the_reader
             .iter()
@@ -556,11 +411,8 @@ mod tests {
 
     #[test]
     fn a_command_with_no_key_is_still_listed() {
-        // An empty keymap is what a build with every binding taken looks like.
-        //
-        // Commands only: the box's prefixes are also rows, but `>` is not a
-        // binding the keymap has any say over — it is a character you type
-        // into a surface — so an empty keymap does not silence one.
+        // Commands only: the box's prefixes are typed characters, not bindings, so an empty keymap
+        // does not silence them.
         let listed: Vec<Row> = sections(&Keymap::default(), in_the_list().0, in_the_list().1)
             .into_iter()
             .flat_map(|section| section.rows)
@@ -599,18 +451,11 @@ mod tests {
 
     #[test]
     fn the_sheet_teaches_every_prefix_the_one_box_understands() {
-        // `postio-2ee`: `?` is generated from the command registry, and the
-        // box's prefixes are not commands — so `>`, `#` and `@` appeared
-        // nowhere in the app's own teaching. A user who never reads docs
-        // would never discover two thirds of the box.
         let section = sections(&defaults(), in_the_list().0, in_the_list().1)
             .into_iter()
             .find(|section| section.title == IN_THE_BOX)
             .expect("the sheet has no section for the box's prefixes");
 
-        // Driven from `MODES` rather than a written-out list, so adding a
-        // mode makes this test cover it without anyone editing the test —
-        // which is the same property the section itself has to have.
         for mode in crate::finder::MODES {
             let Some(prefix) = mode.prefix else {
                 continue;
@@ -643,8 +488,6 @@ mod tests {
 
     #[test]
     fn search_is_not_listed_as_a_prefix_because_it_has_none() {
-        // It is what the box already is; the key that opens it is `/`, which
-        // the registry lists as a command.
         assert_eq!(
             crate::finder::MODES[0].prefix,
             None,
@@ -667,21 +510,7 @@ mod tests {
     fn the_sheet_prints_only_everywhere_and_the_readers_own_surface() {
         for context in [Context::List, Context::Composer, Context::Sidebar] {
             let printed = sections(&defaults(), context, in_the_list().1);
-            // A command another test in this binary registers at run time
-            // gets a section of its own, last; that is the extension sheet's
-            // case, not this one. Read after the sheet, so nothing it printed
-            // can have been registered since.
-            let namespaces: Vec<&str> = registry::every_action()
-                .filter_map(|spec| match spec.id {
-                    ActionId::Ext(id) => Some(id.namespace()),
-                    ActionId::Builtin(_) => None,
-                })
-                .collect();
-            let titles: Vec<&str> = printed
-                .iter()
-                .map(|section| section.title)
-                .filter(|title| !namespaces.contains(title))
-                .collect();
+            let titles: Vec<&str> = printed.iter().map(|section| section.title).collect();
 
             let expected: Vec<&str> = [EVERYWHERE, IN_THE_BOX, heading(context)]
                 .into_iter()

@@ -1,9 +1,5 @@
-//! A contact's card (handoff screens 01 and 03): the avatar, the name and
-//! the role line with the head's buttons; then two columns. Left, the
-//! addresses, how mail arrives with its switches, and the notes. Right, the
-//! tiles, the twelve-month strip, what is open between you (or a
-//! newsletter's recent issues) and the recent files. Every word is
-//! `postio_ui::contacts_view::CardView`'s: a person's or a newsletter's alike.
+//! A contact's card: head, then two columns. Every word is `postio_ui::contacts_view::CardView`'s,
+//! a person's or a newsletter's alike.
 
 use std::rc::Rc;
 
@@ -16,20 +12,14 @@ use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::segmented::SegmentedControl;
 use postio_widgets::widgets::space::{S1, S2, S3, S4};
 
-/// What a click on the card does: the same input a key would have been.
 #[derive(Clone)]
 pub struct CardHooks {
-    /// A button on the card: the command its key sends.
     pub run: Rc<dyn Fn(CommandId)>,
-    /// A switch under "How mail arrives", by its index.
     pub toggle: Rc<dyn Fn(u32)>,
-    /// "Split" on an address.
     pub split: Rc<dyn Fn(String)>,
-    /// A segment of the arrival control.
     pub arrival: Rc<dyn Fn(ContactArrival)>,
 }
 
-/// The card, whole.
 pub fn build(card: &CardView, hooks: &CardHooks) -> gtk::Widget {
     let column = gtk::Box::new(gtk::Orientation::Vertical, S4);
     column.add_css_class("focus-contact-card");
@@ -207,8 +197,8 @@ fn arrival(card: &CardView, hooks: &CardHooks) -> gtk::Box {
         switch.update_property(&[gtk::accessible::Property::Label(&line.title)]);
         let hook = Rc::clone(&hooks.toggle);
         let on = line.on;
-        // A click asks; what is drawn is the controller's answer, so a
-        // switch that did not turn goes back to what it said.
+        // A click asks; what is drawn is the controller's answer, so a switch that did not turn
+        // goes back.
         switch.connect_state_set(move |switch, wanted| {
             if wanted != on {
                 hook(index as u32);
@@ -269,7 +259,6 @@ fn stats(card: &CardView) -> gtk::Box {
     column
 }
 
-/// The twelve-month strip and its axis.
 fn months(strip: &MonthStrip) -> gtk::Box {
     let column = gtk::Box::new(gtk::Orientation::Vertical, S1);
     let bars = strip.bars.clone();

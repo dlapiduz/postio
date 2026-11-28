@@ -1,14 +1,9 @@
-//! Rendering cannot betray the reader (spec 006 US3): hostile mail stays
-//! inside its message, finishes within the bound, links only where a
-//! reader may follow, and fetches nothing.
-
 use std::time::Instant;
 
 use crate::support::{DARK, LIGHT, render, request};
 use postio_model::test_corpus::{self, Category};
 use postio_render::{DEFAULT_RENDER_DEADLINE, LinkTarget, Outcome, Rect};
 
-/// Inside `outer`, give or take a pixel of antialiasing.
 fn inside(inner: Rect, outer: Rect) -> bool {
     inner.x0 >= outer.x0 - 1.0
         && inner.y0 >= outer.y0 - 1.0
@@ -34,8 +29,6 @@ fn hostile_mail_is_contained() {
             let Some(mut request) = request(name, theme) else {
                 continue;
             };
-            // Room above the message, as another message or the reader's
-            // chrome would be: whatever a sender paints there is outside.
             request.document = request.document.replacen(
                 "</head><body>",
                 "</head><body><div style=\"height:800px\"></div>",
@@ -44,12 +37,9 @@ fn hostile_mail_is_contained() {
             let started = Instant::now();
             let doc = render(&request);
             let took = started.elapsed();
-            // Reported, not gated (Constitution V: timings report, counts
-            // gate). The bound is the deadline's to enforce -- `body_view`'s
-            // injected-deadline case proves the fallback without a clock --
-            // and a wall-clock here failed the landing gate at 440 ms on a
-            // box running other suites beside it. What gates is the cause
-            // of the cost, counted.
+            // Reported, not gated: the bound is the deadline's to enforce, and a wall-clock
+            // here failed the landing gate on a box running other suites. What gates is the cost,
+            // counted.
             if took > bound {
                 eprintln!("{name}: {took:?}, past {bound:?} on this machine");
             }
@@ -64,9 +54,8 @@ fn hostile_mail_is_contained() {
                 Outcome::Rendered => {}
             }
             let within = |rect: Rect| doc.messages.iter().any(|m| inside(rect, m.rect));
-            // What is painted, not only what is laid out: a transform moves
-            // paint without moving layout. Outside every message, the
-            // raster is the reader's own ground, the colour at its corner.
+            // What is painted, not only what is laid out: a transform moves paint without moving
+            // layout.
             let raster = postio_render::rasterize(&doc);
             let px = |x: usize, y: usize| {
                 let i = (y * raster.width as usize + x) * 4;
@@ -113,8 +102,6 @@ fn hostile_mail_is_contained() {
                     failures.push(format!("{name}: a link to {url}"));
                 }
             }
-            // Every remote reference that reached the engine was asked for,
-            // refused, and counted: none resolves.
             let remote = request.document.matches("http://").count()
                 + request.document.matches("https://").count();
             let linked = doc

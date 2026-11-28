@@ -40,8 +40,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -52,11 +50,6 @@ REPO_ROOT = HERE.parent
 ISSUE_LAND = HERE / "issue-land.sh"
 WAIT_FOR_CHECKS = HERE / "wait-for-checks.sh"
 CI_EXPECTED_WORKFLOWS = HERE / "checks" / "ci-expected-workflows.py"
-# Sandboxes go under `target/`, which git ignores: inside the worktree because
-# the shared-tree guard only lifts its refusals for worktree paths, and not in
-# its root because a killed run leaves the sandbox behind and `git add -A` in a
-# worktree will commit it. `scripts/checks/check-test-sandboxes.py` says what
-# that cost (#1225).
 SANDBOXES = REPO_ROOT / "target" / "tmp"
 SANDBOXES.mkdir(parents=True, exist_ok=True)
 
@@ -69,16 +62,10 @@ STUB_CHECKS = [
     "check-runtime-crossings.py",
 ]
 
-# Printed by the copy of issue-land.sh that main gained, and by no other. Its
-# absence from a run's output means the pre-rebase copy decided the merge.
 MARKER = "NEW_MACHINERY_RAN"
 
-# Printed by the version of a *called* check that main gained. The stub the
-# sandbox starts with passes, so this text can only come from the post-rebase
-# tree -- and only if the gates ran again after the rebase.
 CALLED_MARKER = "NEW_BOUNDARY_RULE_VIOLATED"
 
-# The handover's own announcement, asserted present in A and absent in C.
 HANDOVER = "handing over to the landing machinery"
 
 REEXEC_DEPTH_ENV = "POSTIO_LAND_REEXEC_DEPTH"
@@ -116,10 +103,6 @@ fi
 exit 0
 """
 
-# No `pull_request` trigger, so ci-expected-workflows.py predicts nothing and
-# wait-for-checks.sh takes its short grace path. A fixture of our own, so this
-# does not start testing the other branch of that logic the day this repo's
-# real triggers change for operational reasons.
 FIXTURE_CI_YML = "name: CI\non:\n  workflow_dispatch:\n"
 
 
@@ -240,7 +223,6 @@ def land(
     environment["GIT_CONFIG_SYSTEM"] = "/dev/null"
     environment["PATH"] = f"{stub_dir / 'bin'}:{environment['PATH']}"
     environment["STUB_DIR"] = str(stub_dir)
-    # The bare remote the `pr merge` stub pushes into; see GH_STUB.
     environment["ORIGIN"] = str(origin)
     environment["POSTIO_CHECKS_GRACE"] = "1"
     environment["POSTIO_CHECKS_POLL"] = "1"
@@ -286,7 +268,6 @@ def run_case(
     git("push", "-q", "origin", "main", cwd=root)
     git("checkout", "-q", "-b", "issue-1-x", cwd=root)
 
-    # main moves while the branch is being worked, exactly as it does here.
     advance_main(origin, base / name / "bump", incoming, "chore: main moves")
 
     (root / "dummy" / "src" / "extra.rs").write_text("// nothing\n", encoding="utf-8")
@@ -310,7 +291,6 @@ def main() -> int:
     with tempfile.TemporaryDirectory(dir=SANDBOXES) as directory:
         base = Path(directory)
 
-        # A: the rebase rewrites issue-land.sh itself.
         result, calls = run_case(
             base, "a", {"scripts/issue-land.sh": marked_issue_land()}
         )
@@ -331,7 +311,6 @@ def main() -> int:
                 f"{report('A', result, calls)}"
             )
 
-        # B: the rebase changes a script issue-land.sh *calls*.
         result, calls = run_case(
             base,
             "b",
@@ -354,7 +333,6 @@ def main() -> int:
                 f"the merge decision disagree about the tree.\n{report('B', result, calls)}"
             )
 
-        # C: an ordinary rebase, nothing under scripts/.
         result, calls = run_case(
             base, "c", {"docs/notes.md": "main moved, harmlessly.\n"}
         )
@@ -368,7 +346,6 @@ def main() -> int:
                 f"C: an ordinary rebase must still land.\n{report('C', result, calls)}"
             )
 
-        # D: the handover has already happened as often as it may.
         result, calls = run_case(
             base,
             "d",

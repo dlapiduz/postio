@@ -8,6 +8,11 @@ those show only as duration. This reads what nextest recorded for a run and
 refuses any case over the tier's budget, naming it.
 
     scripts/ci-test-budget.py target/nextest/ci/junit.xml 10
+    scripts/ci-test-budget.py --only merge-path.txt target/nextest/ci-full/junit-run.xml 20
+
+`--only` judges just the cases a file lists, one `<binary_id> <test name>`
+per line (`cargo nextest list --message-format oneline`): a run that holds
+measurements beside merge-path cases must not hold the measurements to it.
 
 The budgets, chosen from the 2026-10-23 data: 10 s for a unit or integration
 case, where the slowest ordinary cases are the host's search fixtures at
@@ -41,16 +46,20 @@ def cases(report: Path) -> list[tuple[float, str]]:
 
 
 def main(argv: list[str]) -> int:
+    only: set[str] | None = None
+    if len(argv) == 5 and argv[1] == "--only":
+        only = {line.strip() for line in Path(argv[2]).read_text().splitlines() if line.strip()}
+        argv = [argv[0], *argv[3:]]
     if len(argv) != 3:
         print(__doc__.strip().splitlines()[0], file=sys.stderr)
-        print("usage: ci-test-budget.py <junit.xml> <budget-seconds>", file=sys.stderr)
+        print("usage: ci-test-budget.py [--only <list>] <junit.xml> <budget-seconds>", file=sys.stderr)
         return 2
     report, budget = Path(argv[1]), float(argv[2])
     if not report.is_file():
         print(f"test budget: no report at {report}; nextest writes one when "
               f"`[profile.<name>.junit]` names it in .config/nextest.toml", file=sys.stderr)
         return 2
-    timed = sorted(cases(report), reverse=True)
+    timed = sorted((c for c in cases(report) if only is None or c[1] in only), reverse=True)
     if not timed:
         print(f"test budget: {report} holds no cases")
         return 0

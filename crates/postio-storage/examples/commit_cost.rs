@@ -1,20 +1,7 @@
-//! What one small transaction costs, against store size.
+//! Times one small transaction against store size: flat means commits are cheap, climbing means
+//! each one checkpoints the whole WAL.
 //!
-//! A live folder sync sat in `commit_batch` for eight minutes on a
-//! twenty-five-message folder, and a stack sample put it inside
-//! `Pager::commit_tx -> Pager::checkpoint -> DatabaseFile::sync` -- an
-//! `fsync` on the *database*, from an ordinary commit.
-//!
-//! If commit cost is flat in store size, that sample was a coincidence. If it
-//! climbs, then every transaction is paying to checkpoint the whole write-ahead
-//! log, and a sync that commits in batches pays it once per batch -- which is
-//! the difference between a mail client and a pathology.
-//!
-//! ```text
-//! cargo run -p postio-storage --example commit_cost --features test-support
-//! ```
-//!
-//! Fixtures only: this writes, so it must never be pointed at real mail.
+//! Fixtures only: this writes, so never point it at real mail.
 
 #![allow(clippy::disallowed_methods)] // the crate's own code prepares through `sql::statement`; a test may reach the engine directly
 
@@ -29,7 +16,6 @@ async fn main() {
     postio_storage::seed::seed_large(&store, 7, 200).await;
 
     for round in 0..6 {
-        // Grow the store between measurements.
         if round > 0 {
             postio_storage::seed::seed_large(&store, 7 + round, 4_000).await;
         }
@@ -42,8 +28,6 @@ async fn main() {
             .map(|meta| meta.len())
             .unwrap_or(0);
 
-        // Twenty of the smallest write there is, each its own transaction --
-        // the shape `commit_batch` repeats.
         const COMMITS: u32 = 20;
         let start = Instant::now();
         for n in 0..COMMITS {

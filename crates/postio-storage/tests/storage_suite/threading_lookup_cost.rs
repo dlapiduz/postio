@@ -1,49 +1,16 @@
-//! Threading a message costs the same whatever the account holds.
-//!
-//! `commit_batch` batches its upsert and then threads **one message at a
-//! time** — `for message in &written { threading.thread(message).await? }` —
-//! so every statement `thread` issues is paid per message, per batch, for the
-//! whole of a first sync. A lookup that scans instead of seeking is therefore
-//! not a constant factor: it is work proportional to everything synced so
-//! far, charged against every message synced next.
-//!
-//! That is the shape a real account showed. Header fetches cost 4–610 ms per
-//! batch while the commits behind them cost 8.7–31.5 s — 49 to 157 ms per
-//! message, against the 0.88–2.80 ms #78 measured and #726 confirmed flat
-//! from an empty store to 131 MB. Those numbers predate the storage engine
-//! changing, and a plan that seeks on one engine does not necessarily seek on
-//! another: `docs/notes/` already records this engine declining to seek a
-//! row-value cursor that SQLite seeks happily.
-//!
-//! So this asks the planner directly, which is the instrument
-//! [`postio_storage::test_support::counting`] exists to provide: counts and
-//! plans are the same on any machine, where a stopwatch on a desktop running
-//! four builds is not.
-//!
-//! **And it asks for the bound columns, not the absence of `SCAN`** — the
-//! upgrade #1587 forced. The first version of this gate checked
-//! `scans().is_empty()` and passed for weeks while every message threaded
-//! walked the account's whole link table, because Turso's planner would not
-//! bind an equality through the index's `COLLATE NOCASE` column and answered
-//! with a one-column `SEARCH ... (account_id=?)` — a scan wearing a seek's
-//! clothes, invisible to a gate that only greps for `SCAN`. A lookup whose
-//! key has two columns is only a lookup if the plan binds both.
+//! Threading costs the same whatever the account holds: `commit_batch` threads one message at a
+//! time, so a scanning lookup is charged to every message synced after it. The plan must bind the
+//! key's columns, not merely lack `SCAN`: a one-column `SEARCH` through a `COLLATE NOCASE` index is
+//! a scan (#1587).
 
 use postio_storage::test_support;
 use postio_storage::test_support::counting::scans;
 
-/// The lookup `ThreadingRepository::thread_of` makes, once per message.
-///
-/// Written out rather than reached through the repository because the point
-/// is the SQL the planner sees. Binary equality against the folded key —
-/// `COLLATE NOCASE` is gone from the query because it forced a collated
-/// index, and this planner will not bind through one (#1587).
+/// Written out because the point is the SQL the planner sees: binary equality on the folded key,
+/// since `COLLATE NOCASE` forced a collated index this planner will not bind through (#1587).
 const THREAD_OF: &str = "SELECT thread_id FROM thread_links \
                           WHERE account_id = ?1 AND rfc_message_id = ?2";
 
-/// The statements `commit_batch` pays per message, each with the columns its
-/// plan must bind. One entry per hot lookup, so the next planner surprise
-/// fails here with the statement's name on it.
 const PER_MESSAGE_LOOKUPS: &[(&str, &str, &[&str])] = &[
     (
         "thread_of",
@@ -51,10 +18,8 @@ const PER_MESSAGE_LOOKUPS: &[(&str, &str, &[&str])] = &[
         &["account_id=?", "rfc_message_id=?"],
     ),
     (
-        // The cue lookup's compound shape. `IN` on the index's second column
-        // gets a one-column prefix from this planner; a `UNION ALL` arm gets
-        // the full key. One statement either way — the statement-count gate
-        // next door holds that line.
+        // `IN` on the second column gets a one-column prefix from this planner; a `UNION ALL` arm
+        // gets the full key.
         "thread links by cue",
         "SELECT rfc_message_id, thread_id FROM thread_links \
          WHERE account_id = ?1 AND rfc_message_id = ?2 \
@@ -75,8 +40,6 @@ const PER_MESSAGE_LOOKUPS: &[(&str, &str, &[&str])] = &[
         &["mailbox_id=?", "uid_validity=?", "uid=?"],
     ),
     (
-        // specs/005-contacts: recording a correspondent finds the address
-        // and its owner in one statement, once per address per message.
         "address and its owner",
         "SELECT a.id, a.contact_id, c.name, c.seen_name, c.last_seen_at \
            FROM addresses a LEFT JOIN contacts c ON c.id = a.contact_id \
@@ -84,7 +47,6 @@ const PER_MESSAGE_LOOKUPS: &[(&str, &str, &[&str])] = &[
         &["address_normalized=?", "rowid=?"],
     ),
     (
-        // …and counts the sighting against its `(address, account)` key.
         "sighting by address and account",
         "SELECT times_seen FROM contact_sightings \
           WHERE address_id = ?1 AND account_id = ?2",
@@ -110,12 +72,8 @@ async fn every_per_message_lookup_binds_its_whole_key() {
     }
 }
 
-/// The control: a query that *must* scan, so a passing assertion above is
-/// evidence rather than an instrument that quietly returned nothing.
-///
-/// `scans` ends in `unwrap_or_default()`, so an `EXPLAIN QUERY PLAN` this
-/// engine refuses would read as "no scans" and every budget written with it
-/// would pass for ever.
+/// The control: a query that must scan, since `scans` ends in `unwrap_or_default()` and a refused
+/// `EXPLAIN` would read as no scans for ever.
 #[tokio::test]
 async fn the_planner_instrument_can_still_see_a_scan() {
     let database = test_support::memory().await;

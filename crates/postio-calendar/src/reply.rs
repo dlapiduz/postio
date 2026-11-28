@@ -1,5 +1,3 @@
-//! From an [`Invitation`] and an answer to the `METHOD:REPLY` that carries it.
-
 use calcard::common::PartialDateTime;
 use calcard::icalendar::{
     ICalendar, ICalendarComponent, ICalendarComponentType, ICalendarEntry, ICalendarMethod,
@@ -11,27 +9,17 @@ use postio_model::EmailAddress;
 
 use crate::invitation::{Answer, EventTime, Invitation};
 
-/// Who wrote the reply (RFC 5545 §3.7.3 requires a `PRODID`). It names the
-/// program and nothing about the person or the machine.
+/// Names the program and nothing about the person or the machine.
 const PRODID: &str = "-//Postio//Postio//EN";
 
-/// The `METHOD:REPLY` calendar that answers `invitation` as `attendee`.
-///
-/// The bytes are the `text/calendar; method=REPLY` part's body, CRLF line
-/// endings and folding included, ready for `outgoing::build`'s calendar part.
-/// They say who answers and how, for which event and which version of it --
-/// `UID`, `SEQUENCE` and, for one occurrence, `RECURRENCE-ID` -- stamped now.
-/// Only the replying attendee is listed, as RFC 5546 §3.2.3 requires.
-///
-/// Whether `attendee` may answer at all -- an identity of the user's that the
-/// invitation lists -- is the caller's decision (research R9). When the
-/// invitation lists the address, the reply spells it as the invitation does,
-/// in case and in name, so the organiser's calendar matches it.
+/// The bytes are the `text/calendar; method=REPLY` body, CRLF and folding included. Only the
+/// replying attendee is listed (RFC 5546 §3.2.3). Whether `attendee` may answer is the caller's
+/// decision; when the invitation lists the address, the reply spells it as the invitation does so
+/// the organiser matches it.
 pub fn reply(invitation: &Invitation, attendee: &EmailAddress, answer: Answer) -> Vec<u8> {
     reply_at(invitation, attendee, answer, Utc::now())
 }
 
-/// [`reply`], stamped at `now` rather than the clock's time.
 pub(crate) fn reply_at(
     invitation: &Invitation,
     attendee: &EmailAddress,
@@ -63,6 +51,7 @@ pub(crate) fn reply_at(
     let partstat = match answer {
         Answer::Accept => ICalendarParticipationStatus::Accepted,
         Answer::Decline => ICalendarParticipationStatus::Declined,
+        Answer::Tentative => ICalendarParticipationStatus::Tentative,
     };
     event.entries.push(person(
         ICalendarProperty::Attendee,
@@ -91,8 +80,6 @@ pub(crate) fn reply_at(
     .into_bytes()
 }
 
-/// An `ORGANIZER` or `ATTENDEE`: a `mailto:` URI, the display name as `CN`,
-/// and, for the one answering, the answer.
 fn person(
     property: ICalendarProperty,
     address: &EmailAddress,
@@ -109,9 +96,7 @@ fn person(
         .with_value(Uri::Location(format!("mailto:{}", address.address)))
 }
 
-/// A date or date-time property. An instant is written in UTC, which says
-/// the same moment whatever zone the invitation used; a floating time stays
-/// floating, and a whole day stays a date.
+/// An instant is written in UTC; floating stays floating and a whole day stays a date.
 fn time(property: ICalendarProperty, time: EventTime) -> ICalendarEntry {
     match time {
         EventTime::At(instant) => ICalendarEntry::new(property)
@@ -128,7 +113,6 @@ fn time(property: ICalendarProperty, time: EventTime) -> ICalendarEntry {
     }
 }
 
-/// A local time with no zone, as RFC 5545 §3.3.5 writes one: no `Z`.
 fn floating(local: NaiveDateTime) -> PartialDateTime {
     PartialDateTime {
         year: u16::try_from(local.year()).ok(),
@@ -156,8 +140,6 @@ mod tests {
         utc("2026-09-28T12:00:00Z")
     }
 
-    /// One unfolded content line of the reply that starts with `name`, and
-    /// the part of it after the name.
     fn line<'a>(text: &'a str, name: &str) -> Vec<&'a str> {
         text.split("\r\n")
             .filter(|line| {
@@ -196,6 +178,18 @@ mod tests {
     }
 
     #[test]
+    fn a_tentative_answer_writes_a_reply_with_the_attendee_tentative() {
+        let invite = invitation("invite-windows-zone");
+        let text = unfolded(&reply_at(&invite, &ada(), Answer::Tentative, noon()));
+
+        assert_eq!(
+            line(&text, "ATTENDEE"),
+            vec![r#"ATTENDEE;PARTSTAT=TENTATIVE;CN="Ada Norwood":mailto:ada.norwood@example.com"#],
+            "{text}"
+        );
+    }
+
+    #[test]
     fn a_reply_names_the_event_the_version_and_the_organiser_and_reads_back() {
         let invite = invitation("invite-update-sequence");
         let bytes = reply_at(&invite, &ada(), Answer::Accept, noon());
@@ -223,9 +217,6 @@ mod tests {
 
     #[test]
     fn a_reply_spells_the_attendee_as_the_invitation_does() {
-        // Google names Ada by her address, with no CN of her own. The identity
-        // Postio answers as has a display name and different case; the reply
-        // must still match the organiser's attendee list.
         let invite = invitation("invite-iana-zone");
         let shouting = EmailAddress::new(Some("Ada N."), "ADA.NORWOOD@EXAMPLE.COM");
         let text = unfolded(&reply_at(&invite, &shouting, Answer::Accept, noon()));

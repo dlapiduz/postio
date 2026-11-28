@@ -25,8 +25,6 @@ import tempfile
 import time
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -56,8 +54,6 @@ def gitdir(tree: Path) -> Path:
 def quiet_for(tree: Path, days: int) -> None:
     """Make `tree` look untouched for `days`: the reaper reads these stamps."""
     stamp = time.time() - days * 86400
-    # ORIG_HEAD too: `git worktree add` writes one, and the reaper reads it as
-    # a sign of life, since reset, rebase and merge all rewrite it.
     for file in (gitdir(tree) / "index", gitdir(tree) / "HEAD", gitdir(tree) / "ORIG_HEAD", tree / ".git"):
         if file.exists():
             os.utime(file, (stamp, stamp))
@@ -107,8 +103,6 @@ def main() -> int:
             (at / "target").mkdir()
             (at / "target" / "junk").write_text("x" * 64, encoding="utf-8")
 
-        # Landed: its commit reached origin/main the way issue-land.sh lands
-        # one -- by rebase, so a different sha carrying the same patch.
         landed = tree("issue-1-landed")
         landed_sha = commit(landed, "a.txt", "a")
         git("cherry-pick", "-x", landed_sha, cwd=repo)
@@ -117,24 +111,19 @@ def main() -> int:
         (claims / "issue-1").mkdir(parents=True)
         quiet_for(landed, 3)
 
-        # Unlanded: a commit origin has never seen.
         unlanded = tree("issue-2-unlanded")
         unlanded_sha = commit(unlanded, "b.txt", "b")
         with_target(unlanded)
         quiet_for(unlanded, 3)
 
-        # Dirty: an uncommitted change, on a tree that is otherwise landed.
         dirty = tree("issue-3-dirty")
         (dirty / "README.md").write_text("changed\n", encoding="utf-8")
         with_target(dirty)
         quiet_for(dirty, 3)
 
-        # Fresh: landed and clean, touched today.
         fresh = tree("issue-4-fresh")
         with_target(fresh)
 
-        # An initiative tree: cut from feature/x and landed onto it, which
-        # main has never seen. Judged against the base it recorded.
         git("branch", "-q", "feature/x", "main", cwd=repo)
         git("push", "-q", "origin", "feature/x", cwd=repo)
         initiative = tree("issue-5-initiative", "feature/x")
@@ -143,22 +132,15 @@ def main() -> int:
         (gitdir(initiative) / "postio-base").write_text("feature/x\n", encoding="utf-8")
         quiet_for(initiative, 3)
 
-        # A base origin no longer has: nothing can be proven landed.
         orphan = tree("issue-6-orphan")
         (gitdir(orphan) / "postio-base").write_text("feature/gone\n", encoding="utf-8")
         quiet_for(orphan, 3)
 
-        # Squash-merged: its PR merged, so the work is on main -- as a new
-        # commit whose patch matches none of the branch's, which is why the
-        # patch-id rule calls it unlanded for ever. Quiet for hours, not a
-        # day: a session that has moved on.
         merged = tree("issue-7-merged")
         merged_sha = commit(merged, "d.txt", "d")
         with_target(merged)
         quiet_for_hours(merged, 3)
 
-        # Merged just now: the session that landed it may be about to reuse
-        # this tree for its next issue, build and all.
         just_merged = tree("issue-8-just-merged")
         commit(just_merged, "e.txt", "e")
         with_target(just_merged)

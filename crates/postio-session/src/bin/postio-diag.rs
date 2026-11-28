@@ -1,31 +1,8 @@
-//! `postio-diag`: what a store holds, what it costs, and what the background
-//! lanes still owe -- counts, sizes, ids and header tokens, never mail.
+//! `postio-diag`: what a store holds, what it costs, and what the background lanes still owe --
+//! counts, sizes and ids, never mail.
 //!
-//! Every diagnosis this project has needed against a real store began with a
-//! one-off example: a census of the tables, a census of the bodies carrying
-//! the decode caveat, the shape of the messages table, a search timed on a
-//! warm connection. Each answered its question and then sat in an
-//! `examples/` directory waiting for the next person to rediscover it. This
-//! is those examples as one command, built with the application, so the
-//! next question starts from `postio-diag` rather than from a blank file.
-//!
-//! ```text
-//! postio-diag census                      # opens the live store
-//! postio-diag --store /path/to/copy.db pending
-//! POSTIO_STORE_KEY=<hex> postio-diag --store copy.db encoding
-//! ```
-//!
-//! **With Postio running, the live store is refused.** One process at a time
-//! has the store (ADR 0041), so close Postio first, or point `--store` at a
-//! copy.
-//!
-//! **Read-only by promise, not by mode.** The engine has no read-only open
-//! (ADR 0038), so every subcommand issues `SELECT` and `PRAGMA` and nothing
-//! else; what a copy protects against is the engine's own recovery on open.
-//!
-//! The key comes from the keyring, the way the application and
-//! `postio-provision` read it, or from `POSTIO_STORE_KEY` for a copy whose
-//! keyring is somewhere else. The key is never printed.
+//! With Postio running the live store is refused (ADR 0041); every subcommand issues only `SELECT`
+//! and `PRAGMA`. The key never prints.
 
 use std::process::ExitCode;
 
@@ -40,6 +17,7 @@ usage: postio-diag [--store <postio.db>] <command>
   encoding  the bodies carrying the decode caveat, and what their parts declared
   shape     rows per page, with and without the body columns
   pending   what the background lanes still owe: backfill, index, queue
+  classify  the classifier over every inbox, with the config's rules: counts and ids
   search <words>  the search box's query, timed, as typed and quoted
 
 Reads only. Opens the live store -- close Postio first -- or the copy --store
@@ -57,7 +35,6 @@ async fn main() -> ExitCode {
                 println!("{USAGE}");
                 return ExitCode::SUCCESS;
             }
-            // `search` takes the rest of the line as its words.
             "search" if command.is_none() => {
                 let words: Vec<String> = arguments.by_ref().collect();
                 command = Some(format!("search {}", words.join(" ")));
@@ -108,7 +85,15 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match postio_session::diag::report(connection, file, &command).await {
+    let report = if command == "classify" {
+        let focus = postio_config::Config::load()
+            .map(|config| config.focus)
+            .unwrap_or_default();
+        postio_session::diag::classify(connection, &focus).await
+    } else {
+        postio_session::diag::report(connection, file, &command).await
+    };
+    match report {
         Ok(text) => {
             print!("{text}");
             ExitCode::SUCCESS

@@ -1,11 +1,3 @@
-//! Flags a server's change feed never reported (#1915).
-//!
-//! iCloud, Yahoo and Exchange under-report CONDSTORE changes, so a flag set
-//! on another device can be missing from `CHANGEDSINCE` for good. The mock
-//! reproduces that with `set_flags_silently`: the server's flags change and
-//! its `HIGHESTMODSEQ` does not, which is a change nothing but reading the
-//! flags can find.
-
 use postio_account::backend::{
     Fault, FlagChange, MailBackend, MockBackend, MockMailbox, MockMessage,
 };
@@ -45,8 +37,6 @@ fn mailbox_of(count: u32) -> MockMailbox {
     mailbox
 }
 
-/// A server with `count` unread messages. `unreliable` is what the provider
-/// preset says about it.
 async fn server(count: u32, unreliable: bool) -> MockBackend {
     let mut builder =
         MockBackend::builder().mailbox(mailbox_of(count).highest_mod_seq(ModSeq::new(100)));
@@ -78,7 +68,6 @@ async fn synced(count: u32, unreliable: bool) -> (MockBackend, Mailbox, AccountI
     )
 }
 
-/// Keeps the store alive for as long as the test holds it.
 struct Fixture {
     _database: postio_storage::Store,
     connection: Checkout,
@@ -113,10 +102,6 @@ async fn resync(fixture: &Fixture, backend: &MockBackend, mailbox: &Mailbox) -> 
     .expect("resync")
 }
 
-// ---------------------------------------------------------------------------
-// Where HIGHESTMODSEQ is recorded
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_change_pull_that_fails_leaves_highestmodseq_where_it_was() {
     let (backend, inbox, _, fixture) = synced(3, false).await;
@@ -126,7 +111,6 @@ async fn a_change_pull_that_fails_leaves_highestmodseq_where_it_was() {
         .await
         .expect("another client reads message 2");
 
-    // SELECT is the pass's first call; the CHANGEDSINCE fetch is the second.
     backend.inject_after(1, Fault::Disconnect);
     resync_mailbox(
         &fixture.connection,
@@ -146,7 +130,6 @@ async fn a_change_pull_that_fails_leaves_highestmodseq_where_it_was() {
     );
     assert!(!flags_of(&fixture.connection, &inbox, 2).await.is_seen());
 
-    // The same pass, asked again, still finds it.
     backend.clear_faults();
     backend.connect().await.expect("reconnect");
     resync(&fixture, &backend, &inbox).await;
@@ -155,15 +138,7 @@ async fn a_change_pull_that_fails_leaves_highestmodseq_where_it_was() {
 
 #[tokio::test]
 async fn a_rebuild_cut_short_after_the_modseq_went_backwards_is_not_up_to_date() {
-    // The server's store was rebuilt: its HIGHESTMODSEQ is *below* the one we
-    // hold, so `plan` says to re-read everything. That re-read is the flag
-    // pass, and the lower value must not be recorded until it has finished --
-    // otherwise a pass cut off half-way leaves a stored value that equals the
-    // server's, the next `plan` says `UpToDate`, and the re-read never
-    // happens.
     let (_, inbox, _, fixture) = synced(3, false).await;
-    // The mailbox as the rebuilt server holds it: same generation, same
-    // messages, a counter that starts again low.
     let rebuilt = MockBackend::builder()
         .mailbox(mailbox_of(3).highest_mod_seq(ModSeq::new(1)))
         .build();
@@ -173,7 +148,6 @@ async fn a_rebuild_cut_short_after_the_modseq_went_backwards_is_not_up_to_date()
         .expect("a CONDSTORE server");
     assert!(held > ModSeq::new(1), "the fixture has to go backwards");
 
-    // SELECT, then the enumeration's first request.
     rebuilt.inject_after(1, Fault::Disconnect);
     resync_mailbox(
         &fixture.connection,
@@ -204,10 +178,6 @@ async fn a_rebuild_cut_short_after_the_modseq_went_backwards_is_not_up_to_date()
         "a finished re-read records the server's value"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Whether a pass sweeps
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_reliable_server_is_believed_and_nothing_is_swept() {
@@ -261,7 +231,6 @@ async fn an_unreliable_servers_silent_flag_change_is_found_by_the_sweep() {
         "the server never moved its counter, and the sweep invents none"
     );
 
-    // And once corrected, the next pass has nothing to report.
     assert_eq!(
         resync(&fixture, &backend, &inbox).await,
         Outcome::UpToDate,
@@ -272,7 +241,6 @@ async fn an_unreliable_servers_silent_flag_change_is_found_by_the_sweep() {
 #[tokio::test]
 async fn a_sweep_also_runs_beside_a_change_pull_that_found_something() {
     let (backend, inbox, _, fixture) = synced(3, true).await;
-    // One change the feed reports, one it does not.
     backend
         .store_flags(INBOX, &[rid(1)], &FlagChange::Add(flags(&[Flag::Flagged])))
         .await
@@ -292,7 +260,6 @@ async fn a_sweep_also_runs_beside_a_change_pull_that_found_something() {
 #[tokio::test]
 async fn a_larger_folder_is_swept_only_every_nth_pass() {
     let (backend, inbox, _, fixture) = synced(5, true).await;
-    // Five messages is "large" under this policy.
     let policy = SweepPolicy {
         every_pass_up_to: 4,
         larger_every: 3,
@@ -363,10 +330,6 @@ async fn passes_that_do_not_sweep_are_counted_in_the_store() {
     assert!(backend.flag_fetches().is_empty());
 }
 
-// ---------------------------------------------------------------------------
-// What a sweep must not do
-// ---------------------------------------------------------------------------
-
 #[tokio::test]
 async fn a_sweep_that_fails_leaves_highestmodseq_where_it_was() {
     let (backend, inbox, _, fixture) = synced(3, true).await;
@@ -377,7 +340,6 @@ async fn a_sweep_that_fails_leaves_highestmodseq_where_it_was() {
         .expect("a reported change moves the counter");
     backend.set_flags_silently(INBOX, Uid::new(3), flags(&[Flag::Seen]));
 
-    // SELECT, the CHANGEDSINCE fetch, then the sweep's listing.
     backend.inject_after(2, Fault::Disconnect);
     resync_mailbox(
         &fixture.connection,
@@ -413,7 +375,6 @@ async fn a_read_that_has_not_drained_survives_a_sweep() {
         .expect("read")
         .expect("stored");
 
-    // Read here, queued, not yet told to the server.
     let seen = flags(&[Flag::Seen]);
     MessageRepository::new(&fixture.connection)
         .set_flags(message.id, &seen, FlagSource::Local)
@@ -429,7 +390,6 @@ async fn a_read_that_has_not_drained_survives_a_sweep() {
         .await
         .expect("enqueue");
 
-    // The server, which has not heard, lists it unread.
     let outcome = resync(&fixture, &backend, &inbox).await;
 
     assert_eq!(backend.flag_fetches().len(), 1, "the sweep ran");
@@ -443,10 +403,6 @@ async fn a_read_that_has_not_drained_survives_a_sweep() {
         "agreeing with the user's own pending change is not a correction"
     );
 }
-
-// ---------------------------------------------------------------------------
-// What a sweep costs the store
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn a_sweep_reads_the_store_once_and_writes_only_what_differs() {

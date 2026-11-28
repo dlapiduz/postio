@@ -1,30 +1,11 @@
-//! A call across the boundary runs on whatever thread the caller is on.
-//!
-//! Swift calls the exported methods from `Task.detached`, which runs on the
-//! cooperative pool, and a thread there has a **512 KiB** stack rather than
-//! the main thread's 8 MiB. The engine's deepest work is compiling a write:
-//! Turso builds every trigger and foreign-key cascade the statement can
-//! fire into its program at prepare time, recursively, and a debug build's
-//! async frames sit under that. The Mac app died of it on launch, with
-//! SIGBUS in a guard page, for any demo seed that queues a send.
-//!
-//! How much of that 512 KiB is left by the time Swift calls in is not
-//! something this side can know, so the contract is that it does not
-//! matter: these call the exported, blocking entry points the way Swift
-//! does, from a thread with a stack smaller than the work needs, and look at
-//! what the store holds afterwards.
-
 use chrono::Utc;
 use postio_ffi::{Session, SessionOptions};
 use postio_model::{DraftState, EmailAddress, Message};
 use postio_storage::repository::{DraftRepository, MessageRepository};
 use postio_storage::test_support;
 
-/// Less than a send needs (about 230 KiB in a test build), and a quarter of
-/// what a Swift cooperative-pool thread starts with.
 const CALLER_STACK: usize = 128 * 1024;
 
-/// Runs `call` on a foreign thread with a small stack, as Swift would.
 fn from_a_swift_task<T: Send + 'static>(call: impl FnOnce() -> T + Send + 'static) -> T {
     std::thread::Builder::new()
         .name("swift-cooperative".to_owned())

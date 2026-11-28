@@ -25,8 +25,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-# The shared dial (#1249). `scripts/lib`, not beside this file, because CI
-# runs every `scripts/tests/*.py` it finds as a self-test.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 
 import patience  # noqa: E402  -- enabled by the sys.path line above
@@ -67,7 +65,6 @@ license.workspace = true
 publish.workspace = true
 """
 
-# #639's shape: hard-coded, outside the allow-list, and not inherited.
 DRIFTED_CRATE = """\
 [package]
 name = "leaf"

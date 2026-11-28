@@ -1,6 +1,3 @@
-//! A card goes in and comes back out with everything Postio does not model
-//! untouched (specs/005-contacts FR-050..FR-054, SC-006, contracts/vcard.md).
-
 use postio_vcard::{ExportPerson, Member, ParsedCard, export, export_group, parse};
 
 fn corpus(name: &str) -> String {
@@ -11,12 +8,10 @@ fn corpus(name: &str) -> String {
     .expect("a corpus file")
 }
 
-/// The properties Postio writes itself; every other line must survive.
 const MODELLED: &[&str] = &[
     "BEGIN", "END", "VERSION", "UID", "FN", "EMAIL", "ORG", "NOTE", "REV", "KIND", "MEMBER",
 ];
 
-/// A card's lines that are not Postio's to write, in order.
 fn unmodelled(card: &str) -> Vec<String> {
     card.split("\r\n")
         .filter(|line| !line.is_empty())
@@ -42,7 +37,6 @@ fn person(card: &str) -> postio_vcard::ParsedPerson {
     }
 }
 
-/// Exports `person` as the store would hand it back, unchanged.
 fn round_trip(card: &str) -> String {
     let parsed = person(card);
     let emails: Vec<(String, bool)> = parsed
@@ -184,7 +178,6 @@ fn a_person_with_no_card_gets_a_fresh_4_0_one() {
          NOTE:line one\\nline two\r\n\
          END:VCARD\r\n"
     );
-    // And it reads back as it was written.
     let back = person(&out);
     assert_eq!(back.name.as_deref(), Some("Grace Hopper, Rear Admiral"));
     assert_eq!(back.note.as_deref(), Some("line one\nline two"));
@@ -197,6 +190,5 @@ fn a_cards_phones_and_title_are_read_for_matching_and_stay_in_the_card() {
     assert_eq!(parsed.phones, ["+1 555 0119", "(555) 010-0100"]);
     assert_eq!(parsed.title.as_deref(), Some("Finance lead"));
     assert_eq!(parsed.organization.as_deref(), Some("Northwind Partners"));
-    // Read, not rewritten: the lines go back out as they came.
     assert_eq!(unmodelled(&round_trip(card)), unmodelled(card));
 }

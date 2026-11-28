@@ -1,0 +1,55 @@
+# Calendar pops out into its own window and back (spec 017 D12, US7). The
+# keyboard belongs to the focused window; `g e` and the mail destinations go
+# to the window that shows them; `Esc` never closes a window; the same chord
+# brings Calendar back as the main window's mode, on the date and event it
+# left.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/017-calendar US7" }
+seed   = "small"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+
+[[step]]
+key     = "g"
+
+[[step]]
+key     = "e"
+check   = { view = "calendar", app.focus.calendar.window = "main" }
+
+[[step]]
+id      = "walked"
+key     = "j"
+check   = { app.focus.calendar.cursor = { changed = true } }
+
+[[step]]
+id      = "out"
+key     = "mod+shift+o"
+check   = { app.focus.calendar.window = "own", app.focus.window.focused = "calendar", app.focus.calendar.cursor = { same_as = "walked" } }
+expect  = "Calendar is in a window of its own, on the same day with the same event ringed. The main window is back on the inbox."
+
+[[step]]
+key     = "Escape"
+check   = { app.focus.calendar.window = "own", app.focus.window.focused = "calendar" }
+expect  = "Nothing closes: Escape at the Calendar window's root does nothing."
+
+[[step]]
+key     = "g"
+
+[[step]]
+key     = "i"
+check   = { app.focus.window.focused = "main", view = "list", scope = "Inbox" }
+expect  = "The main window comes forward and has the keyboard, on the inbox. The Calendar window stays open behind it."
+
+[[step]]
+key     = "g"
+
+[[step]]
+key     = "e"
+check   = { app.focus.window.focused = "calendar", view = "list" }
+expect  = "The Calendar window comes forward. The main window shows no Calendar mode."
+
+[[step]]
+key     = "mod+shift+o"
+check   = { app.focus.calendar.window = "main", app.focus.window.focused = "main", view = "calendar", app.focus.calendar.cursor = { same_as = "walked" } }
+expect  = "Calendar is the main window's mode again, on the same date with the same event ringed, and its window is gone."

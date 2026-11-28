@@ -1,15 +1,4 @@
-//! The command bar, search, go-to and the places, from the controller's side
-//! (specs/009-focus-macos T081; research R2, slice 8).
-//!
-//! What GTK's window and bar did -- `go_to`, `go_to_inbox`, `go_to_role`,
-//! `go_to_view`, the saved searches, `bar_action`, reopen-after-hit, the chip
-//! editor and the places reads -- asserted here so both frontends get it: `/`
-//! and `mod+k` open one bar two ways (C24), a command chosen in it acts on
-//! what the cursor was on when it opened, a place chosen in it is opened as
-//! the list with the cursor on its first row, the go-to keys go by role, and
-//! the places are read in one request however many accounts there are.
-
-use crate::search_support::{asks, shown};
+use crate::search_support::{asks, shown, shown_but_the_footer};
 use postio_config::paths::Platform;
 use postio_core::CommandId;
 use postio_focus::{
@@ -20,7 +9,6 @@ use postio_model::{FocusScope, ListScope, MailboxId, MailboxRole, MessageId, Thr
 use postio_ui::keymap::KeyContext;
 use postio_ui::places::Entry;
 
-/// A list of conversations.
 struct List {
     rows: Vec<RowFacts>,
 }
@@ -57,7 +45,6 @@ impl Rows for List {
 
 const RECEIPTS: MailboxId = MailboxId::new(7);
 
-/// The Mac's controller.
 fn mac() -> FocusController {
     FocusController::new(Policy::for_platform(Platform::Apple))
 }
@@ -69,14 +56,12 @@ fn asked(effects: &[Effect]) -> Vec<Request> {
         .collect()
 }
 
-/// The one ask among `effects`.
 fn ask(effects: &[Effect]) -> (Ticket, Request) {
     let asks = asks(effects);
     assert_eq!(asks.len(), 1, "one ask in {effects:?}");
     asks[0].clone()
 }
 
-/// The bar's last view among `effects`.
 fn view(effects: &[Effect]) -> BarView {
     shown(effects)
         .into_iter()
@@ -88,7 +73,6 @@ fn view(effects: &[Effect]) -> BarView {
         .unwrap_or_else(|| panic!("no bar lines in {effects:?}"))
 }
 
-/// The line titled `title`.
 fn line<'a>(view: &'a BarView, title: &str) -> &'a BarLine {
     view.lines
         .iter()
@@ -109,7 +93,6 @@ fn typed(focus: &mut FocusController, text: &str, rows: &List) -> Vec<Effect> {
     )
 }
 
-/// The places one account with an inbox, Sent, Archive and Receipts gives.
 fn places() -> PlacesRead {
     let mailbox = |id: i64, name: &str, role: MailboxRole| {
         let mut mailbox = postio_model::Mailbox::new(postio_model::AccountId::new(1), name, None);
@@ -144,7 +127,6 @@ fn places() -> PlacesRead {
     }
 }
 
-/// `focus` with the bar open by `command` and the places read.
 fn bar_open(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec<Effect> {
     let mut effects = run(focus, command, rows);
     let (ticket, request) = asks(&effects)
@@ -155,8 +137,6 @@ fn bar_open(focus: &mut FocusController, command: CommandId, rows: &List) -> Vec
     effects.extend(focus.handle_on(Input::Reply(ticket, Reply::Places(Ok(places()))), rows));
     effects
 }
-
-// -- Opening the bar (C24) ------------------------------------------------
 
 #[test]
 fn slash_opens_the_bar_for_search_and_reads_the_places_once() {
@@ -247,12 +227,9 @@ fn the_bar_searches_people_on_both_platforms() {
     }
 }
 
-// -- What a row runs -------------------------------------------------------
-
 #[test]
 fn a_command_chosen_in_the_bar_acts_on_the_aim_captured_when_it_opened() {
     let rows = List::of(3);
-    // What `a` on the second row sends, from the list.
     let mut twin = mac();
     let _ = twin.landed(&rows, true);
     let _ = run(&mut twin, CommandId::NextMessage, &rows);
@@ -262,7 +239,6 @@ fn a_command_chosen_in_the_bar_acts_on_the_aim_captured_when_it_opened() {
     let _ = focus.landed(&rows, true);
     let _ = run(&mut focus, CommandId::NextMessage, &rows);
     let _ = bar_open(&mut focus, CommandId::CommandPalette, &rows);
-    // The pointer moved the cursor behind the bar.
     let _ = focus.handle_on(Input::Point(2), &rows);
     let lines = view(&typed(&mut focus, ">archive", &rows));
     let archive = lines
@@ -317,8 +293,6 @@ fn a_command_the_controller_does_not_answer_is_handed_back_to_run() {
 
 #[test]
 fn compose_from_the_bar_opens_the_composer_itself() {
-    // Compose was handed back to `Run` until the composer was the
-    // controller's (slice 7).
     let rows = List::of(1);
     let mut focus = mac();
     let _ = bar_open(&mut focus, CommandId::CommandPalette, &rows);
@@ -331,7 +305,7 @@ fn compose_from_the_bar_opens_the_composer_itself() {
         .clone();
     let effects = focus.handle_on(Input::BarRun(compose.token), &rows);
     assert_eq!(
-        shown(&effects),
+        shown_but_the_footer(&effects),
         vec![
             Intent::CloseSurface(SurfaceKind::Bar),
             Intent::KeyboardHome,
@@ -360,8 +334,6 @@ fn a_token_from_lines_since_redrawn_runs_nothing() {
     assert!(focus.handle_on(Input::BarRun(stale), &rows).is_empty());
 }
 
-// -- Places --------------------------------------------------------------
-
 #[test]
 fn receipts_from_the_places_opens_as_the_list_with_the_cursor_on_its_first_row() {
     let rows = List::of(3);
@@ -387,7 +359,6 @@ fn receipts_from_the_places_opens_as_the_list_with_the_cursor_on_its_first_row()
             splices: false
         }
     );
-    // Counted, changed over, its first page landed: the cursor is on row 0.
     let effects = focus.handle(Input::Reply(
         ticket,
         Reply::Opened(Opened {
@@ -440,7 +411,6 @@ fn receipts_from_the_places_opens_as_the_list_with_the_cursor_on_its_first_row()
 #[test]
 fn the_go_to_keys_go_to_their_places() {
     let rows = List::of(2);
-    // `g i`: Focus's own inbox.
     let mut focus = mac();
     let effects = run(&mut focus, CommandId::GoToInbox, &rows);
     assert!(shown(&effects).contains(&Intent::Place {
@@ -453,8 +423,6 @@ fn the_go_to_keys_go_to_their_places() {
             splices: true
         }]
     );
-    // `g t`, `g s`, `g r`: a folder by its role, in the account Focus
-    // writes from.
     for (command, role, name) in [
         (CommandId::GoToDrafts, MailboxRole::Drafts, "Drafts"),
         (CommandId::GoToSent, MailboxRole::Sent, "Sent"),
@@ -481,7 +449,6 @@ fn the_go_to_keys_go_to_their_places() {
             }],
             "{command:?}"
         );
-        // No such folder anywhere: nothing moves.
         let mut focus = mac();
         let (ticket, _) = ask(&run(&mut focus, command, &rows));
         assert!(
@@ -490,7 +457,6 @@ fn the_go_to_keys_go_to_their_places() {
                 .is_empty()
         );
     }
-    // `g z`: Snoozed, a view over every account's mail.
     let mut focus = mac();
     let effects = run(&mut focus, CommandId::GoToSnoozed, &rows);
     assert!(shown(&effects).contains(&Intent::Place {
@@ -503,7 +469,6 @@ fn the_go_to_keys_go_to_their_places() {
             splices: false
         }]
     );
-    // `g f`: Filtered, which is a view of its own.
     let mut focus = mac();
     assert_eq!(
         shown(&run(&mut focus, CommandId::GoToFiltered, &rows)),
@@ -540,7 +505,6 @@ fn going_somewhere_lets_the_selection_and_has_action_go() {
     assert_eq!(focus.selection(), Default::default());
 }
 
-/// Mail that changed in place, as a flag written elsewhere says it.
 fn flagged_elsewhere() -> Input {
     Input::Event(postio_core::Event::MessagesChanged {
         account: postio_model::AccountId::new(1),
@@ -548,11 +512,8 @@ fn flagged_elsewhere() -> Input {
     })
 }
 
-/// While the folders popover is up, mail that changes has its places read
-/// again, so the counts follow a flag written after the popover's own read
-/// was answered (#2153). Changes while a read is on its way are one more
-/// read once it lands, not a read each; once the popover has gone,
-/// changes read nothing.
+/// While the popover is up, changing mail has its places read again so the counts follow (#2153);
+/// changes during a read are one more read, not one each.
 #[test]
 fn the_folders_popover_reads_its_counts_again_as_mail_changes() {
     let rows = List::of(1);
@@ -560,7 +521,6 @@ fn the_folders_popover_reads_its_counts_again_as_mail_changes() {
     let (opening, _) = ask(&run(&mut focus, CommandId::GoToFolders, &rows));
     let _ = focus.handle(Input::PlacesShown(true));
 
-    // Its first read is still on its way: a change waits for it.
     assert!(asked(&focus.handle(flagged_elsewhere())).is_empty());
     assert!(asked(&focus.handle(flagged_elsewhere())).is_empty());
     let landed = focus.handle(Input::Reply(opening, Reply::Places(Ok(places()))));
@@ -572,11 +532,9 @@ fn the_folders_popover_reads_its_counts_again_as_mail_changes() {
         "nothing changed since: {landed:?}"
     );
 
-    // Nothing on its way: a change is read at once.
     let (_, request) = ask(&focus.handle(flagged_elsewhere()));
     assert_eq!(request, Request::Places);
 
-    // A read the controller forgot never lands; the next change asks anew.
     focus.invalidate();
     let (later, _) = ask(&focus.handle(flagged_elsewhere()));
     let _ = focus.handle(Input::Reply(later, Reply::Places(Ok(places()))));
@@ -588,8 +546,6 @@ fn the_folders_popover_reads_its_counts_again_as_mail_changes() {
     );
 }
 
-/// The popover's word is what arms the re-reading: a frontend that never
-/// says it is up (the Mac's, for now) reads its places as before.
 #[test]
 fn mail_changing_reads_no_places_while_no_popover_is_up() {
     let rows = List::of(1);
@@ -599,9 +555,8 @@ fn mail_changing_reads_no_places_while_no_popover_is_up() {
     assert!(asked(&focus.handle(flagged_elsewhere())).is_empty());
 }
 
-/// #1731: a folder whose last pass failed is marked where a person goes to
-/// open it, with why, and the sync label names it -- until a pass of it
-/// completes. Each change to the mark redraws the popover.
+/// A folder whose last pass failed is marked in the places, with why, and the sync label names it
+/// until a pass completes (#1731).
 #[test]
 fn a_folder_that_cannot_sync_is_marked_in_the_places_and_named_by_the_label() {
     let rows = List::of(1);
@@ -653,7 +608,6 @@ fn a_folder_that_cannot_sync_is_marked_in_the_places_and_named_by_the_label() {
         drawn.detail.as_deref(),
         Some("Sent: SELECT refused: Mailbox is locked")
     );
-    // The token still opens the folder: its stored mail is still here.
     let sent = focus
         .places("sent")
         .into_iter()
@@ -674,8 +628,6 @@ fn a_folder_that_cannot_sync_is_marked_in_the_places_and_named_by_the_label() {
     );
 }
 
-/// A folder fails before anything has read the places: the controller
-/// reads them, and the label names the folder once they land.
 #[test]
 fn a_folder_that_fails_before_the_places_are_read_is_named_once_they_are() {
     let rows = List::of(1);
@@ -738,7 +690,6 @@ fn the_places_are_one_request_and_a_place_opens_from_the_popover() {
             splices: false
         }]
     );
-    // Snoozed is a view, and runs the command its key runs.
     let snoozed = focus.places("snoozed");
     let effects = focus.handle_on(Input::OpenPlace(snoozed[0].0), &rows);
     assert!(asked(&effects).contains(&Request::OpenScope {
@@ -768,10 +719,8 @@ fn the_popover_lists_filtered_while_focus_files_mail() {
     assert_eq!(shown(&effects), vec![Intent::ShowFiltered]);
 }
 
-/// Filtered is listed by today's count, which is a read of its own and can
-/// land after the places do: the popover open by then is told the places
-/// changed, so it lists Filtered, and a token it read before is spent
-/// rather than opening whatever moved into its row.
+/// The popover open by then is told the places changed, and a token it read before is spent rather
+/// than opening whatever moved into its row.
 #[test]
 fn counts_landing_after_the_places_change_them() {
     let rows = List::of(1);
@@ -809,7 +758,6 @@ fn counts_landing_after_the_places_change_them() {
         "a token from before opens nothing: {effects:?}"
     );
 
-    // The same count again changes nothing.
     let Effect::Ask(counted, _) = focus.refresh_counts() else {
         panic!("counts are asked for");
     };
@@ -817,8 +765,6 @@ fn counts_landing_after_the_places_change_them() {
     assert!(!shown(&effects).contains(&Intent::PlacesChanged));
 }
 
-/// Turning filtering on or off adds or takes away Filtered, so an open
-/// popover is told to read the places again, as when the count lands.
 #[test]
 fn filtering_turned_off_changes_the_places() {
     let rows = List::of(1);
@@ -844,7 +790,6 @@ fn filtering_turned_off_changes_the_places() {
 fn a_bar_place_that_is_an_inbox_goes_to_focus_s_inbox() {
     let rows = List::of(1);
     let mut focus = mac();
-    // The inbox is known as one from opening it.
     let (ticket, _) = ask(&focus.open(ListScope::Focus(FocusScope::Inbox)));
     let _ = focus.handle(Input::Reply(
         ticket,
@@ -868,8 +813,6 @@ fn a_bar_place_that_is_an_inbox_goes_to_focus_s_inbox() {
         }]
     );
 }
-
-// -- Saved searches --------------------------------------------------------
 
 #[test]
 fn alt_numbers_open_the_saved_searches() {
@@ -943,10 +886,16 @@ fn mod_s_saves_the_bars_query() {
         key: Some("from-ada-invoice".to_owned()),
     })));
     let intents = shown(&effects);
-    assert!(intents.contains(&Intent::Toast {
-        text: postio_ui::focus_target::search_saved("from:ada invoice"),
-        kind: ToastKind::Notice,
-    }));
+    assert!(
+        intents.contains(&Intent::Toast {
+            text: postio_ui::focus_target::search_saved("from:ada invoice"),
+            kind: ToastKind::Completed {
+                undoable: false,
+                seconds: None,
+            },
+        }),
+        "a confirmation, not a warning's notice: {intents:?}"
+    );
     assert!(
         shown(&effects)
             .iter()
@@ -962,10 +911,6 @@ fn mod_s_saves_the_bars_query() {
         }]
     );
 }
-
-// -- The chips -------------------------------------------------------------
-
-// -- A hit, and back to the results ----------------------------------------
 
 #[test]
 fn closing_the_bar_forgets_it() {
@@ -997,9 +942,8 @@ fn back_closes_the_bar() {
     let mut focus = mac();
     let _ = bar_open(&mut focus, CommandId::Search, &rows);
     assert!(focus.answers(CommandId::Back));
-    // Off the stack here, as a line run takes it off: the frontend's
-    // `SurfaceClosed(Bar)` is then a repeat, never the thing that closes
-    // it -- an echo that did could land after the bar had been reopened.
+    // Off the stack here, as a line run takes it off: an echoed `SurfaceClosed(Bar)` could land
+    // after the bar was reopened.
     assert_eq!(
         shown(&run(&mut focus, CommandId::Back, &rows)),
         vec![Intent::CloseSurface(SurfaceKind::Bar), Intent::KeyboardHome]
@@ -1033,12 +977,6 @@ fn the_bar_answers_its_own_keys_while_open() {
     assert!(!focus.answers(CommandId::Archive), "a letter is typing");
 }
 
-// -- The search dropdown (spec 010 step 2, screens 01 and 03) ---------------
-//
-// The bar's search half, on both platforms: empty, it lists the recent and
-// saved searches and the cheat sheet; with words, the top hits, Narrow to
-// and Show all. `>` and `@` keep spec 009's lines, above.
-
 mod dropdown {
     use super::*;
     use chrono::{DateTime, Local, NaiveDate, TimeZone};
@@ -1053,7 +991,6 @@ mod dropdown {
     };
     use postio_search::suggest::{Completion, Person, Suggestions};
 
-    /// Saturday 26 September 2026, mid-afternoon, as the screens are.
     fn today() -> DateTime<Local> {
         Local.with_ymd_and_hms(2026, 9, 26, 15, 0, 0).unwrap()
     }
@@ -1064,7 +1001,6 @@ mod dropdown {
         focus
     }
 
-    /// The dropdown's last view among `effects`.
     fn dropdown(effects: &[Effect]) -> DropdownView {
         try_dropdown(effects).unwrap_or_else(|| panic!("no dropdown in {effects:?}"))
     }
@@ -1092,8 +1028,6 @@ mod dropdown {
         }
     }
 
-    /// The pinned saved searches the screens show.
-    /// Four pinned saved searches; Atlas notifies.
     fn saved() -> Vec<postio_ui::saved_search::SavedSearch> {
         [
             ("waiting", "Waiting on reply", "from:juno", false),
@@ -1113,7 +1047,6 @@ mod dropdown {
         .collect()
     }
 
-    /// `(key, query)` for each, as the counts are asked.
     fn keyed(saved: &[postio_ui::saved_search::SavedSearch]) -> Vec<(String, String)> {
         saved
             .iter()
@@ -1121,7 +1054,6 @@ mod dropdown {
             .collect()
     }
 
-    /// Answer the one request among `effects` that `pick` takes.
     fn answer(
         focus: &mut FocusController,
         effects: &[Effect],
@@ -1138,7 +1070,6 @@ mod dropdown {
         focus.handle_on(Input::Reply(ticket, reply), rows)
     }
 
-    /// `/` with the places, the recent searches and the saved counts read.
     fn opened(focus: &mut FocusController, rows: &List) -> Vec<Effect> {
         let _ = focus.handle(Input::SavedSearches(saved()));
         let mut effects = bar_open(focus, CommandId::Search, rows);
@@ -1177,7 +1108,6 @@ mod dropdown {
         effects
     }
 
-    /// A saved search's counts, every one counted to the end.
     fn exact(key: &str, total: u64, new: u64) -> SavedCount {
         SavedCount {
             key: key.to_owned(),
@@ -1227,7 +1157,6 @@ mod dropdown {
         }
     }
 
-    /// What `atlas budget` finds on the screens: four of 48, with facets.
     fn atlas_budget() -> ConversationResults {
         ConversationResults {
             hits: vec![
@@ -1277,7 +1206,6 @@ mod dropdown {
         matches!(request, Request::Conversations { .. })
     }
 
-    /// Type `words` and answer the conversation search with `results`.
     fn searched(
         focus: &mut FocusController,
         words: &str,
@@ -1528,8 +1456,6 @@ mod dropdown {
         );
     }
 
-    /// A saved search's total past the walk's cap, and a badge past its
-    /// own, are floors where they are drawn (D30): "5,000+", "99+ new".
     #[test]
     fn a_saved_search_past_its_caps_draws_its_count_and_badge_as_floors() {
         let rows = List::of(1);
@@ -1666,14 +1592,8 @@ mod dropdown {
         assert_eq!(view.count.as_deref(), Some("48 matches \u{b7} 38 ms"));
     }
 
-    /// You are in every message you sent, so you are often the top sender;
-    /// a pill to narrow to yourself is not one screen 03 offers. The
-    /// People tab leaves you out the same way.
-    /// A capped search's facets are floors, so its Narrow to pills are too
-    /// (D30).
-    /// Spec 007 US10 scenario 7 and #1825: a hit says where it is --
-    /// where a digest holds it, in place of its folder -- and, with several
-    /// accounts, which one it is in.
+    /// You are the top sender in your own mail, so a pill to narrow to yourself is not offered. A
+    /// capped search's facets are floors, so its pills are too (D30).
     #[test]
     fn a_hit_says_where_a_digest_holds_it_and_its_account() {
         let rows = List::of(3);
@@ -1823,10 +1743,8 @@ mod dropdown {
         assert_eq!(marked, ["Atlas", "budget"]);
     }
 
-    /// The dropdown's passage has the room after "Sender · Subject" and no
-    /// more, about 45 characters at 1440: a window cut for the results'
-    /// row, a third of 120 before the match or more near the body's end,
-    /// drew only the words before it (screen 03 leads with the match).
+    /// The dropdown's row has room for about 45 characters after "Sender · Subject": a window cut
+    /// for the results' row drew only the words before the match.
     #[test]
     fn a_hits_passage_leads_with_its_match() {
         let rows = List::of(1);
@@ -1977,7 +1895,6 @@ mod dropdown {
         );
         assert_eq!(view.highlight, Some(view.sections[0].rows[0].token));
 
-        // The key itself forgets the row the arrows rest on.
         let second = view.sections[0].rows[1].token;
         let _ = focus.handle(Input::SearchHighlighted(second));
         assert!(focus.answers(CommandId::ForgetRecent));
@@ -1985,16 +1902,12 @@ mod dropdown {
         assert!(asked(&effects).contains(&Request::ForgetSearch {
             query: "has:attachment in:Receipts after:2026-09-01".to_owned()
         }));
-        // The arrows stay where they were, on the row that took its place,
-        // so a second press forgets the next one down.
         let view = dropdown(&effects);
         assert_eq!(view.select, Some(view.sections[0].rows[1].token));
         assert_eq!(text(&view.sections[0].rows[1].title), "harbor");
-        // Forgetting the last, they rest on the one above.
         let effects = run(&mut focus, CommandId::ForgetRecent, &rows);
         let view = dropdown(&effects);
         assert_eq!(view.select, Some(view.sections[0].rows[0].token));
-        // Unmoved, the key forgets the row focused by default: the newest.
         let mut fresh = mac_search();
         let effects = opened(&mut fresh, &rows);
         assert!(!dropdown(&effects).sections[0].rows.is_empty());
@@ -2002,7 +1915,6 @@ mod dropdown {
         assert!(asked(&effects).contains(&Request::ForgetSearch {
             query: "atlas budget".to_owned()
         }));
-        // A token that is no recent forgets nothing.
         assert!(asked(&focus.handle(Input::SearchForget(999_999))).is_empty());
     }
 
@@ -2084,7 +1996,6 @@ mod dropdown {
             focus.among_hits(MessageId::new(1)),
             "and so is the hit k walks to"
         );
-        // `k` walks the hits, not the list behind them.
         let effects = run(&mut focus, CommandId::PrevMessage, &rows);
         assert_eq!(
             shown(&effects),
@@ -2095,8 +2006,6 @@ mod dropdown {
                 host: Host::Own,
             }]
         );
-        // Back closes it, and the bar comes back on the words, the arrows
-        // on the hit last read once its hits land again.
         let effects = run(&mut focus, CommandId::Back, &rows);
         let intents = shown(&effects);
         assert!(intents.contains(&Intent::CloseSurface(SurfaceKind::Message)));
@@ -2197,7 +2106,6 @@ mod dropdown {
 
     #[test]
     fn words_typed_over_the_palette_are_the_dropdowns() {
-        // ⌘K, `>` taken away: the words are a search, as `/`'s are.
         let rows = List::of(1);
         let mut focus = mac_search();
         let _ = bar_open(&mut focus, CommandId::CommandPalette, &rows);
@@ -2210,8 +2118,6 @@ mod dropdown {
         );
     }
 
-    /// A search whose count stopped at the walk's cap is remembered as a
-    /// floor, and its Recent row says so (D30).
     #[test]
     fn a_capped_search_is_remembered_and_recalled_as_a_floor() {
         let rows = List::of(3);
@@ -2250,8 +2156,6 @@ mod dropdown {
 
     #[test]
     fn show_all_takes_the_dropdown_down_for_the_results() {
-        // Step 3: the results view, which `tests/results.rs` drives; the
-        // query is remembered once its results land there.
         let rows = List::of(3);
         let mut focus = mac_search();
         let _ = opened(&mut focus, &rows);
@@ -2266,8 +2170,6 @@ mod dropdown {
                 .iter()
                 .any(|request| matches!(request, Request::ResultsPage { .. }))
         );
-        // Counted by the dropdown already: kept now, so leaving before the
-        // results land keeps it too.
         assert!(asked(&effects).contains(&Request::RememberSearch {
             query: "atlas budget".to_owned(),
             hits: 48,
@@ -2275,9 +2177,6 @@ mod dropdown {
         }));
     }
 
-    /// Words that find nothing are no dead end (US6): the panel says
-    /// nothing matches, as the results' page would, and its one row is
-    /// the way there, to the looser searches, focused for Return.
     #[test]
     fn words_that_find_nothing_say_so_and_lead_to_looser_searches() {
         let rows = List::of(3);
@@ -2338,14 +2237,11 @@ mod dropdown {
         let effects = typed(&mut focus, ">mark", &rows);
         assert!(try_dropdown(&effects).is_none());
         let _ = view(&effects);
-        // Step 8: `in:` has the dropdown's operator state now.
         let effects = typed(&mut focus, "in:Rec", &rows);
         assert_eq!(dropdown(&effects).state, DropdownState::Operator);
         let effects = typed(&mut focus, "", &rows);
         assert_eq!(dropdown(&effects).state, DropdownState::Empty, "and back");
     }
-
-    // -- Step 8: typing intelligence (US7, screens 02, 04, 05) -----------
 
     fn is_suggest(request: &Request) -> bool {
         matches!(request, Request::Suggest { .. })
@@ -2360,7 +2256,6 @@ mod dropdown {
         }
     }
 
-    /// Screen 02's suggestions for "at".
     fn at_suggestions() -> Suggestions {
         let mut files = vec![
             completion("Atlas-Q3-budget.xlsx", "filename:atlas", 1),
@@ -2381,7 +2276,6 @@ mod dropdown {
         }
     }
 
-    /// Answer the suggestions asked among `effects` with `found`.
     fn suggested(
         focus: &mut FocusController,
         effects: &[Effect],
@@ -2405,7 +2299,6 @@ mod dropdown {
         )
     }
 
-    /// Answer the conversations asked among `effects` with `results`.
     fn landed(
         focus: &mut FocusController,
         effects: &[Effect],
@@ -2437,8 +2330,6 @@ mod dropdown {
         results
     }
 
-    // D29: a completion as common as `as` is counted to the cap, and the
-    // ghost's row says so as a floor; a label's count past it likewise.
     #[test]
     fn a_capped_suggestion_count_reads_as_a_floor() {
         let rows = List::of(1);
@@ -2566,7 +2457,6 @@ mod dropdown {
         );
         assert_eq!(view.count.as_deref(), Some("214 matches \u{b7} 12 ms"));
 
-        // Tab takes the ghost: the word, and the words state for it.
         let effects = focus.handle(Input::BarTab);
         assert!(
             shown(&effects).contains(&Intent::OpenBar {
@@ -2597,9 +2487,7 @@ mod dropdown {
             }),
             "the chip, and room to type on: {effects:?}"
         );
-        // An answer for words since replaced draws nothing.
         assert!(try_dropdown(&suggested(&mut focus, &asked_at, at_suggestions(), &rows)).is_none());
-        // Tab with no ghost yet is the toolkit's.
         let _ = typed(&mut focus, "zq", &rows);
         assert!(focus.handle(Input::BarTab).is_empty());
     }
@@ -2630,9 +2518,6 @@ mod dropdown {
 
     #[test]
     fn from_with_nobody_matching_says_so_and_drops_the_latest() {
-        // #2084: once the people for what is typed have been read and there
-        // are none, the section says nobody matches, the preview of a person
-        // no longer listed goes, and Return is not offered to add a chip.
         let rows = List::of(1);
         let mut focus = mac_search();
         let _ = opened(&mut focus, &rows);
@@ -2729,7 +2614,6 @@ mod dropdown {
             view.count.as_deref(),
             Some("Contacts and everyone you have mail with")
         );
-        // The person focused by default has their latest asked at once.
         let latest = asked(&effects)
             .into_iter()
             .find(is_latest)
@@ -2746,7 +2630,6 @@ mod dropdown {
         );
         assert_eq!(latest.lane(), Some(Lane::Latest));
 
-        // Moving the arrows onto Ben asks for his.
         let ben = view.sections[0].rows[1].token;
         let effects = focus.handle(Input::SearchHighlighted(ben));
         let Request::LatestFrom { address, stamp } =
@@ -2782,7 +2665,6 @@ mod dropdown {
                 .all(|row| row.kind == DropdownRowKind::Hit)
         );
 
-        // Return makes the chip; ⌥Return the exclusion.
         let effects = focus.handle_on(Input::BarRun(ben), &rows);
         assert!(
             shown(&effects).contains(&Intent::OpenBar {
@@ -2813,7 +2695,6 @@ mod dropdown {
             "the exclusion replaces what was typed after the words: {effects:?}"
         );
 
-        // The key excludes the row the arrows rest on.
         let effects = typed(&mut focus, "from:", &rows);
         let effects = suggested(&mut focus, &effects, people(), &rows);
         let ben = dropdown(&effects).sections[0].rows[1].token;
@@ -2833,7 +2714,6 @@ mod dropdown {
         let mut focus = mac_search();
         let _ = opened(&mut focus, &rows);
         let _ = typed(&mut focus, "atlas from:", &rows);
-        // The field's own Backspace takes the colon; the operator goes whole.
         let effects = typed(&mut focus, "atlas from", &rows);
         assert!(
             shown(&effects).contains(&Intent::OpenBar {
@@ -2844,7 +2724,6 @@ mod dropdown {
             "{effects:?}"
         );
         assert_eq!(dropdown(&effects).state, DropdownState::Words);
-        // The operator alone in the field goes the same way: to nothing.
         let _ = typed(&mut focus, "from:", &rows);
         let effects = typed(&mut focus, "from", &rows);
         assert!(
@@ -2855,7 +2734,6 @@ mod dropdown {
             }),
             "{effects:?}"
         );
-        // A value typed and taken back is only a value taken back.
         let _ = typed(&mut focus, "from:a", &rows);
         let effects = typed(&mut focus, "from:", &rows);
         assert!(
@@ -3002,8 +2880,6 @@ mod dropdown {
             "the first result is focused"
         );
 
-        // The words are what the results mark, not the person: the sender
-        // column says who, and screen 05 marks only "Invoice".
         let effects = typed(&mut focus, "invoices from:ada last month", &rows);
         let mut found = atlas_budget();
         found.hits.truncate(1);
@@ -3020,7 +2896,6 @@ mod dropdown {
         );
         let _ = typed(&mut focus, "invoices last month", &rows);
 
-        // Tab: the parse, as chips.
         let effects = focus.handle(Input::BarTab);
         assert!(
             shown(&effects).contains(&Intent::OpenBar {
@@ -3033,7 +2908,6 @@ mod dropdown {
         assert_eq!(dropdown(&effects).state, DropdownState::Words);
         assert!(dropdown(&effects).understood.is_empty());
 
-        // The words key: the sentence stays, searched as words.
         let _ = typed(&mut focus, "invoices last month", &rows);
         let effects = run(&mut focus, CommandId::BackToWords, &rows);
         let view = dropdown(&effects);
@@ -3059,8 +2933,6 @@ mod dropdown {
         );
     }
 
-    /// #1825: GTK's bar is the Mac's dropdown: `/` asks for the recent
-    /// searches, and ⌘↩ (Ctrl+Return) is the bar's.
     #[test]
     fn the_gtk_bar_is_the_dropdown() {
         let rows = List::of(1);
@@ -3071,8 +2943,6 @@ mod dropdown {
         assert!(focus.answers(CommandId::ShowAllResults));
     }
 }
-
-// -- Saving a search ---------------------------------------------------------
 
 fn save(query: &str) -> postio_focus::SaveSearch {
     postio_focus::SaveSearch {
@@ -3094,8 +2964,6 @@ fn a_save_with_no_file_says_so_and_writes_nothing() {
 
 #[test]
 fn a_save_writes_the_search_pinned_and_answers_with_every_pinned_one() {
-    // Both apps write a save the same way: `[saved_searches]` alone, the
-    // rest of the file as it was.
     let directory = tempfile::tempdir().expect("a directory");
     let path = directory.path().join("config.toml");
     std::fs::write(&path, "[ui]\ntheme = \"dark\"\n").expect("the file");
@@ -3115,5 +2983,3 @@ fn a_save_writes_the_search_pinned_and_answers_with_every_pinned_one() {
     assert!(written.contains("theme = \"dark\""), "{written}");
     assert!(written.contains("from:ada"), "{written}");
 }
-
-// -- What a search asks ------------------------------------------------------

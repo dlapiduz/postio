@@ -1,43 +1,21 @@
-//! The colour a label is drawn in: the dot in its pill (spec FR-012).
-//!
-//! A label that carries a colour -- set by the user, or by their server's
-//! label -- is drawn in it (spec, Assumptions). One that does not gets a
-//! colour of its own from a wheel of [`HUES`] evenly spaced hues, chosen by
-//! its name, so it is the same colour on every row, in every session and in
-//! both apps.
-//!
-//! **Never the accent's hue** (FR-091). The accent is reserved for action
-//! markers, the focus ring and the has-action toggle, so a label whose hue
-//! falls within [`ACCENT_BAND`] of the accent's steps round the wheel, away
-//! from it, to the nearest hue outside the band. Only those labels move:
-//! when the system accent changes, a label the new accent does not land on
-//! keeps the colour it had.
-//!
-//! The wheel is computed rather than written down (ARCHITECTURE §10), in
-//! the muted, mid-dark family the design draws its label dots in. It is a
-//! dot's colour, not a text colour: nothing here promises a contrast ratio
-//! for text drawn in it.
+//! The colour a label's dot is drawn in: its own if it has one, else a hue from a wheel of
+//! `HUES` chosen by name, so it is the same on every row and in both apps.
+//! Never the accent's hue: a hue within `ACCENT_BAND` of the accent steps round the wheel, away
+//! from it.
 
-/// A colour, eight bits a channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgb {
-    /// Red.
     pub r: u8,
-    /// Green.
     pub g: u8,
-    /// Blue.
     pub b: u8,
 }
 
 impl Rgb {
-    /// A colour from its three channels.
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self { r, g, b }
     }
 
-    /// `#5980a6` or `#58a`, as a label's stored colour is written
-    /// (`postio_model::Label::color`). `None` for anything else, which the
-    /// caller treats as a label with no colour of its own.
+    /// `None` for anything else, which the caller treats as a label with no colour of its own.
     pub fn from_hex(hex: &str) -> Option<Self> {
         let digits = hex.strip_prefix('#')?;
         if !digits.chars().all(|c| c.is_ascii_hexdigit()) {
@@ -54,13 +32,11 @@ impl Rgb {
         }
     }
 
-    /// `#5980a6`: what CSS takes.
     pub fn to_hex(self) -> String {
         format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
     }
 
-    /// The hue, in degrees from 0 up to 360. A grey has none, and reads as
-    /// 0, as HSL has it.
+    /// A grey has no hue and reads as 0.
     pub fn hue(self) -> f64 {
         let [r, g, b] = [self.r, self.g, self.b].map(|c| f64::from(c) / 255.0);
         let max = r.max(g).max(b);
@@ -78,9 +54,8 @@ impl Rgb {
         hue.rem_euclid(360.0)
     }
 
-    /// The colour at `hue`, `saturation` and `lightness`: the conversion
-    /// `tokens`' account palette makes, here because that module is
-    /// compiled on its own by a build script and shares nothing.
+    /// The conversion `tokens` makes, copied because that module is compiled alone by a build
+    /// script.
     fn from_hsl(hue: f64, saturation: f64, lightness: f64) -> Self {
         let chroma = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
         let sector = hue.rem_euclid(360.0) / 60.0;
@@ -99,34 +74,21 @@ impl Rgb {
     }
 }
 
-/// How close to the accent's hue, in degrees either side, a label colour
-/// may not come: a sixth of the wheel, about one named colour's width.
 pub const ACCENT_BAND: f64 = 30.0;
 
-/// How many hues the wheel holds, evenly spaced.
 pub const HUES: usize = 12;
 
-/// Where the wheel starts, so its hues sit between the named colours
-/// (red at 0, orange at 30, ...) rather than on them.
 const FIRST_HUE: f64 = 15.0;
-/// The design's label dots are muted and mid-dark: these sit among them.
 const SATURATION: f64 = 0.5;
 const LIGHTNESS: f64 = 0.42;
 
-/// The distance between two hues around the wheel, from 0 to 180.
 pub fn hue_distance(a: f64, b: f64) -> f64 {
     let apart = (a - b).rem_euclid(360.0);
     apart.min(360.0 - apart)
 }
 
-/// The colour to draw a label named `name` in, beside an accent whose hue is
-/// `accent_hue` degrees.
-///
-/// `stored` when the label has a colour of its own, as it is. Otherwise the
-/// name's own colour from the wheel, unless that is within [`ACCENT_BAND`] of
-/// the accent, in which case the nearest hue outside it, on the far side
-/// from the accent. The name is compared as labels are, ignoring case and
-/// the space around it.
+/// `stored` as is when the label has one; otherwise its wheel colour, moved to the nearest hue
+/// outside `ACCENT_BAND`, away from the accent. Names compare ignoring case and surrounding space.
 pub fn label_colour(name: &str, stored: Option<Rgb>, accent_hue: f64) -> Rgb {
     if let Some(stored) = stored {
         return stored;
@@ -136,8 +98,6 @@ pub fn label_colour(name: &str, stored: Option<Rgb>, accent_hue: f64) -> Rgb {
     if clear(home) {
         return wheel(home);
     }
-    // Away from the accent: onward round the wheel when the label's hue is
-    // past the accent's, back when it is short of it.
     let past = (wheel(home).hue() - accent_hue).rem_euclid(360.0) < 180.0;
     (1..HUES)
         .map(|steps| {
@@ -151,15 +111,13 @@ pub fn label_colour(name: &str, stored: Option<Rgb>, accent_hue: f64) -> Rgb {
         .map_or_else(|| wheel(home), wheel)
 }
 
-/// The `index`th hue of the wheel.
 fn wheel(index: usize) -> Rgb {
     let hue = FIRST_HUE + 360.0 / HUES as f64 * index as f64;
     Rgb::from_hsl(hue, SATURATION, LIGHTNESS)
 }
 
-/// Which hue of the wheel `name` is at home on: FNV-1a over its folded
-/// bytes, so the same name lands on the same hue in every build and on every
-/// machine, which a `HashMap`'s hasher does not promise.
+/// FNV-1a over the folded bytes, so a name lands on the same hue in every build, which a
+/// `HashMap`'s hasher does not promise.
 fn home(name: &str) -> usize {
     let folded = name.trim().to_lowercase();
     let hash = folded
@@ -176,12 +134,10 @@ mod tests {
 
     use super::*;
 
-    /// The colour `name` has when no accent is in its way.
     fn natural(name: &str) -> Rgb {
         wheel(home(name))
     }
 
-    /// Labels of the kind people make, and a few that stress the hash.
     const NAMES: &[&str] = &[
         "Receipts",
         "Travel",
@@ -215,17 +171,13 @@ mod tests {
         "Club",
     ];
 
-    /// Every hue, a few degrees apart: the system accent can be any of them.
     fn accents() -> impl Iterator<Item = f64> {
         (0..120).map(|step| f64::from(step) * 3.0)
     }
 
     #[test]
     fn a_stored_colour_is_drawn_as_it_is() {
-        // Spec Assumptions: "A label's stored colour is used when it has
-        // one." Even when it sits in the accent's band: it is the user's
-        // own choice, or their server's. (FR-091 asks label colours to
-        // avoid the accent; whether a stored one should yield is open.)
+        // A stored colour is used as is, even inside the accent's band.
         let stored = Rgb::new(0x59, 0x80, 0xa6);
         for accent in [30.0, stored.hue()] {
             assert_eq!(label_colour("Receipts", Some(stored), accent), stored);
@@ -257,8 +209,6 @@ mod tests {
 
     #[test]
     fn a_label_without_one_keeps_the_same_colour() {
-        // The same label, however it is cased or spaced: names are unique
-        // case-insensitively (`postio_model::Label`).
         for accent in [0.0, 213.0] {
             let colour = label_colour("Receipts", None, accent);
             assert_eq!(label_colour("Receipts", None, accent), colour);
@@ -269,7 +219,6 @@ mod tests {
 
     #[test]
     fn a_label_without_one_is_never_drawn_in_the_accents_hue() {
-        // Spec US1 scenario 8, FR-091.
         for accent in accents() {
             for name in NAMES {
                 let hue = label_colour(name, None, accent).hue();
@@ -283,7 +232,6 @@ mod tests {
 
     #[test]
     fn labels_spread_over_the_palette() {
-        // A single colour outside the band would pass every test above.
         for accent in [0.0, 213.0] {
             let colours: HashSet<Rgb> = NAMES
                 .iter()
@@ -300,9 +248,6 @@ mod tests {
 
     #[test]
     fn the_accent_moves_only_the_labels_it_would_collide_with() {
-        // A label keeps its colour whatever the accent is, unless the
-        // accent lands on it -- so changing the system accent recolours a
-        // few labels, not all of them.
         for accent in accents() {
             for name in NAMES {
                 let home = natural(name);

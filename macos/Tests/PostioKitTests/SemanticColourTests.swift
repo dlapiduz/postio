@@ -1,21 +1,7 @@
 import Foundation
 import Testing
 
-/// Colour comes from a role, never from a literal (spec 009 FR-017,
-/// contracts/mac-surfaces.md).
-///
-/// A hex string or an RGB initialiser in a view is a copy of a design token
-/// that is right on the day it is written. Roles are `PostioTokens` (generated
-/// from the design system) and the system's semantic colours, which follow
-/// light and dark and the accessibility settings for free.
-///
-/// Scans `macos/Sources` except the generated bindings and `Generated/`,
-/// which is where the literals are supposed to live. Comment lines are
-/// skipped: they quote the token values they explain.
 struct SemanticColourTests {
-    /// Files allowed to break the rule, with the reason. Empty today: nothing
-    /// under `Sources/` offends. A file that must join it carries the comment
-    /// "classic three-pane code, deleted in US1 (T034)" or a better reason.
     static let allowed: Set<String> = []
 
     static let sources: URL = URL(fileURLWithPath: #filePath)
@@ -36,7 +22,6 @@ struct SemanticColourTests {
             .sorted { $0.path < $1.path }
     }
 
-    /// `path:line: text` for each line that builds a colour from a literal.
     static func violations() throws -> [String] {
         let hex = try Regex(##""#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?""##)
         let rgb = try Regex(

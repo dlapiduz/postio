@@ -4,14 +4,6 @@ import Testing
 
 @testable import PostioKit
 
-/// The composer as the controller's surface (specs/009-focus-macos T079;
-/// the controller's compose slice, T073).
-///
-/// The controller opens the composer (`FocusComposer`), closes it
-/// (`FocusCloseSurface(.composer)`) and says when to save
-/// (`FocusSaveDraft`); the Mac holds the draft's words, saves them when
-/// told, and reports every edit, every save, and only the closes the
-/// toolkit made.
 @MainActor
 @Suite struct ComposerWindowTests {
     final class Engine: ComposerEngine {
@@ -105,8 +97,6 @@ import Testing
     }
 
     @Test func aClosedComposersDraftIsStillSaved() {
-        // Esc closes the window first; the save the controller asks for
-        // after is of the composition it closed.
         let engine = Engine()
         let window = ComposerWindow(engine: engine)
         _ = window.apply(.focusComposer(kind: .new, message: nil))
@@ -148,7 +138,6 @@ import Testing
     }
 
     @Test func aDraftOfTheMacsOwnIsAComposerTheControllerIsToldOf() {
-        // A `mailto:` link: the Mac made the draft and opens the window.
         let engine = Engine()
         let window = ComposerWindow(engine: engine)
         window.open(own: Self.draft(to: "bo@example.com"))

@@ -1,17 +1,11 @@
-//! A loopback listener that counts connections: how an egress test proves a
-//! request was made, or was not.
-//!
-//! The discipline is #1336's: a test that asserts *zero* connections must
-//! first prove the listener would have seen one ([`Listener::control`]), or
-//! it passes as happily against a listener nobody could reach.
+//! A loopback listener that counts connections, for egress tests. A test asserting zero connections
+//! must first prove the listener would have seen one ([`Listener::control`]) (#1336).
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// A 1x1 transparent PNG, the answer to every request, so an engine that
-/// does fetch completes the fetch rather than retrying.
 const PIXEL: &[u8] = &[
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
@@ -20,8 +14,6 @@ const PIXEL: &[u8] = &[
     0x42, 0x60, 0x82,
 ];
 
-/// Counts every connection accepted on a loopback port, and every request
-/// path it was sent.
 pub struct Listener {
     port: u16,
     accepted: Arc<AtomicUsize>,
@@ -29,7 +21,6 @@ pub struct Listener {
 }
 
 impl Listener {
-    /// Bind an ephemeral loopback port and start counting.
     pub fn start() -> Listener {
         let socket = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
         let port = socket.local_addr().expect("its address").port();
@@ -50,24 +41,19 @@ impl Listener {
         }
     }
 
-    /// The port every rewritten URL should name.
     pub fn port(&self) -> u16 {
         self.port
     }
 
-    /// Connections accepted so far.
     pub fn count(&self) -> usize {
         self.accepted.load(Ordering::SeqCst)
     }
 
-    /// The request paths seen so far.
     pub fn paths(&self) -> Vec<String> {
         self.paths.lock().map(|p| p.clone()).unwrap_or_default()
     }
 
-    /// Prove the listener counts: connect once and wait until it is seen.
-    /// Panics if it is not, because every zero measured after it would mean
-    /// nothing.
+    /// Panics if it is not seen, because every zero measured after it would mean nothing.
     pub fn control(&self) {
         let before = self.count();
         let _ = TcpStream::connect(("127.0.0.1", self.port)).expect("the control connection");
@@ -81,8 +67,6 @@ impl Listener {
         }
     }
 
-    /// Every `http://` and `https://` URL in `text` pointed at this listener,
-    /// keeping its path, so a request names what asked for it.
     pub fn rewrite(&self, text: &str) -> String {
         let mut out = String::with_capacity(text.len());
         let mut rest = text;

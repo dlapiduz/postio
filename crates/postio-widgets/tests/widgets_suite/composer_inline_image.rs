@@ -1,27 +1,3 @@
-//! A pasted image, through the composer: issue #341.
-//!
-//! # What this reaches, and what it does not
-//!
-//! Three gestures put a picture in the body and they converge on
-//! `add_inline_image`: a paste, a drop of an image file, and
-//! `CommandId::InsertImage` from the toolbar or the palette. This drives the
-//! paste from the clipboard and the chooser from a file on disk, so both
-//! halves either side of that convergence are covered.
-//!
-//! Two bindings are not, and are small and visible rather than hidden: the
-//! `ctrl+v` match arm that calls `paste_image`, and the body's `DropTarget`
-//! for a `FileList`. Both need an input device or a drag this suite has no way
-//! to synthesise. What can be checked without one is checked.
-//!
-//! The paste seam hands the bytes out (the blob store lives above this
-//! crate), gets back an attachment with a `Content-ID`, and the composer
-//! records it on the draft, shows it in the attachment list, and puts the
-//! image at the caret — where it renders through the same `postio-cid:`
-//! lookup a resumed draft uses.
-//!
-//! Its own file: GTK is single-threaded and initialised once, so one
-//! `#[test]` per integration binary. See `gtk_composer.rs`.
-
 use crate::support_compose::settle as pump;
 use crate::support_compose::settle_until as settle;
 use std::cell::RefCell;
@@ -38,7 +14,6 @@ use postio_model::Attachment;
 use postio_model::attachment::Disposition;
 use postio_model::ids::MessageId;
 
-/// A real PNG, the way the paste path makes one.
 fn png_bytes() -> Vec<u8> {
     let pixels = glib::Bytes::from_owned(vec![255u8; 16]);
     let texture = gdk::MemoryTexture::new(2, 2, gdk::MemoryFormat::R8g8b8a8, &pixels, 8);
@@ -46,10 +21,6 @@ fn png_bytes() -> Vec<u8> {
 }
 
 pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (run under the headless runner to exercise this)");
-        return;
-    }
     let display = gdk::Display::default().unwrap();
     fonts::install().expect("the embedded fonts should install");
     style::install(&display);
@@ -61,7 +32,6 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
 
     let composer = composer::install(&window);
 
-    // The store the app would provide: bytes by content id, in memory.
     let stored: Rc<RefCell<HashMap<String, Vec<u8>>>> = Rc::new(RefCell::new(HashMap::new()));
     composer.connect_inline_image({
         let stored = stored.clone();
@@ -95,12 +65,9 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
     pump();
     assert!(composer.is_open());
 
-    // Type first, as a hand would have: the paste lands at the caret the
-    // typing left behind.
     composer.test_set_body("see ");
     composer.test_paste_image_bytes(png_bytes());
 
-    // The record gains the image…
     settle("the pasted image to reach the document", || {
         composer.document().blocks.iter().any(|block| {
             matches!(block, Block::Paragraph(inlines) if inlines.iter().any(|inline| matches!(
@@ -110,7 +77,6 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
             )))
         })
     });
-    // …the draft gains the inline attachment…
     let draft = composer.draft();
     let attachment = draft
         .attachments
@@ -118,7 +84,6 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
         .find(|attachment| attachment.content_id.as_deref() == Some("pasted-1@postio.invalid"))
         .expect("the attachment rides the draft");
     assert_eq!(attachment.disposition, Disposition::Inline);
-    // …and pixels actually arrive, through the draft-aware cid lookup.
     let what = "the pasted image to render from the store";
     settle(what, || {
         composer.test_body_eval("String(document.images.length)") == "1"
@@ -130,8 +95,6 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
             )
     });
 
-    // The wire form of the draft carries the cid reference, which is what
-    // outgoing.rs's multipart emission inlines.
     let html = draft.body.html.expect("an image is structure");
     assert!(
         html.contains("src=\"cid:pasted-1%40postio.invalid\"")
@@ -139,22 +102,12 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
         "{html}"
     );
 
-    // ── Through the clipboard, which is where the gesture starts ─────────
-    //
-    // Everything above hands the bytes to `add_inline_image` directly, which
-    // is the tail of a paste and not a paste: it never asks the clipboard for
-    // anything, so it cannot fail when the clipboard half is broken. What
-    // `ctrl+v` actually does is check the clipboard for a texture, claim the
-    // keystroke if there is one, and decode it -- and that is what this
-    // drives.
+    // Through the clipboard, where the gesture starts: the direct call above never asks it, so it
+    // cannot fail when that half is broken.
     let pixels = glib::Bytes::from_owned(vec![128u8; 16]);
     let texture = gdk::MemoryTexture::new(2, 2, gdk::MemoryFormat::R8g8b8a8, &pixels, 8);
-    // The seat's clipboard is not this process's alone: a copy by another
-    // client of the same compositor takes it back, and then it holds what
-    // that client copied for as long as it lives. That is the whole of what
-    // failed here on CI, when every test process shared one compositor:
-    // the texture was set once and waited for for six minutes (#1810). A
-    // person whose copy was overwritten copies again, so this does too.
+    // The seat's clipboard is shared with other clients of the compositor, which can take it back;
+    // set it again if so (#1810).
     let clipboard = display.clipboard();
     clipboard.set_texture(&texture);
     settle("the clipboard to hold a texture", || {
@@ -188,15 +141,8 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
         "a pasted image with no Content-ID cannot be referenced from the body"
     );
 
-    // ── FR-049 and FR-051: chosen, not only pasted ───────────────────────
-    //
-    // Pasting and dropping reached this and nothing else did, so an image in
-    // the body was the one of FR-049's three outcomes with no command and no
-    // control — absent from the palette and the `?` sheet, and out of reach
-    // for anyone who neither pastes nor drops. `CommandId::InsertImage` and
-    // a toolbar button beside the link one close that; the registry tests
-    // cover the command's reach, and what is asserted here is the half after
-    // the chooser, since `gtk::FileDialog` does not open headlessly.
+    // The chooser path: `gtk::FileDialog` does not open headlessly, so only the half after it is
+    // asserted.
     let directory = tempfile::tempdir().expect("a directory");
     let image = directory.path().join("gauge.png");
     std::fs::write(&image, png_bytes()).expect("write the image");
@@ -225,7 +171,6 @@ pub fn a_pasted_image_becomes_an_inline_attachment_and_renders_at_the_caret() {
          declaration is all the recipient's client has to go on"
     );
 
-    // ── And a file that is not an image is refused, with somewhere to go ──
     let text = directory.path().join("notes.txt");
     std::fs::write(&text, b"not a picture").expect("write the text file");
     let count = composer.test_attachment_count();

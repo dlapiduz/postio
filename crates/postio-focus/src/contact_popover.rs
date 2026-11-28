@@ -1,11 +1,5 @@
-//! The known-sender popover: who a message is from, at a glance, and where
-//! their mail arrives (specs/011-focus-contacts S6, handoff screen 04).
-//!
-//! `i` on a row or the open message, or a click on a sender's name, asks the
-//! host for the person; what comes back is drawn as `postio_ui`'s view and
-//! the popover holds the keyboard until it is put away. A change to where
-//! their mail arrives is a command, sent at once, and shown at once: the
-//! toast with its Undo is the engine's own, as for any other undo unit.
+//! The known-sender popover: who a message is from, and where their mail arrives. It holds the
+//! keyboard until put away; a change of arrival is a command, sent and shown at once.
 
 use postio_core::{Command, CommandId};
 use postio_model::{ContactArrival, ContactGlance};
@@ -16,21 +10,15 @@ use crate::cursor::Rows;
 use crate::feed::Step;
 use crate::{FocusController, Intent, Request, SurfaceKind};
 
-/// What the controller keeps of the popover.
 #[derive(Debug)]
 pub(crate) struct ContactPopover {
-    /// The address it was asked about: what its commands name.
     address: String,
     /// Which asking this is; an answer to an earlier one is dropped.
     stamp: u64,
-    /// What the host answered, once it has.
     glance: Option<ContactGlance>,
 }
 
 impl FocusController {
-    /// `i` or a click: ask about `address`, or about the sender of the open
-    /// message, else of the cursor's row. Nothing is drawn until the host
-    /// answers; a row with no sender to ask about does nothing.
     pub(crate) fn open_contact_popover(
         &mut self,
         address: Option<String>,
@@ -53,8 +41,7 @@ impl FocusController {
         steps
     }
 
-    /// The people changed while the popover is up -- an undo of the arrival
-    /// just chosen, say: ask about the sender again, so it says what is true.
+    /// Asked about the sender again after the people change, so it says what is true.
     pub(crate) fn contact_popover_heard(&mut self, event: &postio_core::Event) -> Vec<Step> {
         if !matches!(event, postio_core::Event::ContactsChanged { .. }) {
             return Vec::new();
@@ -68,8 +55,6 @@ impl FocusController {
         }
     }
 
-    /// Whose name `i` means: the sender of the message on screen, else of the
-    /// cursor's row.
     fn popover_sender(&self, rows: &dyn Rows) -> Option<String> {
         let at = match self.surfaces.reading() {
             Some(message) => rows.position_of(message)?,
@@ -85,7 +70,6 @@ impl FocusController {
         Some(from.address.clone())
     }
 
-    /// Whether `id` is the popover's own while it is on top.
     pub(crate) fn contact_popover_answers(id: CommandId) -> bool {
         matches!(
             id,
@@ -102,8 +86,6 @@ impl FocusController {
         )
     }
 
-    /// A command while the popover is on top. It holds the keyboard: what is
-    /// not its own does nothing, but the key map and Quit.
     pub(crate) fn contact_popover_command(
         &mut self,
         id: CommandId,
@@ -111,7 +93,6 @@ impl FocusController {
     ) -> Option<Vec<Step>> {
         let popover = self.contact_popover.as_ref()?;
         let address = popover.address.clone();
-        // Before the host has answered, only putting it away is possible.
         let Some(glance) = popover.glance.as_ref() else {
             return match id {
                 CommandId::Back => Some(self.close_contact_popover()),
@@ -134,8 +115,6 @@ impl FocusController {
                 Some(self.set_contact_arrival(Some(to)))
             }
             CommandId::ContactSetArrival => Some(self.set_contact_arrival(None)),
-            // Only for a sender not yet saved: the introduction is what makes
-            // these the popover's.
             CommandId::ContactAdd | CommandId::ContactIgnore => {
                 let Some(introduction) = glance.introduction.as_ref() else {
                     return Some(Vec::new());
@@ -176,9 +155,6 @@ impl FocusController {
                 steps.insert(0, Step::Show(Intent::WriteTo(address)));
                 Some(steps)
             }
-            // The card is the Contacts view with this person found: the view
-            // opens over the list filtered to their address, so the card
-            // beside it is theirs.
             CommandId::ContactOpenCard if self.policy.caps.contacts_view => {
                 let mut steps = self.close_contact_popover();
                 steps.extend(self.open_contacts());
@@ -190,7 +166,6 @@ impl FocusController {
         }
     }
 
-    /// A click on a segment.
     pub(crate) fn contact_arrival_picked(&mut self, arrival: ContactArrival) -> Vec<Step> {
         if self
             .contact_popover
@@ -202,8 +177,6 @@ impl FocusController {
         self.set_contact_arrival(Some(arrival))
     }
 
-    /// Where their mail arrives, from now: sent as a command, drawn at once.
-    /// What is already so changes nothing and sends nothing.
     fn set_contact_arrival(&mut self, arrival: Option<ContactArrival>) -> Vec<Step> {
         let Some(popover) = self.contact_popover.as_mut() else {
             return Vec::new();
@@ -224,8 +197,6 @@ impl FocusController {
         steps
     }
 
-    /// The popover goes, and the keyboard goes home once nothing is over the
-    /// list.
     fn close_contact_popover(&mut self) -> Vec<Step> {
         self.contact_popover = None;
         self.surfaces.dismiss(SurfaceKind::ContactPopover);
@@ -238,8 +209,7 @@ impl FocusController {
         steps
     }
 
-    /// The host's answer. One for a popover put away or asked again is
-    /// dropped; nobody at that address is no popover.
+    /// A reply for a popover put away or asked again is dropped.
     pub(crate) fn contact_popover_reply(
         &mut self,
         stamp: u64,
@@ -262,7 +232,6 @@ impl FocusController {
         }
     }
 
-    /// The popover, whole.
     fn draw_contact_popover(&self) -> Vec<Step> {
         let Some(popover) = self.contact_popover.as_ref() else {
             return Vec::new();
@@ -277,7 +246,6 @@ impl FocusController {
             open: &glance.open,
             arrival: glance.arrival,
             default_arrival: glance.default_arrival,
-            // The card is the Contacts view's, where there is one.
             card: self.policy.caps.contacts_view,
             introduction: glance.introduction.as_ref(),
         };

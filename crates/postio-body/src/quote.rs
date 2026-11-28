@@ -1,49 +1,19 @@
-//! Quoted-text folding: `postio-1bz`.
-//!
-//! A reply chain a few messages deep is unreadable if every quoted ancestor
-//! is fully on screen. The fix has to cost nothing to toggle and nothing to
-//! render, which rules out anything JavaScript-shaped — the reader has none.
-//! `<details>`/`<summary>` is the answer: closed by default with no `open`
-//! attribute, expands on click, and WebKit does both without a script
-//! running. Postio only has to find the quoted spans and wrap them.
-//!
-//! Two entry points, for the body forms `postio-model::MessageBody` carries:
-//!
-//! * [`fold_html_quotes`] wraps every top-level `<blockquote>` in already
-//!   sanitized HTML — the shape every mail client's HTML editor emits for a
-//!   quoted reply.
-//! * [`text_to_html`] is what a `text/plain` body becomes on the way into the
-//!   `WebView`: HTML-escaped and `<pre>`-wrapped, with contiguous runs of
-//!   `>`-prefixed lines folded the same way.
-//!
-//! Neither ever removes a byte of content — folding only wraps it, so
-//! "expand" always gets back exactly what was quoted.
-//!
-//! Both fold the [`Stretch`]es [`html_stretches`] and [`text_stretches`] find.
-//! They are the one quote detector: own-text extraction
-//! ([`crate::own_text()`]) leaves out exactly the stretches the reader folds.
+//! Quoted-text folding: quoted spans become closed `<details>`, which needs no script.
+//! `fold_html_quotes` wraps top-level `<blockquote>`s in sanitized HTML; `text_to_html` renders
+//! `text/plain` with `>` runs folded. Neither removes a byte of content.
+//! `html_stretches` and `text_stretches` are the one quote detector; `own_text` leaves out exactly
+//! what the reader folds.
 
-/// A stretch of a message body: the sender's own words, or history they
-/// quoted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stretch<'a> {
-    /// The sender's own words, and whatever markup carries them.
     Own(&'a str),
-    /// Quoted history: an outermost `<blockquote>…</blockquote>`, or a run
-    /// of `>`-prefixed lines.
     Quoted(&'a str),
 }
 
-/// Sanitized HTML, split at its outermost `<blockquote>` elements.
-///
-/// Only the outermost span of a nested quote chain is one stretch, which is
-/// what every mail client that nests `<blockquote>` for `> >` quoting means
-/// by the nesting. Every byte of `html` is in exactly one stretch, in order.
-///
-/// Input is assumed to be well-formed, already-sanitized markup (see
-/// [`crate::sanitize::sanitize_body`]): tags are matched by their literal
-/// spelling, not parsed, which is only safe because `ammonia`'s serializer
-/// never emits the literal text `<blockquote` inside an attribute value.
+/// Only the outermost span of a nested chain is a stretch; every byte is in exactly one stretch, in
+/// order.
+/// Tags are matched by literal spelling, safe only because `ammonia`'s serializer never emits
+/// `<blockquote` inside an attribute value.
 pub fn html_stretches(html: &str) -> Vec<Stretch<'_>> {
     const OPEN: &str = "<blockquote";
     const CLOSE: &str = "</blockquote>";
@@ -79,19 +49,14 @@ pub fn html_stretches(html: &str) -> Vec<Stretch<'_>> {
         i += rest.chars().next().map(char::len_utf8).unwrap_or(1);
     }
 
-    // An unmatched `<blockquote` (malformed input slipped past sanitizing)
-    // must not eat the rest of the message: it stays the sender's own,
-    // rather than being folded or dropped.
+    // An unmatched `<blockquote` must not eat the rest of the message: it stays the sender's own.
     if own_start < html.len() {
         stretches.push(Stretch::Own(&html[own_start..]));
     }
     stretches
 }
 
-/// A `text/plain` body, split at its contiguous runs of `>`-prefixed lines.
-///
-/// Every byte of `text` is in exactly one stretch, in order, and each
-/// stretch is whole lines, line endings included.
+/// Each stretch is whole lines, line endings included.
 pub fn text_stretches(text: &str) -> Vec<Stretch<'_>> {
     let mut stretches = Vec::new();
     let mut start = 0;
@@ -122,17 +87,10 @@ fn stretch(text: &str, quoted: bool) -> Stretch<'_> {
     }
 }
 
-/// Wrap every outermost `<blockquote>…</blockquote>` in sanitized HTML with a
-/// collapsed `<details>`.
-///
-/// Only the outermost span of a nested quote chain is wrapped — expanding it
-/// reveals every ancestor at once. Text outside a `<blockquote>` is copied
-/// through untouched, byte for byte. The spans are [`html_stretches`]'s.
-///
-/// The block just before a fold, when it is the line introducing the quote
-/// ("On Monday, Ana wrote:"), is marked [`ATTRIBUTION_CLASS`]
-/// ([`mark_html_attribution`]), the one change made to the sender's own
-/// markup: a class, never a byte of text.
+/// Only the outermost span is wrapped, so expanding reveals every ancestor; other text is copied
+/// byte for byte.
+/// The block introducing the quote gets `ATTRIBUTION_CLASS`, the one change to the sender's markup:
+/// a class, never text.
 pub fn fold_html_quotes(html: &str) -> String {
     let mut out = String::with_capacity(html.len() + 96);
     let stretches = html_stretches(html);
@@ -151,16 +109,10 @@ pub fn fold_html_quotes(html: &str) -> String {
     out
 }
 
-/// The class on the line that introduces a quote -- "On Monday, Ana
-/// wrote:" -- in both body forms: what the stylesheet sets apart from the
-/// sign-off above it and the fold below it (specs/007-postio-focus T208).
 pub const ATTRIBUTION_CLASS: &str = "postio-attribution";
 
-/// `own` -- a [`Stretch::Own`] that a quote follows -- without its last
-/// line when that line introduces the quote ("On Monday, Ana wrote:"):
-/// what the person said, not who said what follows. The same line
-/// [`text_to_html`] sets apart as the attribution. `own` whole when its
-/// last line introduces nothing.
+/// `own` without its last line when that line introduces the quote; whole when it introduces
+/// nothing.
 pub fn without_attribution(own: &str) -> &str {
     let words = own.trim_end();
     let start = words.rfind('\n').map_or(0, |at| at + 1);
@@ -171,20 +123,14 @@ pub fn without_attribution(own: &str) -> &str {
     }
 }
 
-/// Whether `text` (a line's words, markup gone) introduces what follows:
-/// it ends in a colon, as "wrote:", "a écrit :" and "schrieb:" all do, and
-/// says something before it.
+/// Ends in a colon ("wrote:", "a écrit :", "schrieb:") and has words before it.
 fn introduces(text: &str) -> bool {
     let text = text.trim();
     text.ends_with(':') && text.chars().any(char::is_alphanumeric)
 }
 
-/// `own` -- sanitized HTML that a quote follows -- with its last block
-/// marked [`ATTRIBUTION_CLASS`], when that block holds the introducing line
-/// and nothing but closing tags follows it. `None` when there is no such
-/// block: a sentence above a quote that does not end in a colon, or words
-/// after the last block's close (`<div>Thanks,</div>On Mon, Ana wrote:`),
-/// whose line is not a block of its own to mark.
+/// `None` when no block holds the introducing line, or words follow the last block's close
+/// (`<div>Thanks,</div>On Mon, Ana wrote:`).
 fn mark_html_attribution(own: &str) -> Option<String> {
     let (start, tag_end) = introducing_block(own)?;
     let block = &own[start..];
@@ -206,9 +152,6 @@ fn mark_html_attribution(own: &str) -> Option<String> {
     Some(format!("{}{marked}{}", &own[..start], &block[tag_end..]))
 }
 
-/// Where the block introducing a quote starts in `own`, and where its start
-/// tag ends (relative to that start): the last `<div>` or `<p>` when it
-/// holds the introducing line and nothing but closing tags follows.
 fn introducing_block(own: &str) -> Option<(usize, usize)> {
     let start = ["<div", "<p"]
         .iter()
@@ -234,10 +177,7 @@ fn introducing_block(own: &str) -> Option<(usize, usize)> {
     Some((start, tag_end))
 }
 
-/// `own` -- sanitized HTML that a quote follows -- without the block that
-/// introduces the quote ("On Monday, Ana wrote:"): what the person said, in
-/// markup. [`without_attribution`]'s HTML twin. `own` whole when its last
-/// block introduces nothing.
+/// The HTML twin of `without_attribution`.
 pub fn html_without_attribution(own: &str) -> &str {
     match introducing_block(own) {
         Some((start, _)) => &own[..start],
@@ -245,7 +185,6 @@ pub fn html_without_attribution(own: &str) -> &str {
     }
 }
 
-/// Whether `html` is tags and white space only: no words.
 fn only_markup(html: &str) -> bool {
     let mut rest = html;
     loop {
@@ -263,7 +202,6 @@ fn only_markup(html: &str) -> bool {
     }
 }
 
-/// `html`'s text, its tags dropped (entities left as they are).
 fn strip_tags(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
     let mut inside = false;
@@ -290,17 +228,13 @@ fn wrap_quote(out: &mut String, span: &str) {
     out.push_str("</details>");
 }
 
-/// A quote fold's opening, and the summary that says how much it hides.
 fn open_fold(out: &mut String, lines: usize) {
     out.push_str("<details class=\"postio-quote\"><summary>");
     out.push_str(&fold_label(lines));
     out.push_str("</summary>");
 }
 
-/// What a quote's fold says, open or closed: how many lines of words it
-/// holds (spec 007 FR-034, "31 quoted lines"). One label for a single
-/// message and a conversation, in every app that draws a fold -- the
-/// terminal's too.
+/// One label for a single message and a conversation, in every app that draws a fold.
 pub fn fold_label(lines: usize) -> String {
     if lines == 1 {
         "1 quoted line".to_owned()
@@ -309,8 +243,6 @@ pub fn fold_label(lines: usize) -> String {
     }
 }
 
-/// The lines of words in a `<blockquote>` span, as its plain rendering
-/// breaks them: at blocks and at `<br>`.
 fn html_quote_lines(span: &str) -> usize {
     crate::parse(span)
         .to_text()
@@ -319,28 +251,18 @@ fn html_quote_lines(span: &str) -> usize {
         .count()
 }
 
-/// The lines of words in a run of `>` lines.
 fn text_quote_lines(run: &str) -> usize {
     run.lines().filter(|line| has_words(line)).count()
 }
 
-/// Whether a quoted line says anything once its `>` markers are off: a
-/// marker alone is the blank between two quoted paragraphs.
 fn has_words(line: &str) -> bool {
     !line
         .trim_start_matches(|c: char| c == '>' || c.is_whitespace())
         .is_empty()
 }
 
-/// Render a `text/plain` body as HTML: escaped and `<pre>`-wrapped, with
-/// contiguous runs of `>`-prefixed lines ([`text_stretches`]) folded into a
-/// collapsed [`fold_html_quotes`]-style `<details>`.
-///
-/// A paragraph's run of two or more bulleted (`- `, `* `, `• `) or
-/// numbered (`1. `, `2. `) lines is drawn as the list it is ([`List`]), and
-/// the line just before a fold that introduces it ("On Monday, Ana wrote:")
-/// is a block of its own, marked [`ATTRIBUTION_CLASS`]. Every word is still
-/// there; only how the lines are blocked changes.
+/// Every word stays; a run of two or more bulleted or numbered lines is drawn as a list, and the
+/// line introducing a fold is its own block marked `ATTRIBUTION_CLASS`.
 pub fn text_to_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 128);
     let stretches = text_stretches(text);
@@ -373,10 +295,7 @@ pub fn text_to_html(text: &str) -> String {
     out
 }
 
-/// `text`'s paragraphs: its lines, parted wherever one or more blank lines
-/// stand between them. A paragraph break is the stylesheet's to draw -- a
-/// gap -- rather than an empty line of the body's whole line-height, which
-/// read as a line and a half (specs/007-postio-focus T203).
+/// A paragraph break is the stylesheet's gap, not an empty line, which read as a line and a half.
 fn paragraphs(text: &str) -> Vec<Vec<&str>> {
     let mut paragraphs: Vec<Vec<&str>> = Vec::new();
     let mut current: Vec<&str> = Vec::new();
@@ -395,8 +314,6 @@ fn paragraphs(text: &str) -> Vec<Vec<&str>> {
     paragraphs
 }
 
-/// The last line of the last paragraph, taken off it, when it introduces
-/// the quote that follows.
 fn take_attribution<'a>(paragraphs: &mut Vec<Vec<&'a str>>) -> Option<&'a str> {
     let last = paragraphs.last_mut()?;
     if !introduces(last.last()?) {
@@ -409,18 +326,13 @@ fn take_attribution<'a>(paragraphs: &mut Vec<Vec<&'a str>>) -> Option<&'a str> {
     line
 }
 
-/// What kind of list a line is an item of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum List {
-    /// Bulleted with this character.
     Bullet(char),
-    /// Numbered, this item's number.
     Number(u32),
 }
 
-/// One list item's line: its kind, how far in its marker stands, and its
-/// words. A dash only bullets when a space follows it, so `-- `, `-5` and
-/// a hyphenated word are not items.
+/// A dash bullets only when a space follows, so `-- `, `-5` and hyphenated words are not items.
 fn list_item(line: &str) -> Option<(List, usize, &str)> {
     let indent = line.len() - line.trim_start().len();
     let rest = &line[indent..];
@@ -443,8 +355,6 @@ fn list_item(line: &str) -> Option<(List, usize, &str)> {
     (!words.is_empty()).then_some((kind, indent, words))
 }
 
-/// Whether `next` continues an item of `kind`: the next number, or the
-/// same bullet.
 fn continues(kind: List, next: List) -> bool {
     match (kind, next) {
         (List::Bullet(a), List::Bullet(b)) => a == b,
@@ -453,10 +363,6 @@ fn continues(kind: List, next: List) -> bool {
     }
 }
 
-/// The list starting at `lines[0]`, when there is one of two items or more:
-/// its kind, its items (each the words of its lines), and how many lines it
-/// took. A line indented past an item's marker that is no item itself is
-/// that item wrapped.
 fn list_at<'a>(lines: &[&'a str]) -> Option<(List, Vec<Vec<&'a str>>, usize)> {
     let (first, mut indent, words) = list_item(lines.first()?)?;
     let mut items = vec![vec![words]];
@@ -479,8 +385,6 @@ fn list_at<'a>(lines: &[&'a str]) -> Option<(List, Vec<Vec<&'a str>>, usize)> {
     (items.len() >= 2).then_some((first, items, taken))
 }
 
-/// A paragraph's lines as blocks: runs of text as `<pre>`, runs of list
-/// items as the list they are.
 fn push_blocks(out: &mut String, lines: &[&str]) {
     let mut text_from = 0;
     let mut at = 0;
@@ -545,20 +449,10 @@ fn push_pre(out: &mut String, lines: &[&str]) {
     out.push_str("</pre>");
 }
 
-/// Escape `line` into `out`, turning the URLs and bare email addresses in it
-/// into anchors as it goes (#752).
-///
-/// **Order matters, and it is the whole security argument.** The anchor is
-/// built here, out of a span this function matched, and every piece of it —
-/// the `href` and the visible text alike — goes through [`escape_into`]. A
-/// sender therefore cannot close the attribute or the tag: the only markup in
-/// the output is markup this function wrote. Linkifying the *escaped* string
-/// instead would be the tempting shape and the wrong one, because it would
-/// mean matching against text in which `&amp;` has already become five
-/// characters.
-///
-/// Nothing else linkifies: a `text/plain` body is not run through ammonia
-/// (see `document::body_html`), so what this emits is what the reader shows.
+/// The anchor is built from a span this function matched, and its `href` and text both go through
+/// `escape_into`, so a sender cannot close the attribute or tag. Linkifying the escaped string
+/// would match against expanded `&amp;` (#752).
+/// Nothing else linkifies: `text/plain` bodies skip ammonia.
 fn push_linkified(out: &mut String, line: &str) {
     let mut cursor = 0;
     let mut at = 0;
@@ -585,14 +479,11 @@ fn push_linkified(out: &mut String, line: &str) {
     escape_into(out, &line[cursor..]);
 }
 
-/// A span worth linking: what to show, and where it points.
 struct Link<'a> {
     text: &'a str,
     href: String,
 }
 
-/// Whether `at` begins a word — so `example.com` inside `notexample.com` is
-/// not matched, and neither is the `ada@` of a URL's userinfo.
 fn starts_a_token(line: &str, at: usize) -> bool {
     let Some(before) = line[..at].chars().next_back() else {
         return true;
@@ -600,7 +491,6 @@ fn starts_a_token(line: &str, at: usize) -> bool {
     before.is_whitespace() || matches!(before, '(' | '[' | '{' | '<' | '"' | '\'' | ',' | ';')
 }
 
-/// Match a URL or a bare email address at the head of `rest`.
 fn match_link(rest: &str) -> Option<Link<'_>> {
     let token = trim_trailing_punctuation(token_at(rest));
     if token.is_empty() {
@@ -608,7 +498,6 @@ fn match_link(rest: &str) -> Option<Link<'_>> {
     }
     let lower = token.to_ascii_lowercase();
     if lower.starts_with("http://") || lower.starts_with("https://") {
-        // A scheme and nothing after it is not a link.
         let after = token.find("//").map(|slash| slash + 2)?;
         if token[after..].is_empty() {
             return None;
@@ -628,9 +517,7 @@ fn match_link(rest: &str) -> Option<Link<'_>> {
         });
     }
     if lower.starts_with("www.") && lower.len() > 4 && looks_like_host(&lower[4..]) {
-        // Written without a scheme, so one has to be chosen. `https` rather
-        // than `http`: the reader never fetches either, and handing a
-        // downgrade to the browser would be this application's choice, not
+        // `https`, not `http`: a downgrade handed to the browser would be this app's choice, not
         // the sender's.
         return Some(Link {
             text: token,
@@ -646,7 +533,6 @@ fn match_link(rest: &str) -> Option<Link<'_>> {
     None
 }
 
-/// Everything up to the first character that cannot be inside a URL.
 fn token_at(rest: &str) -> &str {
     let end = rest
         .find(|ch: char| ch.is_whitespace() || matches!(ch, '<' | '>' | '"'))
@@ -654,11 +540,8 @@ fn token_at(rest: &str) -> &str {
     &rest[..end]
 }
 
-/// Drop the punctuation a sentence put after a URL rather than inside it.
-///
-/// `(see https://example.com/x).` ends in `).`, and neither belongs to the
-/// link — but `https://example.com/a_(b)` does end in a bracket that does, so
-/// a closing one is only dropped when nothing opened it.
+/// A closing bracket is dropped only when nothing opened it: `(see https://example.com/x).` loses
+/// `).`, `…/a_(b)` keeps its `)`.
 fn trim_trailing_punctuation(mut token: &str) -> &str {
     loop {
         let Some(last) = token.chars().next_back() else {
@@ -678,8 +561,6 @@ fn trim_trailing_punctuation(mut token: &str) -> &str {
     }
 }
 
-/// Whether `host` reads as a domain name: labels, dots, and a final alphabetic
-/// label of at least two characters.
 fn looks_like_host(host: &str) -> bool {
     let host = host.split('/').next().unwrap_or(host);
     let Some((_, tld)) = host.rsplit_once('.') else {
@@ -692,7 +573,6 @@ fn looks_like_host(host: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'))
 }
 
-/// A bare `local@domain`, or `None` if `token` is not one.
 fn match_email(token: &str) -> Option<&str> {
     let (local, domain) = token.split_once('@')?;
     if local.is_empty() || domain.contains('@') {
@@ -733,9 +613,6 @@ mod tests {
         );
     }
 
-    /// Spec 007 FR-034: a fold says how much it hides, "31 quoted lines",
-    /// counting the lines that hold words. A `>` alone is not a line anyone
-    /// quoted, and neither is the blank between two paragraphs.
     #[test]
     fn a_fold_says_how_many_quoted_lines_it_hides() {
         let text = text_to_html(
@@ -753,7 +630,6 @@ mod tests {
 
     #[test]
     fn nested_blockquotes_are_wrapped_once_as_a_unit() {
-        // The Gmail/Apple Mail shape: `> >` becomes nested <blockquote>s.
         let html = "<blockquote><p>outer</p><blockquote><p>inner</p></blockquote></blockquote>";
         let out = fold_html_quotes(html);
         assert_eq!(
@@ -762,7 +638,6 @@ mod tests {
                 "<details class=\"postio-quote\"><summary>2 quoted lines</summary>{html}</details>"
             )
         );
-        // Expanding the outer <details> reveals the whole nested chain.
         assert_eq!(out.matches("<details").count(), 1);
     }
 
@@ -789,7 +664,6 @@ mod tests {
 
     #[test]
     fn plain_text_quote_markers_are_folded_and_escaped() {
-        // The corpus's plain-text-flowed-reply.eml shape.
         let text = "On 2026-02-10, Ada Norwood wrote:\n> Short note <b>before</b>\n> to cover\n\nThat order works.";
         let out = text_to_html(text);
         assert!(out.contains("On 2026-02-10, Ada Norwood wrote:"));
@@ -797,11 +671,8 @@ mod tests {
             out.contains("<details class=\"postio-quote\">"),
             "the `>` run should fold: {out}"
         );
-        // Escaped, not interpreted as markup.
         assert!(out.contains("&lt;b&gt;before&lt;/b&gt;"), "{out}");
         assert!(out.contains("That order works."));
-        // The "wrote:" line introduces the quote but is not itself quoted,
-        // so it must land before the <details> it precedes.
         let details_start = out.find("<details").unwrap();
         let wrote_at = out.find("wrote:").unwrap();
         assert!(wrote_at < details_start, "{out}");
@@ -814,9 +685,6 @@ mod tests {
         assert!(!out.contains("<details"));
     }
 
-    /// A blank line between paragraphs is a paragraph break, drawn by the
-    /// stylesheet as a gap, not a whole empty line of the body's
-    /// line-height (specs/007-postio-focus T203).
     #[test]
     fn a_blank_line_parts_paragraphs_rather_than_drawing_an_empty_line() {
         let out = text_to_html("Hi all,\nline two\n\n\n  \nSecond paragraph.\n");
@@ -836,8 +704,6 @@ mod tests {
         let out = text_to_html("> all quoted\n> every line");
         assert!(out.starts_with("<details class=\"postio-quote\">"));
     }
-
-    // ── #752: a URL in a plain-text body is a link ──────────────────────
 
     #[test]
     fn a_plain_text_url_becomes_an_anchor() {
@@ -862,8 +728,6 @@ mod tests {
         );
     }
 
-    /// A sentence's punctuation is not part of the address it follows, but a
-    /// bracket the URL opened for itself is.
     #[test]
     fn trailing_punctuation_stays_outside_the_link() {
         let out = text_to_html("(see https://example.com/a).");
@@ -880,10 +744,8 @@ mod tests {
         );
     }
 
-    /// The security property, stated as a test: the anchor is built out of a
-    /// span this module matched and every part of it is escaped, so a sender
-    /// cannot close the attribute or the tag. `text/plain` bodies are not run
-    /// through ammonia, so nothing downstream would catch it if they could.
+    /// The anchor is built from a matched span with every part escaped; `text/plain` skips ammonia,
+    /// so nothing downstream would catch an injection.
     #[test]
     fn a_url_cannot_inject_markup_through_the_anchor_it_becomes() {
         let out = text_to_html("https://example.com/\"><script>alert(1)</script>");
@@ -908,9 +770,7 @@ mod tests {
         );
     }
 
-    /// Words that merely contain a dot, an `@` inside a longer token, or a
-    /// scheme with nothing after it are not links — a false positive here is
-    /// a clickable thing in the middle of somebody's prose.
+    /// A false positive is a clickable thing in the middle of somebody's prose.
     #[test]
     fn ordinary_prose_is_not_linkified() {
         for text in [
@@ -924,11 +784,6 @@ mod tests {
         }
     }
 
-    /// The line that introduces a quote -- "On Monday, Ana wrote:" -- is
-    /// marked, so the stylesheet can set it apart from the sign-off above it
-    /// and the fold under it (specs/007-postio-focus T208): its own block,
-    /// just before the fold, whether a blank line parts it from the
-    /// sign-off or not.
     #[test]
     fn the_line_before_a_plain_quote_is_marked_as_its_attribution() {
         for text in [
@@ -956,8 +811,6 @@ mod tests {
         }
     }
 
-    /// A stretch of the person's own words above a quote, without the line
-    /// that introduces it: what a search passage is cut from.
     #[test]
     fn the_own_words_above_a_quote_lose_only_its_attribution() {
         assert_eq!(
@@ -976,8 +829,6 @@ mod tests {
         );
     }
 
-    /// Only a line that introduces something is an attribution: one ending
-    /// in a colon. A sentence that happens to sit above a quote is not.
     #[test]
     fn a_line_that_does_not_introduce_the_quote_is_not_marked() {
         let out = text_to_html("I agree with this part.\n> The quoted part.\n");
@@ -986,10 +837,6 @@ mod tests {
         assert!(!out.contains("postio-attribution"), "{out}");
     }
 
-    /// The same for HTML: the block just before a quote, when it is the
-    /// attribution (Gmail's, Outlook's `<p>`), is marked; a block that only
-    /// precedes the quote is not, and neither is one that closed before
-    /// other words.
     #[test]
     fn the_block_before_an_html_quote_is_marked_when_it_introduces_it() {
         let gmail = "<div>Thanks,</div><div>Lena</div><div class=\"x-gmail_quote\">\
@@ -1015,9 +862,6 @@ mod tests {
         }
     }
 
-    /// A paragraph of `- ` lines is a list, drawn as one (T208's 4/20
-    /// rhythm is the stylesheet's), not lines that happen to start with a
-    /// dash; an introduction in the same paragraph stays text above it.
     #[test]
     fn a_run_of_bulleted_lines_is_a_list() {
         let out = text_to_html(
@@ -1046,8 +890,6 @@ mod tests {
         );
     }
 
-    /// A wrapped item's next line, indented under its words, is the same
-    /// item; markup in an item is escaped like any line.
     #[test]
     fn a_list_item_keeps_its_wrapped_lines_and_escapes_its_words() {
         let out = text_to_html("- a long item that\n  wraps onto a second line\n- <b>bold</b>\n");
@@ -1059,8 +901,6 @@ mod tests {
         );
     }
 
-    /// One dashed line is not a list, nor are lines whose dashes are prose
-    /// ("-- " signature markers, a negative number), nor numbers out of order.
     #[test]
     fn what_only_looks_like_a_list_stays_text() {
         for text in [

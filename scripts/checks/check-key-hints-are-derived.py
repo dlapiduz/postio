@@ -42,13 +42,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# The crates whose `src/` draws key hints: the desktop app, and the crate
-# holding what it draws (ADR 0043; specs/007-postio-focus R1).
 CRATES = ("postio-widgets", "postio-gtk")
 OWNER = "widgets/keyhint.rs"
 
-# A file is named by its path inside its crate's `src/`, so one that moves
-# between the desktop crates keeps its line.
+# Keyed by path inside the crate's `src/`, so a file that moves between the desktop crates keeps its
+# line.
 # file -> (count, why no command carries it)
 ALLOWED_FIXED: dict[str, tuple[int, str]] = {
     "onboarding.rs": (
@@ -62,10 +60,7 @@ ALLOWED_FIXED: dict[str, tuple[int, str]] = {
     "bar.rs": (1, "Tab steps between the command bar's chips: the entry's own key, not a command"),
 }
 
-# file -> why it may still say something this check forbids
 ALLOWED_LITERAL: dict[str, str] = {
-    # The reader branch owns this file while it is in flight; its `J/K` and
-    # `⇧I` move to postio_ui::hints when that lands.
     "reader/rail.rs": "owned by the reader branch in flight; migrates when it lands",
 }
 
@@ -114,7 +109,6 @@ def main(argv: list[str]) -> int:
             rel = path.relative_to(base).as_posix()
             name = shown + rel
             text = path.read_text(encoding="utf-8")
-            # Unit tests may spell a key to assert on it.
             text = text.split("#[cfg(test)]", 1)[0]
             count = len(FIXED.findall("\n".join(line for _, line in code_lines(text))))
             if count:

@@ -1,49 +1,12 @@
-//! Postio's domain model: the types every other crate speaks.
-//!
-//! This crate is deliberately *pure*. It contains no SQL, no IMAP, no GTK and no
-//! I/O of any kind — only value types and the logic that belongs to them
-//! (flag canonicalization, special-use resolution, subject normalization).
-//! `postio-storage` persists these types, `postio-account` translates the wire into
-//! them, frontends render them, and none of that leaks back here. That is
-//! what lets a second protocol or a second frontend be added without reshaping
-//! the model, and CI enforces it.
-//!
-//! # Shape of the model
-//!
-//! * [`Account`] owns one or more [`Identity`] values and a set of [`Mailbox`]
-//!   folders, each with a [`MailboxRole`].
-//! * A [`Mailbox`] holds [`Message`] values, which carry [`FlagSet`],
-//!   [`Label`] references, [`Attachment`] metadata, [`Headers`],
-//!   [`ServerIdentifiers`] and [`LocalSyncState`].
-//! * Messages are grouped into a [`Thread`] by [`threading::assign`], which
-//!   reads [`Message::reference_chain`] and [`normalize_subject`] and places
-//!   one message at a time rather than rethreading a mailbox.
-//! * [`SyncState`] is what the sync engine knows about a mailbox's place in the
-//!   server's UID space, and [`SyncState::plan`] is the decision it drives.
-//! * [`Contact`] accumulates addresses that have been seen; [`Draft`] is a
-//!   message being composed.
-//!
-//! # Identifier invariants
-//!
-//! Every entity has its own newtype id, `0` means "not yet persisted", and
-//! server-assigned identifiers are kept separate from local ones. See the
-//! [`ids`] module for the full set of rules.
-//!
-//! # Test corpus
-//!
-//! Behind the off-by-default `test-corpus` feature this crate also ships the
-//! `.eml` fixture corpus and its loader (`test_corpus`), so that every crate
-//! in the workspace can test against realistic mail without touching the
-//! network. It is dev-dependency-only; nothing in a normal build pulls it in.
-//!
-//! # Flag invariants
-//!
-//! Flags have exactly one canonical representation, keywords compare
-//! case-insensitively, and `\Recent` is never persisted. See [`Flag`].
+//! Postio's domain model: the types every other crate speaks. Pure: no SQL, IMAP, GTK or I/O, so a
+//! second protocol or frontend needs no reshaping; CI enforces it. See `ids` for identifier rules
+//! and `Flag` for flag invariants. The `test-corpus` feature ships the `.eml` fixture corpus and
+//! its loader; it is dev-dependency only.
 
 pub mod account;
 pub mod address;
 pub mod attachment;
+pub mod calendar;
 pub mod card;
 pub mod clock;
 pub mod contact;

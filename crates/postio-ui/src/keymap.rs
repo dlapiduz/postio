@@ -1,48 +1,7 @@
-//! The keymap resolver: single keys, chords, sequences and contexts.
-//!
-//! # Why not GTK accelerators
-//!
-//! Postio's bindings come from the design canvas, and three of its rules are
-//! outside what `gtk::ShortcutController` can express:
-//!
-//! * **`gg` versus `G`.** A sequence of two presses is not an accelerator, and
-//!   while `g` is pending the user has to be *shown* that it is pending.
-//! * **`Esc` means different things.** In the list it clears the selection, in
-//!   a thread it goes back up, in the composer it closes the composer. One key,
-//!   several bindings, resolved by [`KeyContext`].
-//! * **Typing must always win.** A single-key binding like `a` cannot fire
-//!   while the user is typing a subject line, and no accelerator arrangement
-//!   makes that reliable — the resolver has to be asked.
-//!
-//! So this module owns the decision and the widgets only report key presses to
-//! it. Nothing here touches a widget, which is what lets it be unit-tested with
-//! no display and no GTK main loop.
-//!
-//! # Shape
-//!
-//! [`Keymap`] is the table: `(context, binding, command)`. [`Resolver`] is the
-//! live state on top of it — the pending chords of a half-typed sequence and
-//! when they expire. A press goes in, an [`Outcome`] comes out.
-//!
-//! ```
-//! use postio_ui::keymap::{KeyContext, Keymap, Outcome, Resolver};
-//! use std::time::Instant;
-//!
-//! let mut keymap = Keymap::new();
-//! keymap.bind(KeyContext::List, "g g", "go_to_top").unwrap();
-//! keymap.bind(KeyContext::List, "G", "go_to_bottom").unwrap();
-//! let mut resolver = Resolver::new(keymap);
-//!
-//! let now = Instant::now();
-//! assert!(matches!(
-//!     resolver.press(&"g".parse().unwrap(), KeyContext::List, false, now),
-//!     Outcome::Pending(_)
-//! ));
-//! assert_eq!(
-//!     resolver.press(&"g".parse().unwrap(), KeyContext::List, false, now),
-//!     Outcome::Command("go_to_top".into())
-//! );
-//! ```
+//! The keymap resolver: single keys, chords, sequences and contexts, with no widget in it (not GTK
+//! accelerators). A `g g` sequence needs a visible pending state, `Esc` means different things per
+//! context, and typing must always win over a single-key binding; none of that fits
+//! `gtk::ShortcutController`.
 
 use std::fmt;
 use std::str::FromStr;
@@ -50,53 +9,33 @@ use std::time::{Duration, Instant};
 
 use postio_core::{Context, ContextSet, registry};
 
-/// How long a half-typed sequence stays pending before it is forgotten.
-///
-/// Long enough to be typed deliberately, short enough that a `g` left over
-/// from a moment ago never swallows the next keystroke. The pending state is
-/// visible while it lasts, so the user is never guessing.
+/// Long enough to type deliberately, short enough that a leftover `g` never swallows the next
+/// keystroke.
 pub const CHORD_TIMEOUT: Duration = Duration::from_millis(1_000);
 
-// ---------------------------------------------------------------------------
-// Modifiers
-// ---------------------------------------------------------------------------
-
-/// The modifier keys held down with a chord.
-///
-/// `Shift` is deliberately *not* one of them for printable keys: the canvas
-/// distinguishes `a` from `A`, and the character itself already says which.
-/// See [`Chord`] for how that is normalized.
+/// `Shift` is not one for printable keys: the character already says it (see `Chord`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct Modifiers(u8);
 
 impl Modifiers {
-    /// No modifiers.
     pub const NONE: Self = Self(0);
-    /// Control.
     pub const CTRL: Self = Self(1 << 0);
-    /// Alt.
     pub const ALT: Self = Self(1 << 1);
-    /// Shift. Only ever set on a named key; see [`Chord`].
     pub const SHIFT: Self = Self(1 << 2);
-    /// Super / Meta / the Windows key.
     pub const SUPER: Self = Self(1 << 3);
 
-    /// Whether every modifier in `other` is set here.
     pub fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
 
-    /// Whether nothing is held.
     pub fn is_empty(self) -> bool {
         self.0 == 0
     }
 
-    /// This set with `other` added.
     pub fn with(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
 
-    /// This set with `other` removed.
     pub fn without(self, other: Self) -> Self {
         Self(self.0 & !other.0)
     }
@@ -106,17 +45,8 @@ impl Modifiers {
             "ctrl" | "control" => Some(Self::CTRL),
             "alt" => Some(Self::ALT),
             "shift" => Some(Self::SHIFT),
-            // `cmd` is Apple's ⌘ and is the same physical modifier X11 calls
-            // Super, so it is one bit rather than two. It has to be here and
-            // not only in `postio_config::keys::MODIFIERS`, because that
-            // module *produces* this spelling: `expand_mod` resolves `mod` to
-            // `cmd` on Apple (#669), so on that platform every `mod+…` default
-            // arrives at this function spelled this way. Without it all
-            // thirty-one of them were unparseable at once -- the palette,
-            // settings, select-all, send -- reported as keymap problems rather
-            // than as keys that did nothing, a long way from anywhere anyone
-            // would look. Nothing on Linux could see it: `expand_mod` writes
-            // `ctrl` there.
+            // `cmd` is Apple's ⌘, the same modifier X11 calls Super. `expand_mod` resolves `mod` to
+            // `cmd` on Apple (#669), so without it every `mod+…` default fails to parse there.
             "super" | "meta" | "cmd" | "command" => Some(Self::SUPER),
             _ => None,
         }
@@ -139,15 +69,8 @@ impl fmt::Display for Modifiers {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Keys
-// ---------------------------------------------------------------------------
-
-/// Named keys that do not produce a character.
-///
-/// The left column is every spelling accepted in a binding string; the right is
-/// the one spelling everything is stored and displayed as, so `esc` and
-/// `Escape` are the same key rather than two that never match each other.
+/// The left column is every accepted spelling; the right is the one stored, so `esc` and `Escape`
+/// are one key.
 const NAMED_KEYS: &[(&str, &str)] = &[
     ("return", "Return"),
     ("enter", "Return"),
@@ -171,7 +94,6 @@ const NAMED_KEYS: &[(&str, &str)] = &[
     ("left", "Left"),
     ("right", "Right"),
     ("menu", "Menu"),
-    // The keypad's own keys, for zoom (spec 006).
     ("kp_add", "KP_Add"),
     ("kp_subtract", "KP_Subtract"),
     ("kp_0", "KP_0"),
@@ -189,12 +111,9 @@ const NAMED_KEYS: &[(&str, &str)] = &[
     ("f12", "F12"),
 ];
 
-/// Keys that are spelled by name but *are* a character.
-///
-/// `?` and `question` have to be the same chord, or a binding copied out of a
-/// GDK key table would never match a key the user can actually press.
+/// `?` and `question` must be the same chord, or a binding copied from a GDK key table never
+/// matches.
 const PUNCTUATION_NAMES: &[(&str, char)] = &[
-    // Focus's has-action toggle (specs/007-postio-focus FR-017).
     ("exclam", '!'),
     ("plus", '+'),
     ("minus", '-'),
@@ -207,7 +126,6 @@ const PUNCTUATION_NAMES: &[(&str, char)] = &[
     ("semicolon", ';'),
     ("colon", ':'),
     ("asterisk", '*'),
-    // Delete, Gmail's key for it (docs/PRODUCT.md §8).
     ("numbersign", '#'),
     ("underscore", '_'),
     ("less", '<'),
@@ -219,23 +137,20 @@ const PUNCTUATION_NAMES: &[(&str, char)] = &[
     ("grave", '`'),
     ("apostrophe", '\''),
     ("quotedbl", '"'),
+    // Strikethrough's and the table's terminal keys (spec 014).
+    ("asciitilde", '~'),
+    ("bar", '|'),
 ];
 
-/// One key on the keyboard.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Key {
-    /// A key that produces a character. Case matters: `a` and `A` differ.
     Char(char),
-    /// A key that does not, stored as its canonical GDK name.
     Named(&'static str),
 }
 
 impl Key {
-    /// Whether this key still fires a binding while a text field has focus.
-    ///
-    /// Only `Escape` and the function keys do. Everything else a text field
-    /// might reasonably consume — characters, `Return`, `Tab`, the arrows,
-    /// `Home`/`End` — belongs to the text field while it is focused.
+    /// Only `Escape` and the function keys do; characters, `Return`, `Tab`, arrows and `Home`/`End`
+    /// belong to the text field.
     fn survives_text_entry(&self) -> bool {
         match self {
             Self::Char(_) => false,
@@ -245,19 +160,14 @@ impl Key {
         }
     }
 
-    /// The keysym name of this key: `question` for `?`, `Return` for Return,
-    /// the character itself for a letter or digit. The inverse of [`parse`]'s
-    /// alias tables, and the spelling X11 and `gdk::Key::from_name` accept
-    /// -- which is how the storyboard runner turns a chord into a key press.
-    ///
-    /// [`parse`]: Chord::from_platform_key
+    /// The keysym name (`question` for `?`), as X11 and `gdk::Key::from_name` accept; the
+    /// storyboard runner uses it to press a chord.
     pub fn keysym_name(&self) -> String {
         match self {
             Self::Char(character) => PUNCTUATION_NAMES
                 .iter()
                 .find(|(_, aliased)| aliased == character)
                 .map_or_else(|| character.to_string(), |(name, _)| (*name).to_owned()),
-            // The one canonical spelling that is not its own keysym.
             Self::Named("Space") => "space".to_owned(),
             Self::Named(name) => (*name).to_owned(),
         }
@@ -288,34 +198,18 @@ impl fmt::Display for Key {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Chords and bindings
-// ---------------------------------------------------------------------------
-
-/// One press: a key with the modifiers held down for it.
-///
-/// # Normalization
-///
-/// A chord is always stored in the form the keyboard will actually deliver it.
-/// For a key that produces a character, `Shift` is folded into the character —
-/// `shift+a` *is* `A` — because that is what the toolkit reports and because
-/// the canvas binds `a` and `A` to different commands. For a named key, `Shift`
-/// stays a modifier, since `shift+Tab` produces no character to fold it into.
+/// Stored as the keyboard delivers it: for a character key `Shift` is folded into the character
+/// (`shift+a` is `A`); for a named key it stays a modifier.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Chord {
-    /// The key pressed.
     pub key: Key,
-    /// What was held down with it.
     pub modifiers: Modifiers,
 }
 
 impl Chord {
-    /// Builds a chord, normalizing `Shift` as described on the type.
     pub fn new(key: Key, modifiers: Modifiers) -> Self {
         match key {
             Key::Char(character) if modifiers.contains(Modifiers::SHIFT) => {
-                // `shift+p` and `P` have to be one chord, not two that never
-                // match each other.
                 let upper = character.to_uppercase().next().unwrap_or(character);
                 Self {
                     key: Key::Char(upper),
@@ -326,26 +220,15 @@ impl Chord {
         }
     }
 
-    /// Builds a chord from a platform key event already reduced to what
-    /// every toolkit can supply: the character the key would type, the key's
-    /// name when it types nothing (or types a control character, the way GDK
-    /// reports `Return` as `\r`), and the modifiers held with it.
-    ///
-    /// This is the whole of the bridge between a toolkit and the resolver —
-    /// each frontend's key controller reduces its own event to these three
-    /// and everything from here on is testable without one. Deliberately not
-    /// a key *code*: a key code is the one thing GTK and AppKit disagree
-    /// about. Returns `None` for a key this build has no name for — a dead
-    /// key, a keypad key with no binding — which the caller should let
-    /// propagate.
+    /// From the character the key types, its name when it types nothing (GDK reports `Return` as
+    /// `\r`), and the modifiers. `None` for a key with no name here. Deliberately not a key code:
+    /// GTK and AppKit disagree on those.
     pub fn from_platform_key(
         character: Option<char>,
         name: Option<&str>,
         modifiers: Modifiers,
     ) -> Option<Self> {
         if let Some(character) = character {
-            // Space has a character but no useful one to print in a cheat
-            // sheet, so it stays a named key.
             if character == ' ' {
                 return Some(Self::new(Key::Named("Space"), modifiers));
             }
@@ -356,14 +239,10 @@ impl Chord {
         Key::parse(name?).map(|key| Self::new(key, modifiers))
     }
 
-    /// Whether this chord fires while a text field has focus.
-    ///
-    /// True when it carries `Ctrl`, `Alt` or `Super`, or when its key is one
-    /// the text field would not want anyway. This is the rule that keeps `a`
-    /// from archiving mail while the user types "already replied".
+    /// True with `Ctrl`, `Alt` or `Super`, or for a key a text field would not want; this keeps `a`
+    /// from archiving while typing.
     pub fn survives_text_entry(&self) -> bool {
-        // Shift alone does not make a chord a shortcut: `shift+a` is still the
-        // letter A to a text field.
+        // Shift alone does not make a shortcut: `shift+a` is still a letter to a text field.
         if !self.modifiers.without(Modifiers::SHIFT).is_empty() {
             return true;
         }
@@ -415,27 +294,22 @@ impl FromStr for Chord {
     }
 }
 
-/// A whole binding: one chord, or a sequence of them like `g g`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Binding(Vec<Chord>);
 
 impl Binding {
-    /// The chords, in the order they must be pressed.
     pub fn chords(&self) -> &[Chord] {
         &self.0
     }
 
-    /// The first chord, which is what the text-entry rule is applied to.
     pub fn first(&self) -> &Chord {
         &self.0[0]
     }
 
-    /// How many presses it takes.
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
-    /// Never true: a binding always has at least one chord.
     pub fn is_empty(&self) -> bool {
         false
     }
@@ -472,117 +346,62 @@ impl FromStr for Binding {
     }
 }
 
-/// Why a binding string could not be read.
-///
-/// The messages are written to be shown to the user beside the `[keys]` entry
-/// they came from — a binding this build cannot parse is a settings problem,
-/// not a crash.
+/// Shown beside the `[keys]` entry it came from: an unparseable binding is a settings problem, not
+/// a crash.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ParseError {
-    /// The binding string was empty or all whitespace.
     #[error("a binding cannot be empty")]
     Empty,
-    /// The platform-neutral `mod` reached the resolver unexpanded.
-    ///
-    /// Its own variant rather than an [`UnknownModifier`](Self::UnknownModifier),
-    /// because the message would otherwise send someone looking for a typo in a
-    /// binding that is spelled exactly right. `mod` is a config-file word:
-    /// `Keymap::resolve` turns it into a concrete accelerator, and anything
-    /// reading a registry or `[keys]` literal directly has to expand it first.
+    /// Its own variant so the message does not send anyone hunting for a typo: `mod` is a
+    /// config word that `Keymap::resolve` expands, and code reading a registry or `[keys]` literal
+    /// must expand it first.
     #[error(
         "`mod` is resolved when the keymap is built, so it cannot reach the \
          resolver; expand it with `postio_config::keys::expand_mod` first"
     )]
     UnexpandedMod,
 
-    /// A `+`-separated part was not a modifier.
     #[error("`{modifier}` is not a modifier; use mod, ctrl, alt, shift or super")]
-    UnknownModifier {
-        /// What was written.
-        modifier: String,
-    },
-    /// The chord ended with a modifier and no key.
+    UnknownModifier { modifier: String },
     #[error("`{chord}` ends with a modifier and no key")]
-    NoKey {
-        /// The chord as written.
-        chord: String,
-    },
-    /// The key name is not one this build knows.
+    NoKey { chord: String },
     #[error("`{key}` is not a key name")]
-    UnknownKey {
-        /// What was written.
-        key: String,
-    },
+    UnknownKey { key: String },
 }
 
-// ---------------------------------------------------------------------------
-// Contexts
-// ---------------------------------------------------------------------------
-
-/// Where the keyboard focus is, which decides what a key means.
-///
-/// Contexts fall back rather than replace: reading a message still leaves the
-/// list's `j`/`k` working, because that is what the canvas draws. The chain is
-/// [`KeyContext::chain`].
+/// Contexts fall back rather than replace: reading a message still leaves the list's `j`/`k`
+/// working. The chain is `KeyContext::chain`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum KeyContext {
-    /// Bindings that apply everywhere unless something more specific claims
-    /// the key.
     #[default]
     Global,
-    /// The message list.
     List,
-    /// The conversation pane: the whole thread stacked beside the list.
-    ///
-    /// Was `Thread`, for the column that replaced the list (#1003). The
-    /// column is gone; the surface it named lives in the reading pane now,
-    /// and its keys walk messages inside the stack.
+    /// The whole thread stacked beside the list; its keys walk messages inside the stack.
     Conversation,
-    /// The reading pane.
     Reader,
-    /// The composer, which takes over the reading pane.
     Composer,
-    /// The search bar.
     Search,
-    /// The command palette.
     Palette,
-    /// The folder list, once the keyboard is in it.
     Sidebar,
-    /// The parts panel, once the keyboard is in it.
     Parts,
-    /// The account list in settings, once the keyboard is in it.
     Accounts,
-    /// The keybinding list in settings, once the keyboard is in it.
     Keys,
-    /// A picker anchored to a row (spec 007).
     Picker,
-    /// A digest's window (spec 007).
     Digest,
-    /// The Filtered view (spec 007).
     Filtered,
-    /// The capture sheet (spec 007, milestone 3).
     Capture,
-    /// The Mac's search results, the main window's other mode (spec 010
-    /// D17).
     Results,
-    /// The Contacts surface's list and card (specs/005-contacts).
     Contacts,
-    /// The contact popover (specs/011-focus-contacts S6).
     ContactPopover,
-    /// The thread outline (specs/013-focus-threads D5).
     Outline,
-    /// The "Forward what?" chooser (specs/013-focus-threads D7).
     ForwardChooser,
+    Calendar,
+    CalendarWindow,
 }
 
 impl KeyContext {
-    /// The contexts to look in, most specific first.
-    ///
-    /// The precedence order *is* this chain. Composer, Search and Palette do
-    /// not fall back through the list: while the composer is open, `a` is the
-    /// letter A, not archive — and that is enforced here as well as by the
-    /// text-entry rule, so a non-text widget inside the composer cannot
-    /// accidentally reopen the hole.
+    /// The precedence order is this chain. Composer, Search and Palette do not fall back through
+    /// the list: with the composer open, `a` is the letter A, not archive.
     pub fn chain(self) -> &'static [KeyContext] {
         match self {
             Self::Global => &[Self::Global],
@@ -592,63 +411,45 @@ impl KeyContext {
             Self::Composer => &[Self::Composer, Self::Global],
             Self::Search => &[Self::Search, Self::Global],
             Self::Palette => &[Self::Palette, Self::Global],
-            // Not layered over `List`: `j` means "next folder" here and
-            // "next message" there, and falling through would make the
-            // sidebar's own keys the ones that lose.
+            // Not layered over `List`: `j` means "next folder" here and "next message" there.
             Self::Sidebar => &[Self::Sidebar, Self::Global],
-            // Not layered over anything either, and for a sharper reason
-            // than the sidebar's: the panel sits over a message, and letting
-            // `a` fall through to `archive` would act on the message
-            // underneath while the user's eyes are on its parts.
+            // Not layered: the panel sits over a message, and `a` falling through would act on it.
             Self::Parts => &[Self::Parts, Self::Global],
-            // Not layered over anything, for the same reason as the two
-            // above and one of its own: `d` here removes an *account*, and
-            // a fall-through that let a mail binding fire while the keyboard
-            // sits on an account row would act on something off-screen.
+            // Not layered: `d` here removes an account, so a fall-through mail binding would act on
+            // something off-screen.
             Self::Accounts => &[Self::Accounts, Self::Global],
-            // Same reasoning as `Accounts`: `[keys]`'s own raw-TOML escape
-            // hatch sits in the same panel, and a fall-through here would
-            // let a mail binding fire while the keyboard is on a rebind row.
+            // As `Accounts`: a fall-through would let a mail binding fire on a rebind row.
             Self::Keys => &[Self::Keys, Self::Global],
-            // Focus's three (spec 007). A picker sits over a row, so `x` or
-            // `a` falling through would act on the mail under it; a digest
-            // and the Filtered view are surfaces of their own, whose `A` and
-            // `R` mean something else there. Each takes its own keys, and
-            // `Escape` and the palette from Global.
+            // A picker sits over a row, so `x` or `a` falling through would act on the mail under
+            // it;
+            // digest and Filtered are surfaces of their own. Each takes its own keys, plus `Escape`
+            // and the palette from Global.
             Self::Picker => &[Self::Picker, Self::Global],
             Self::Digest => &[Self::Digest, Self::Global],
             Self::Filtered => &[Self::Filtered, Self::Global],
-            // The capture sheet sits over a message, as a picker does: a
-            // letter falling through would act on the mail under it.
+            // Sits over a message like a picker: a letter falling through would act on the mail
+            // under it.
             Self::Capture => &[Self::Capture, Self::Global],
-            // Not layered over `List`: the results are rows of their own,
-            // and a list key that fell through would act on the inbox
-            // hidden behind them. The list's verbs name `Results` too.
+            // Not layered over `List`: a list key falling through would act on the inbox hidden
+            // behind the results.
             Self::Results => &[Self::Results, Self::Global],
-            // Not layered over `List`: Contacts covers the reading pane, and
-            // `c` here writes to the focused *person* -- a fall-through to a
-            // mail binding would act on the message list behind it, which the
-            // user cannot see.
+            // Not layered over `List`: `c` here writes to the focused person, and a mail binding
+            // would act on the list behind.
             Self::Contacts => &[Self::Contacts, Self::Global],
             Self::ContactPopover => &[Self::ContactPopover, Self::Global],
-            // Over the reader, as a picker is over a row: `u` is `prev_view`
-            // in the reader and "first unread" here, and the digits are the
-            // chooser's, not `picker_choose_n`. Neither falls through.
+            // `u` is `prev_view` in the reader and "first unread" here, and the digits are the
+            // chooser's. Neither falls through.
             Self::Outline => &[Self::Outline, Self::Global],
-            // Over the composer: the digits are the chooser's, and send and
-            // Esc still work while the keyboard is on it.
             Self::ForwardChooser => &[Self::ForwardChooser, Self::Composer, Self::Global],
+            Self::Calendar => &[Self::Calendar, Self::Global],
+            Self::CalendarWindow => &[Self::CalendarWindow, Self::Global],
         }
     }
 }
 
 impl From<Context> for KeyContext {
-    /// The runtime's context, as the resolver names it.
-    ///
-    /// One-to-one. [`KeyContext::Global`] has no counterpart on purpose: core
-    /// spells "everywhere" as `ContextSet::ANY` over the six real contexts,
-    /// and collapsing that to a single fallback entry is
-    /// [`Keymap::from_commands`]'s job, not a variant core has to carry.
+    /// One-to-one. `Global` has no counterpart: core spells "everywhere" as `ContextSet::ANY`,
+    /// collapsed in `Keymap::from_commands`.
     fn from(context: Context) -> Self {
         match context {
             Context::List => Self::List,
@@ -670,31 +471,24 @@ impl From<Context> for KeyContext {
             Context::ContactPopover => Self::ContactPopover,
             Context::Outline => Self::Outline,
             Context::ForwardChooser => Self::ForwardChooser,
+            Context::Calendar => Self::Calendar,
+            Context::CalendarWindow => Self::CalendarWindow,
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// The table
-// ---------------------------------------------------------------------------
-
-/// The binding table: which command a binding runs, in which context.
 #[derive(Debug, Clone, Default)]
 pub struct Keymap {
     entries: Vec<(KeyContext, Binding, String)>,
 }
 
 impl Keymap {
-    /// An empty table.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Binds a command in a context, replacing any binding already there.
-    ///
-    /// Rebinding the same `(context, binding)` replaces it rather than
-    /// stacking, so the user's `[keys]` override wins over the default without
-    /// the caller having to remove anything first.
+    /// Rebinding the same `(context, binding)` replaces it, so a `[keys]` override wins over the
+    /// default.
     pub fn bind(
         &mut self,
         context: KeyContext,
@@ -708,7 +502,6 @@ impl Keymap {
         Ok(())
     }
 
-    /// The binding a command has in a context, if any.
     pub fn binding_for(&self, context: KeyContext, command: &str) -> Option<&Binding> {
         self.entries
             .iter()
@@ -716,19 +509,14 @@ impl Keymap {
             .map(|(_, binding, _)| binding)
     }
 
-    /// Every entry, for the cheat sheet and the command palette.
     pub fn entries(&self) -> impl Iterator<Item = (KeyContext, &Binding, &str)> {
         self.entries
             .iter()
             .map(|(context, binding, command)| (*context, binding, command.as_str()))
     }
 
-    /// Bindings that can never fire because a shorter one in the same context
-    /// always matches first — `g` shadowing `g g`.
-    ///
-    /// Not an error at bind time: a user override can create one, and refusing
-    /// to start over it would be worse than reporting it. The settings panel
-    /// shows these.
+    /// Not an error at bind time: a user override can create one, and refusing to start over it
+    /// would be worse. The settings panel shows these.
     pub fn shadowed(&self) -> Vec<(KeyContext, &Binding, &str)> {
         self.entries
             .iter()
@@ -741,32 +529,16 @@ impl Keymap {
             .collect()
     }
 
-    /// Builds the whole binding table from the command registry.
-    ///
-    /// This is where the canvas's default binding set becomes something the
-    /// resolver can act on. `commands` is [`postio_core::Keymap`], which has
-    /// already resolved `[keys]` overrides onto the registry and dropped
-    /// collisions — so the defaults live in the registry as data, exactly once,
-    /// and the user's file wins before this is ever called.
-    ///
-    /// A command reachable in every context is bound once in
-    /// [`KeyContext::Global`] rather than six times, so a fallback context can
-    /// still claim the key for something more specific.
-    ///
-    /// Returns the table and whatever could not be parsed. A binding this build
-    /// cannot read costs its command a key and is reported; it never stops the
-    /// application, which would leave the user with no way to fix it.
+    /// `commands` has already applied `[keys]` overrides and dropped collisions. A command
+    /// reachable in every context is bound once in `Global`.
+    /// Also returns what could not be parsed: an unreadable binding costs its command a key and is
+    /// reported, never stopping the app.
     pub fn from_commands(commands: &postio_core::Keymap) -> (Self, Vec<String>) {
         Self::build(commands, None)
     }
 
-    /// [`from_commands`](Self::from_commands) for one app: only the commands
-    /// `frontend` offers are bound.
-    ///
-    /// Every app shares one keymap, and a command only another app offers
-    /// keeps its key there (specs/007-postio-focus research R4). Here that
-    /// key is bound to nothing, so it does what an unbound key does, rather
-    /// than reaching a command this app would refuse as "not wired up".
+    /// Binds only the commands `frontend` offers: a command only another app offers keeps its key
+    /// there, and here the key does what an unbound key does.
     pub fn from_commands_for(
         commands: &postio_core::Keymap,
         frontend: postio_core::Frontend,
@@ -781,10 +553,6 @@ impl Keymap {
         let mut keymap = Self::new();
         let mut problems = Vec::new();
 
-        // The merged vocabulary, not just the built-in table: a key bound to
-        // a registered command has to reach the resolver like any other, and
-        // `bind` already takes the id as a string, so nothing below this line
-        // cares which half it came from.
         for spec in registry::every_action() {
             if frontend.is_some_and(|app| !spec.requires.offered_by(app)) {
                 continue;
@@ -820,10 +588,8 @@ impl Keymap {
                     continue;
                 }
                 if binding.chords() == pressed {
-                    // An exact match wins immediately, even when a longer
-                    // binding also starts this way: waiting for a timeout
-                    // before acting on a key the user has fully typed reads as
-                    // lag, and `shadowed` reports the arrangement instead.
+                    // An exact match wins at once: waiting for a timeout on a fully typed key reads
+                    // as lag; `shadowed` reports the arrangement.
                     return Match::Exact(command.as_str());
                 }
                 if binding.starts_with(pressed) {
@@ -831,8 +597,8 @@ impl Keymap {
                 }
             }
             if prefix {
-                // A more specific context has claimed this prefix; do not let a
-                // fallback context resolve it out from under the sequence.
+                // A more specific context has claimed this prefix; a fallback must not resolve it
+                // from under the sequence.
                 return Match::Prefix;
             }
         }
@@ -846,34 +612,23 @@ enum Match<'a> {
     None,
 }
 
-// ---------------------------------------------------------------------------
-// The resolver
-// ---------------------------------------------------------------------------
-
-/// What a key press meant.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Outcome {
-    /// Run this command.
     Command(String),
-    /// The start of a sequence. The string is what to show the user while it
-    /// is pending — `"g"` — so the pending state is never invisible.
+    /// The string is what to show while pending, so the state is never invisible.
     Pending(String),
-    /// Nothing is bound to it. The caller should let the key propagate.
     Unhandled,
 }
 
-/// The live keymap: the table plus whatever sequence is half-typed.
 #[derive(Debug)]
 pub struct Resolver {
     keymap: Keymap,
     timeout: Duration,
     pending: Vec<Chord>,
-    /// When the pending sequence stops being pending.
     expires_at: Option<Instant>,
 }
 
 impl Resolver {
-    /// Wraps a keymap, with the default [`CHORD_TIMEOUT`].
     pub fn new(keymap: Keymap) -> Self {
         Self {
             keymap,
@@ -883,19 +638,12 @@ impl Resolver {
         }
     }
 
-    /// A resolver over the registry defaults with `[keys]` already applied.
-    ///
-    /// The companion to [`Keymap::from_commands`], returning whatever could
-    /// not be honoured so the caller can put it on the settings validity line.
     pub fn from_commands(commands: &postio_core::Keymap) -> (Self, Vec<String>) {
         let (keymap, problems) = Keymap::from_commands(commands);
         let problems = Self::all_problems(commands, &keymap, problems);
         (Self::new(keymap), problems)
     }
 
-    /// [`from_commands`](Self::from_commands) for one app: the resolver an
-    /// app presses keys through, binding only the commands `frontend`
-    /// offers (see [`Keymap::from_commands_for`]).
     pub fn from_commands_for(
         commands: &postio_core::Keymap,
         frontend: postio_core::Frontend,
@@ -905,14 +653,8 @@ impl Resolver {
         (Self::new(keymap), problems)
     }
 
-    /// `commands.problems()`, this crate's own parse failures, and any
-    /// binding [`Keymap::shadowed`] finds -- in that order, since "`y` is
-    /// already bound to `flag`" is what the user needs to hear first.
-    ///
-    /// `keymap` is the table [`Keymap::from_commands`] just built from
-    /// `commands`: shadowing is a property of the *resolved* chord table,
-    /// not of `commands` itself, so it can only be checked once that table
-    /// exists.
+    /// `commands.problems()`, this crate's parse failures, then shadowed bindings, in that order.
+    /// `keymap` must be the resolved table: shadowing is a property of it.
     fn all_problems(
         commands: &postio_core::Keymap,
         keymap: &Keymap,
@@ -934,7 +676,6 @@ impl Resolver {
         problems
     }
 
-    /// Wraps a keymap with a different pending-sequence timeout.
     pub fn with_timeout(keymap: Keymap, timeout: Duration) -> Self {
         Self {
             timeout,
@@ -942,39 +683,28 @@ impl Resolver {
         }
     }
 
-    /// The table this resolver reads.
     pub fn keymap(&self) -> &Keymap {
         &self.keymap
     }
 
-    /// Replaces the table, e.g. after the config file changed on disk.
-    ///
     /// Any half-typed sequence is dropped: it was typed against the old table.
     pub fn set_keymap(&mut self, keymap: Keymap) {
         self.keymap = keymap;
         self.clear_pending();
     }
 
-    /// What is currently half-typed, for the pending indicator.
     pub fn pending(&self) -> Option<String> {
         (!self.pending.is_empty()).then(|| Self::describe(&self.pending))
     }
 
-    /// Forgets a half-typed sequence — on focus loss, or when the user hits
-    /// `Escape` and the caller decides that means "never mind".
     pub fn clear_pending(&mut self) {
         self.pending.clear();
         self.expires_at = None;
     }
 
-    /// Resolves one key press.
-    ///
-    /// `in_text_entry` is whether the focused widget takes text. When it is
-    /// true, a binding whose first chord is a bare character or an ordinary
-    /// editing key does not fire at all — typing always wins.
-    ///
-    /// `now` is passed in rather than read so the timeout is testable without
-    /// sleeping.
+    /// While `in_text_entry`, a binding whose first chord is a bare character or editing key does
+    /// not fire: typing wins.
+    /// `now` is passed in so the timeout is testable without sleeping.
     pub fn press(
         &mut self,
         chord: &Chord,
@@ -1002,9 +732,8 @@ impl Resolver {
                 Outcome::Pending(description)
             }
             Match::None => {
-                // A sequence that went nowhere is abandoned whole, rather than
-                // re-tried as a fresh first chord: `g` then `q` must not
-                // quietly run whatever `q` is bound to.
+                // An abandoned sequence is not retried as a fresh first chord: `g` then `q` must
+                // not run what `q` is bound to.
                 self.clear_pending();
                 Outcome::Unhandled
             }
@@ -1030,7 +759,6 @@ mod tests {
 
     fn canvas_keymap() -> Keymap {
         let mut keymap = Keymap::new();
-        // The canvas bindings, per context.
         for (binding, command) in [
             ("ctrl+k", "command_palette"),
             ("?", "cheat_sheet"),
@@ -1094,10 +822,6 @@ mod tests {
             other => panic!("{keys} in {context:?} resolved to {other:?}"),
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Parsing
-    // -----------------------------------------------------------------------
 
     #[test]
     fn a_shifted_character_is_the_same_chord_as_its_uppercase() {
@@ -1177,10 +901,6 @@ mod tests {
             "shift+Tab"
         );
     }
-
-    // -----------------------------------------------------------------------
-    // Single keys and contexts
-    // -----------------------------------------------------------------------
 
     #[test]
     fn the_canvas_bindings_resolve_in_the_list() {
@@ -1278,10 +998,6 @@ mod tests {
             Outcome::Unhandled
         );
     }
-
-    // -----------------------------------------------------------------------
-    // Sequences
-    // -----------------------------------------------------------------------
 
     #[test]
     fn gg_and_g_uppercase_are_different_bindings() {
@@ -1399,13 +1115,8 @@ mod tests {
 
     #[test]
     fn a_shadowed_binding_reaches_the_problems_the_settings_panel_shows() {
-        // `FirstMessage`'s default is `g g` (registry.rs), in every
-        // `LIST_SURFACES` context including List. Rebinding some other
-        // command to plain `g` in that same context is exactly the shape of
-        // edit a user would make without knowing `g g` already means
-        // something -- `Resolver::from_commands` is what `window.rs` calls
-        // to report problems, so this has to reach *that*, not just
-        // `Keymap::shadowed()` directly.
+        // Rebinding another command to plain `g` shadows `g g` (FirstMessage); the problem must
+        // surface through `Resolver::from_commands`.
         let mut overrides = postio_config::KeyBindings::default();
         overrides
             .overrides_mut()
@@ -1421,16 +1132,11 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // Text entry
-    // -----------------------------------------------------------------------
-
     #[test]
     fn typing_never_triggers_a_single_key_action() {
         let mut resolver = resolver();
         let now = Instant::now();
 
-        // "already replied" — every letter of it, in the list's own context.
         for character in "already replied".chars().filter(|c| !c.is_whitespace()) {
             let outcome = resolver.press(
                 &Chord::new(Key::Char(character), Modifiers::NONE),
@@ -1517,10 +1223,6 @@ mod tests {
         assert!(!chord("shift+Tab").survives_text_entry());
     }
 
-    // -----------------------------------------------------------------------
-    // The table
-    // -----------------------------------------------------------------------
-
     #[test]
     fn rebinding_replaces_rather_than_stacks() {
         let mut keymap = canvas_keymap();
@@ -1570,9 +1272,8 @@ mod unexpanded_mod_tests {
 
     #[test]
     fn the_token_is_rejected_with_a_message_that_names_the_fix() {
-        // The resolver matching a literal `mod+k` would be the bad outcome:
-        // the key would work on a machine where nothing expanded it and
-        // silently differ from every other surface.
+        // A literal `mod+k` match would work where nothing expanded it and silently differ from
+        // other surfaces.
         let error = "mod+k".parse::<Binding>().expect_err("mod must not parse");
         assert!(matches!(error, ParseError::UnexpandedMod));
         assert!(
@@ -1587,7 +1288,6 @@ mod unexpanded_mod_tests {
     }
 }
 
-/// A key's keysym name is what GTK's accelerator parser reads back.
 #[cfg(test)]
 mod keysym_tests {
     use super::Key;

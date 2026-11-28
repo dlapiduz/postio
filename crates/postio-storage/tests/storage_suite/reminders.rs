@@ -1,7 +1,3 @@
-//! Focus's reminders, as the store keeps them (spec 007 US5, research R7):
-//! one standing reminder per conversation, fired by the due timer when
-//! nobody replied, cancelled or settled when somebody did.
-
 use chrono::{DateTime, TimeDelta, TimeZone, Utc};
 use postio_model::ids::{AccountId, MailboxId, MessageId, ThreadId};
 use postio_model::{EmailAddress, Message, RfcMessageId};
@@ -13,7 +9,6 @@ fn at(hour: i64) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 9, 29, 0, 0, 0).unwrap() + TimeDelta::hours(hour)
 }
 
-/// Files a message from `sender` and threads it, as a sync pass does.
 async fn file(
     connection: &Connection,
     (account, mailbox): (AccountId, MailboxId),
@@ -78,8 +73,6 @@ async fn setting_a_second_reminder_replaces_the_first_and_clearing_takes_it_away
         "fired and standing: surfaced"
     );
 
-    // Naming a new time replaces the one standing, and a surfaced row goes
-    // back to waiting.
     let again = reminders
         .set(thread, second, at(96), at(50))
         .await
@@ -157,7 +150,6 @@ async fn a_reminder_falls_due_fires_once_and_a_reply_cancels_or_settles_it() {
         .collect();
     assert_eq!(due, vec![a, b], "due soonest first, and c is not due yet");
 
-    // Nobody replied to a: it fires, once, and from then on it is surfaced.
     assert!(reminders.fire(a, at(25)).await.expect("fired"));
     assert!(!reminders.fire(a, at(26)).await.expect("already fired"));
     let due: Vec<_> = reminders
@@ -179,7 +171,6 @@ async fn a_reminder_falls_due_fires_once_and_a_reply_cancels_or_settles_it() {
         vec![a]
     );
 
-    // Somebody replied to b before it fired: cancelled, and it never fires.
     assert!(reminders.cancel(b, at(15)).await.expect("cancelled"));
     assert!(
         !reminders
@@ -200,12 +191,10 @@ async fn a_reminder_falls_due_fires_once_and_a_reply_cancels_or_settles_it() {
         "a reminder that fired is settled, not cancelled"
     );
 
-    // A reply after a surfaced: settled, and it leaves Focus's inbox.
     assert!(reminders.settle(a, at(28)).await.expect("settled"));
     assert!(!reminders.settle(a, at(29)).await.expect("already settled"));
     assert!(reminders.surfaced().await.expect("a read").is_empty());
 
-    // The ones asked about by the filing pass are those still standing.
     let standing = reminders
         .standing_on(&[thread_a, thread_b, thread_c])
         .await

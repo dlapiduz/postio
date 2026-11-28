@@ -1,8 +1,4 @@
-//! `postio-mcp`: Postio over MCP, on stdin and stdout (ADR 0010).
-//!
-//! An MCP client launches it; it answers until its stdin closes. stdout is
-//! the protocol and nothing else writes to it: the log goes to stderr and
-//! the journal.
+//! `postio-mcp`: Postio over MCP. stdout is the protocol and nothing else writes to it.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -117,8 +113,6 @@ fn main() -> ExitCode {
                 config.clone(),
                 Arc::new(postio_account::secret::KeyringSecretStore::default()),
             );
-            // Answered by the Postio app when one is open and listening
-            // (ADR 0041, amended 2026-10-14); opened here when none is.
             let mut server = Server::new(backend, config, audit)
                 .answered_by_app(postio_mcp::socket::installed_path());
             serve(stdin.lock(), stdout.lock(), &mut server)
@@ -139,8 +133,6 @@ mod demo {
 
     use postio_host::Host;
 
-    /// A host over the demo store `seed` names, and the folder its blobs
-    /// are in, kept for as long as it serves.
     pub fn start(seed: &str) -> Result<(Arc<Host>, tempfile::TempDir), String> {
         let seed = postio_demo::Seed::from_id(seed)
             .ok_or_else(|| format!("there is no demo store called {seed}"))?;

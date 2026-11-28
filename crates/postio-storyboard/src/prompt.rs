@@ -1,10 +1,6 @@
-//! The reviewer's prompt (`contracts/review.md` § The prompt template).
-//!
-//! The template is fixed and hashed into every review, and the prompt is
-//! the template with the manifest filled in. It reads nothing else: no
-//! acceptance, no expectation, no hint from the session that asks. The
-//! reviewer reads those from the bundle, which is the point of a fresh pair
-//! of eyes (FR-018).
+//! The reviewer's prompt: the fixed, hashed template with the manifest filled in. It reads nothing
+//! else (no acceptance, no expectation, no hint from the session that asks); the reviewer reads
+//! those from the bundle, which is the point of a fresh pair of eyes.
 
 use std::path::Path;
 
@@ -12,25 +8,20 @@ use crate::bundle::{Batch, Manifest};
 
 const TEMPLATE: &str = include_str!("../templates/reviewer-prompt.md");
 
-/// The template's blake3, which a verdicts file carries as
-/// `reviewer.template`.
 pub fn template_hash() -> String {
     blake3::hash(TEMPLATE.as_bytes()).to_hex().to_string()
 }
 
-/// How many prompts a manifest makes: one per batch.
 pub fn count(manifest: &Manifest) -> usize {
     manifest.batches.len()
 }
 
-/// The manifest of a bundle directory.
 pub fn load_manifest(bundle: &Path) -> Result<Manifest, String> {
     let path = bundle.join("manifest.json");
     let text = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     serde_json::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// The prompt for the 1-based batch `n`, or `None` when there is none.
 pub fn render(manifest: &Manifest, n: usize, bundle: &Path) -> Option<String> {
     let batch: &Batch = manifest.batches.get(n.checked_sub(1)?)?;
     let bullets = |items: Vec<String>| {
@@ -77,9 +68,7 @@ pub fn render(manifest: &Manifest, n: usize, bundle: &Path) -> Option<String> {
     } else {
         format!("verdicts.{n}.json")
     };
-    // Absolute, so a reviewer started anywhere can open every file it is
-    // told to read: the bundle's own paths are relative to it, and the
-    // project's guidance lives in the repository the bundle sits in.
+    // Absolute, so a reviewer started anywhere can open every file it is told to read.
     let absolute = bundle
         .canonicalize()
         .unwrap_or_else(|_| bundle.to_path_buf());

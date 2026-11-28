@@ -575,6 +575,45 @@ and `settings_wiring`; filmed by `screens/settings-filtering`,
 `settings-filtering-off`, `settings-filtering-lists` and
 `settings/find-a-setting-finds-filtering`.
 
+## A notice's to-do
+
+T227, decided with `/ux-architect` (2026-11-22). A bill, an overdue
+notice, "complete your forms before your appointment", "your card expires,
+update it": automated mail the needs-action guard never asks (an automated
+sender, a bulk sender's header, a machine entry in the senders table) can
+still hold the one thing in the inbox to act on.
+
+- **What marks one.** A few strong patterns only, in the message's own
+  text: an amount due with a day, or the word overdue with an amount; a
+  "complete your ..." before an appointment's day; a reminder to update or
+  renew something with a day. At most one per message, like a person's.
+  Never in list mail, nor in mail filed as spam, promotion or social; a
+  receipt, notification or unfiled automated message may hold one.
+- **How it reads.** It is a to-do: the same "To-do" chip, the due day, the
+  sentence quoted verbatim (the amount is in it), and the to-do's verbs,
+  Snooze `s` and Task `t` with a vault. One word and one set of verbs for
+  one kind of obligation; the row's sender block already says who asks.
+- **How it differs.** The chip is drawn in the secondary ink, not the
+  accent: the accent says a person is waiting on the reader, and a bill
+  should not compete with a colleague for the same eye. Its accessible name
+  is "To-do from an automated sender". Nothing else in the row changes, so
+  missing the difference loses nothing.
+- **Correcting it.** Dismissing one as wrong counts towards that sender's
+  `stop_markers` for to-dos, as a person's does, and Settings lists it the
+  same way ("To-dos in mail from ...").
+- **States.** Empty: no marker. Partial: mail whose body is not on this
+  machine is not marked, and no body is fetched for it. Nothing loads,
+  goes offline or fails: it is read from the local store. Narrow: as a
+  person's to-do.
+- **Stored as** the `notice` source beside `calendar`, `detector`, `model`
+  and `reminder`.
+
+Rejected: a chip word of its own ("Due", "Action required", "Bill"), a
+fifth marker word for verbs the to-do already has; a separate pile or
+section for notices, a new kind of surface over the one list; drawing it
+in the accent like a person's ask, where a run of bills would drown the
+one colleague waiting.
+
 ## Rendering them
 
 `cargo run -p postio-gtk --example shot -- <png> <screen> [light|dark] [WxH]`

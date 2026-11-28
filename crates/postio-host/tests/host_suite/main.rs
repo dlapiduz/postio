@@ -6,12 +6,16 @@
 //!
 //! **A case that needs its own process does not belong here**: one that sets
 //! a process-global (`set_var`, a global subscriber or allocator), runs
-//! itself again as a child by test name, or is a `POSTIO-MEASUREMENT`. Give
+//! itself again as a child by test name. Give
 //! it a file of its own in `tests/` and say why at its top.
 
 mod auto_empty;
 mod backend_choice;
+mod calendar_agenda;
+mod calendar_privacy;
+mod calendar_reminders;
 mod e2e;
+mod measurement;
 mod oauth;
 mod oauth_signin;
 mod reclaim;

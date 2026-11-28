@@ -1,32 +1,8 @@
-//! The attachment indexer: text out of attachments already on this
-//! machine, into the index's attachments half (spec 010 D10, T125).
-//!
-//! The same shape as the body indexer beside it ([`crate::spawn_body_indexer`]):
-//! a catch-up pass at start, then a batched pass a moment after each burst
-//! of `BodyLoaded` events, indexing the messages the burst named. A payload
-//! fetch announces itself with `BodyLoaded` too, which is "the event that
-//! says a blob was stored".
-//!
-//! # It never fetches
-//!
-//! The queue is [`attachments_missing_text`](postio_index::index::attachments_missing_text):
-//! attachments whose blob is already on this machine. An attachment that was
-//! never downloaded is not in it, and nothing here holds a backend or a
-//! request queue that could ask for its bytes — the functions take a store
-//! and a blob store, and that is all they can reach (FR-050). It is indexed
-//! when something the person asked for brings it down.
-//!
-//! # It never reads a file itself
-//!
-//! Each attachment is read by `postio-extract-helper`, a process of its
-//! own that is killed at its deadline (spec 010 D28, [`Extractor`]), so a
-//! file that loops or crashes a reader costs one process and one
-//! attachment, and the pass goes on to the next.
-//!
-//! # What it logs
-//!
-//! Attachment ids, outcomes, the path each took ([`Via`]), unit counts and
-//! durations: never a file name, never a word of what was read (FR-051).
+//! The attachment indexer: text out of attachments already on this machine, batched after each
+//! burst of `BodyLoaded`.
+//! It never fetches (FR-050) and never reads a file itself: `postio-extract-helper` runs killable,
+//! so a bad file costs one attachment.
+//! It logs ids, outcomes and counts, never a file name or content (FR-051).
 
 use std::time::{Duration, Instant};
 
@@ -36,25 +12,17 @@ use postio_storage::{BlobStore, Store};
 
 use crate::extraction::{Extraction, Extractor, Via};
 
-/// How long the indexer waits after a burst of arrivals before it runs,
-/// so a backfill's burst becomes one batched write.
 const INDEX_ATTACHMENT_DEBOUNCE: Duration = Duration::from_millis(500);
 
-/// How many attachments one batch extracts before it writes. Small: one
-/// attachment can be seconds of extraction and a megabyte of text, and
-/// the batch holds both in memory until its write.
+/// Small: one attachment can be seconds of extraction and a megabyte of text, both held until the
+/// write.
 const INDEX_ATTACHMENT_BATCH: u32 = 8;
 
-/// The pause between batches, so the disk keeps answering searches while
-/// a large archive catches up (#500's reason, for bodies).
+/// The pause between batches, so searches keep being answered during a large catch-up (#500).
 const INDEX_ATTACHMENT_BREATHER: Duration = Duration::from_millis(25);
 
-/// Start the attachment indexer on `runtime`: a catch-up pass now, then a
-/// pass after each burst of `BodyLoaded` on `events`. Ends when the event
-/// hub does; with `events` `None` only the catch-up runs.
-///
-/// Both composition roots start one beside the body indexer: the host's
-/// idle passes and the macOS boundary.
+/// Start the attachment indexer on `runtime`: a catch-up pass now, then a pass after each burst of
+/// `BodyLoaded` on `events`. With `events` `None` only the catch-up runs.
 pub fn spawn_attachment_indexer(
     database: Store,
     blobs: BlobStore,
@@ -62,7 +30,6 @@ pub fn spawn_attachment_indexer(
     runtime: &tokio::runtime::Handle,
 ) -> tokio::task::JoinHandle<()> {
     runtime.spawn(async move {
-        // Found once: the helper does not move while the application runs.
         let extractor = Extractor::locate();
         if let Err(error) = index_local_attachments_with(&database, &blobs, &extractor).await {
             tracing::warn!(%error, "the attachment indexer's pass failed: {error}");
@@ -101,21 +68,17 @@ pub fn spawn_attachment_indexer(
     })
 }
 
-/// The message a `BodyLoaded` names; every other event is ignored.
 fn note_arrival(pending: &mut Vec<postio_model::MessageId>, event: &postio_core::Event) {
     if let postio_core::Event::BodyLoaded { message, .. } = event {
         pending.push(*message);
     }
 }
 
-/// Extract every downloaded attachment with no text from the current
-/// extractor, in batches. Answers how many it recorded.
+/// Extract every downloaded attachment with no text from the current extractor, in batches; returns
+/// how many were recorded.
 ///
-/// Safe on every start: on a caught-up store it is one query that finds
-/// nothing. A part that fails is recorded as failed and not tried again,
-/// so the pass always ends. A PDF recorded `unavailable` -- skipped because
-/// the helper was missing -- is tried again by the first pass that finds
-/// the helper in place.
+/// A failed part is recorded and not retried, so the pass ends. One recorded `unavailable` (helper
+/// missing) is retried by the first pass that finds the helper.
 pub async fn index_local_attachments(
     database: &Store,
     blobs: &BlobStore,
@@ -123,8 +86,6 @@ pub async fn index_local_attachments(
     index_local_attachments_with(database, blobs, &Extractor::locate()).await
 }
 
-/// [`index_local_attachments`], reading through `extractor`: a helper and
-/// limits of the caller's choosing.
 pub async fn index_local_attachments_with(
     database: &Store,
     blobs: &BlobStore,
@@ -145,9 +106,8 @@ pub async fn index_local_attachments_with(
         if found.is_empty() {
             break;
         }
-        // The queue's contract is that indexing a part removes it. If a
-        // batch comes back unchanged that contract is broken, and going
-        // round again can only spin (#500).
+        // The queue's contract is that indexing a part removes it; a batch coming back unchanged
+        // would spin (#500).
         let ids: Vec<_> = found.iter().map(|missing| missing.attachment).collect();
         if ids == last {
             tracing::warn!(
@@ -174,9 +134,7 @@ pub async fn index_local_attachments_with(
     Ok(indexed)
 }
 
-/// Put the PDFs skipped while the helper was missing back in the queue,
-/// now that it is here. Without this a skip for want of the helper was as
-/// final as one for an encrypted file, until an extractor version moved.
+/// Put the PDFs skipped while the helper was missing back in the queue.
 async fn requeue_unavailable(database: &Store) -> Result<(), Box<dyn std::error::Error>> {
     let connection = database.connect_background().await?;
     let _permit = connection
@@ -193,9 +151,6 @@ async fn requeue_unavailable(database: &Store) -> Result<(), Box<dyn std::error:
     Ok(())
 }
 
-/// Extract the downloaded, unextracted attachments of exactly these
-/// messages: the event path, which knows what arrived and does not ask the
-/// whole mailbox.
 pub async fn index_named_attachments(
     database: &Store,
     blobs: &BlobStore,
@@ -234,16 +189,13 @@ async fn index_named_attachments_with(
     Ok(indexed)
 }
 
-/// Read and extract each attachment off the runtime, then write them all
-/// under one background write. Answers how many were recorded.
 async fn index_batch(
     database: &Store,
     blobs: &BlobStore,
     batch: Vec<MissingAttachment>,
     extractor: &Extractor,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    // Extract first, outside any transaction: a PDF can take its whole time
-    // limit, and the write lock must not be held through it.
+    // Extract outside any transaction: a PDF can take its whole time limit.
     let mut extracted = Vec::with_capacity(batch.len());
     for missing in batch {
         let attachment = missing.attachment;
@@ -290,8 +242,6 @@ async fn index_batch(
     for (attachment, result) in &extracted {
         match postio_index::index::index_attachment_text(&connection, *attachment, result).await {
             Ok(true) => indexed += 1,
-            // Gone between the queue and here: expunged, or replaced by a
-            // refetch whose own row the next pass will find.
             Ok(false) => {}
             Err(error) => {
                 connection.execute_batch("ROLLBACK").await?;
@@ -303,12 +253,8 @@ async fn index_batch(
     Ok(indexed)
 }
 
-/// One attachment's bytes, read and extracted. A blob the store cannot
-/// produce is a failure to record, like a file that cannot be parsed: either
-/// way there is nothing to read, and the part must leave the queue.
-///
-/// A blob larger than the input limit is not read at all: the extractor
-/// would refuse it, and reading it first would hold all of it in memory.
+/// One attachment's bytes, read and extracted. A blob the store cannot produce is recorded as a
+/// failure so the part leaves the queue; one over the input limit is not read at all.
 fn extract_one(
     blobs: &BlobStore,
     missing: &MissingAttachment,

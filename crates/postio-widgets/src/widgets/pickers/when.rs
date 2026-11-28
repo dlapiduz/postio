@@ -1,6 +1,3 @@
-//! The snooze and remind pickers (screens 11 and 12): four presets with
-//! their times and number keys, a date typed in words, and a footnote.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -11,31 +8,24 @@ use postio_ui::pickers;
 
 use super::{Field, Picked, Picker, Row};
 
-/// Which of the two a picker is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum When {
-    /// "Snooze until": the mail leaves the inbox and comes back.
     Snooze,
-    /// "Remind me if no one replies by".
     Remind,
 }
 
 type Handler = Rc<dyn Fn(DateTime<Local>)>;
 
-/// A snooze or remind picker. See the module.
 pub struct WhenPicker {
     picker: Rc<Picker>,
     when: When,
     keymap: RefCell<Keymap>,
-    /// The presets' times, as of the last open.
     presets: RefCell<Vec<DateTime<Local>>>,
-    /// The clock the picker last opened at: what a typed date counts from.
     now: RefCell<Option<DateTime<Local>>>,
     handler: RefCell<Option<Handler>>,
 }
 
 impl WhenPicker {
-    /// A closed picker of kind `when`, its keys read from `keymap`.
     pub fn new(keymap: &Keymap, when: When) -> Rc<Self> {
         let title = match when {
             When::Snooze => pickers::SNOOZE_TITLE,
@@ -67,24 +57,19 @@ impl WhenPicker {
         this
     }
 
-    /// Run `handler` with the moment chosen.
     pub fn connect_chosen(&self, handler: impl Fn(DateTime<Local>) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// Read every key from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         self.picker.set_keymap(keymap);
     }
 
-    /// The frame, for keys, tests and placing.
     pub fn picker(&self) -> &Rc<Picker> {
         &self.picker
     }
 
-    /// Open from `parent` at `rect`, naming `target`, with the presets as
-    /// they are at `now`.
     pub fn open(
         &self,
         parent: &impl gtk::prelude::IsA<gtk::Widget>,
@@ -119,8 +104,6 @@ impl WhenPicker {
         self.preview("");
     }
 
-    /// What typing says under the field: when the words land, or how to
-    /// start.
     fn preview(&self, text: &str) {
         let Some(now) = *self.now.borrow() else {
             return;

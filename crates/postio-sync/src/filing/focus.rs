@@ -1,34 +1,8 @@
-//! Focus's filing pass (spec 007 T102, `contracts/engine.md`): each arrival
-//! classified in the transaction that filed it, and what the classifier
-//! decided carried out there, through the storage verbs that take the
-//! caller's transaction.
-//!
-//! # What it does with a decision
-//!
-//! - **Hold** (FR-120 to FR-122): the message is held under its digest
-//!   rule, and stays filed in the inbox, where the other apps and devices
-//!   see it; Focus's own inbox leaves it out until its digest is delivered
-//!   (`digest_holds`). A rule the user wrote wins over a reason Postio
-//!   guessed, so held mail is never also filtered.
-//! - **Filter** (FR-110 to FR-117): the decision is recorded with its
-//!   reason, its source and the layer that decided, and the message is
-//!   archived with the server's move queued, exactly as `a` archives it
-//!   (`postio_storage::actions::relocate`). An account with no Archive
-//!   folder keeps the mail in its inbox: filtered mail is archived mail,
-//!   and a decision on a message still in the inbox would say one thing
-//!   while the list said another. The message also gets its reason's
-//!   keyword, queued before the move, so the account's other machines
-//!   list it in Filtered too (#2076, `FilterReason::keyword`).
-//!
-//! # What it costs
-//!
-//! At most four statements per arrival, plus its writes, and none walks the
-//! mail (`contracts/engine.md`). A message no rule would act on costs no
-//! read at all ([`super::facts`]). One a rule would act on costs the guard
-//! questions its classifier asks: which senders the person wrote to (one
-//! seek per message, whatever the number of senders), whether they took part
-//! in the conversation (one `EXISTS`), and, once per call, the person's own
-//! addresses and the account's Archive folder.
+//! Focus's filing pass (spec 007 T102): classifies each arrival in the transaction that files it,
+//! then holds it under its digest or archives it with the move queued.
+//! A user-written rule wins over a guessed reason. With no Archive folder, filtered mail stays in
+//! the inbox so the decision and the list agree.
+//! At most four statements per arrival; a message no rule would act on costs no read.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -49,33 +23,19 @@ use super::facts::Known;
 use super::{FiledMessage, FilingEffects, FilingPass};
 use crate::drain::SyncError;
 
-/// What decides, for [`FocusFiling`]: a classifier's filing stage.
-///
-/// [`BuiltIn`] is Postio's own, `postio_classify`'s layers. The seam is
-/// here so the pass can be proven apart from the rules, and so milestone 2's
-/// model can take a turn without the pass changing.
-///
-/// **An implementation must be monotone in its facts**: answering `true` to
-/// a question can only keep mail where it is. Every fact is a guard, a
-/// reason *not* to act (`Facts`), and the pass leans on it: when a
-/// classifier acts on nothing while every unread fact is "no", no read is
-/// made.
+/// A classifier's filing stage; `BuiltIn` is Postio's own.
+/// An implementation must be monotone in its facts: answering `true` to a question can only keep
+/// mail where it is. The pass relies on it to skip reads.
 pub trait Classifier: Send + Sync + std::fmt::Debug {
-    /// What to do with `message`, given `facts`.
     fn at_filing(&self, message: &FiledMessage<'_>, facts: &dyn Facts) -> Outcome;
 }
 
-/// Postio's own classifier: `postio_classify`'s layers, over the automated
-/// senders Postio ships and the user's digest rules.
 #[derive(Debug, Clone, Default)]
 pub struct BuiltIn {
     digests: Digests,
 }
 
 impl BuiltIn {
-    /// The built-in layers, holding what `[[focus.digests]]` in `config`
-    /// asks: the rules that apply, in the file's order (contracts/config.md),
-    /// read as of today.
     pub fn from_config(config: &FocusConfig) -> Self {
         let applicable = config.applicable_digests();
         BuiltIn {
@@ -96,7 +56,6 @@ impl Classifier for BuiltIn {
 }
 
 impl Rules for BuiltIn {
-    /// The automated-senders table, as data (FR-114).
     fn senders(&self) -> &Senders {
         Senders::shipped()
     }
@@ -106,33 +65,24 @@ impl Rules for BuiltIn {
     }
 }
 
-/// Focus's filing pass: what a host in Focus mode hands its engines.
 #[derive(Debug, Clone)]
 pub struct FocusFiling {
     classifier: Arc<dyn Classifier>,
-    /// `[focus] filtering`: whether mail is filed away at all (FR-119).
     filtering: bool,
-    /// `[focus.filter]`: the senders never filed away (FR-111, FR-116).
     filter: FocusFilter,
 }
 
 impl Default for FocusFiling {
-    /// Focus's own: the built-in classifier, with `[focus]` as it is when
-    /// nothing is written -- filtering on, nobody pinned, no digests.
     fn default() -> Self {
         FocusFiling::with_classifier(Arc::new(BuiltIn::default()))
     }
 }
 
 impl FocusFiling {
-    /// Focus's own pass, as `config` sets it: the built-in classifier with
-    /// its digest rules, and whether and whom to file away.
     pub fn from_config(config: &FocusConfig) -> Self {
         FocusFiling::with_classifier(Arc::new(BuiltIn::from_config(config))).configured(config)
     }
 
-    /// A pass that decides with `classifier`, with `[focus]` at its
-    /// defaults.
     pub fn with_classifier(classifier: Arc<dyn Classifier>) -> Self {
         FocusFiling {
             classifier,
@@ -141,22 +91,16 @@ impl FocusFiling {
         }
     }
 
-    /// This pass, doing what `config` says of filtering: whether to file
-    /// anything away, and whom never to.
     pub fn configured(mut self, config: &FocusConfig) -> Self {
         self.filtering = config.filtering;
         self.filter = config.filter.clone();
         self
     }
 
-    /// Whether `outcome` asks this pass to do anything: a digest to hold the
-    /// message for, or a reason to file it away while filtering is on.
     fn acts(&self, outcome: &Outcome) -> bool {
         outcome.hold.is_some() || (self.filtering && outcome.filter.is_some())
     }
 
-    /// The SQL of every read the pass can issue, so a test can ask the
-    /// planner about each (`contracts/engine.md`: no scans).
     pub fn reads() -> Vec<String> {
         vec![
             IdentityRepository::explain_own_addresses().to_owned(),
@@ -167,11 +111,8 @@ impl FocusFiling {
         ]
     }
 
-    /// What the classifier decides for `filed`, reading from the store only
-    /// the facts it asks for, each at most once.
-    ///
-    /// `own` is the person's own domains, read by the first arrival in the
-    /// call that needs them and shared by the rest.
+    /// `own` is the person's own domains, read by the first arrival that needs them and shared by
+    /// the rest.
     async fn decide(
         &self,
         transaction: &Connection,
@@ -181,15 +122,10 @@ impl FocusFiling {
         let never = |address: &EmailAddress| self.filter.never_filters(address);
         let senders = &filed.message.from;
         let mut known = Known::new(senders, filed.thread, &never);
-        // Nothing acts while every unread guard says "no": then nothing
-        // acts at all, and there is nothing to read (`super::facts`).
         let optimistic = self.classifier.at_filing(filed, known.assuming(false));
         if !self.acts(&optimistic) {
             return Ok(optimistic);
         }
-        // Asked again, with doubt for what is unread, until it asks nothing
-        // unread. Each question is read once, so this turns at most once
-        // per question.
         loop {
             let outcome = self.classifier.at_filing(filed, known.assuming(true));
             let wanted = known.wanted();
@@ -214,8 +150,6 @@ impl FocusFiling {
     }
 }
 
-/// The domains the person sends from, lowercased: every account's address
-/// and every identity's.
 async fn own_domains(transaction: &Connection) -> Result<BTreeSet<String>, SyncError> {
     Ok(IdentityRepository::new(transaction)
         .own_addresses()
@@ -226,7 +160,6 @@ async fn own_domains(transaction: &Connection) -> Result<BTreeSet<String>, SyncE
         .collect())
 }
 
-/// Which of `senders` the person wrote to, normalised.
 async fn written_to(
     transaction: &Connection,
     senders: &[EmailAddress],
@@ -238,13 +171,9 @@ async fn written_to(
         .collect())
 }
 
-/// What the pass decided for a call's messages, read and decided with
-/// nothing written yet.
 #[derive(Default)]
 struct Plan<'m> {
-    /// Held for a digest rule: the message, and the rule.
     holds: Vec<(MessageId, postio_classify::RuleName)>,
-    /// Filed away: the message, why, and its account's Archive.
     filings: Vec<(
         &'m postio_model::Message,
         postio_classify::Reason,
@@ -253,18 +182,16 @@ struct Plan<'m> {
 }
 
 impl FocusFiling {
-    /// Focus's pass as a sweep of the inbox runs it (spec 007 FR-118):
-    /// `config`'s filtering, with every guard, and no digest rule -- a rule
-    /// holds what arrives after it, not what is already in the inbox.
+    /// A sweep of the inbox: filtering with every guard and no digest rule, since a rule holds
+    /// later arrivals, not mail already there.
     pub fn sweeping(config: &FocusConfig) -> Self {
         let mut config = config.clone();
         config.digests.clear();
         FocusFiling::from_config(&config)
     }
 
-    /// Which of `filed` this pass would file away, and nothing written: what
-    /// a sweep's preview counts. It decides exactly as [`Self::file_away`]
-    /// does, so the count is what the sweep then moves.
+    /// Which of `filed` this pass would file away, writing nothing; decides exactly as `file_away`,
+    /// so the preview count is what the sweep moves.
     pub async fn would_file_away(
         &self,
         connection: &Connection,
@@ -278,9 +205,19 @@ impl FocusFiling {
             .collect())
     }
 
-    /// File `filed` away by this pass's reasons, in `transaction`, and hold
-    /// nothing and answer no reminder: what a sweep of mail already in the
-    /// inbox does, where [`FilingPass::file`] is for arrivals.
+    pub async fn outcomes(
+        &self,
+        connection: &Connection,
+        filed: &[FiledMessage<'_>],
+    ) -> Result<Vec<Outcome>, SyncError> {
+        let mut own = None;
+        let mut outcomes = Vec::with_capacity(filed.len());
+        for message in filed {
+            outcomes.push(self.decide(connection, message, &mut own).await?);
+        }
+        Ok(outcomes)
+    }
+
     pub async fn file_away(
         &self,
         transaction: &Connection,
@@ -290,8 +227,6 @@ impl FocusFiling {
         self.carry_out(transaction, plan, false, Utc::now()).await
     }
 
-    /// What this pass would do with `filed`: read from the store only what
-    /// the classifier asks, each at most once, and decide.
     async fn plan<'m>(
         &self,
         transaction: &Connection,
@@ -302,8 +237,7 @@ impl FocusFiling {
         let mut plan = Plan::default();
         for message in filed {
             let outcome = self.decide(transaction, message, &mut own).await?;
-            // A rule the user wrote wins over a reason Postio guessed: held
-            // mail stays filed in the inbox, out of Focus's own (FR-121).
+            // A user-written rule wins over a guessed reason (FR-121).
             if let Some(rule) = outcome.hold {
                 plan.holds.push((message.message.id, rule));
                 continue;
@@ -334,10 +268,7 @@ impl FocusFiling {
         Ok(plan)
     }
 
-    /// Write what `plan` decided, as of `now`: its holds when `holding`,
-    /// and its filings -- each decision with its reason, and the archive
-    /// with the server's move queued, one move per folder left, as a
-    /// multi-select archive is.
+    /// One move is queued per folder left, as a multi-select archive does.
     async fn carry_out(
         &self,
         transaction: &Connection,
@@ -381,9 +312,7 @@ impl FocusFiling {
                 .push(message.id);
             effects.filtered.push(message.id);
         }
-        // The reason on each message too, for the account's other machines
-        // (#2076): queued before the moves below, so the server moves
-        // messages that already say why.
+        // Queued before the moves so the server moves messages that already say why (#2076).
         for ((account, reason), messages) in &marking {
             actions::mark_filtered(transaction, *account, messages, Some(*reason), now).await?;
         }
@@ -425,15 +354,9 @@ impl FilingPass for FocusFiling {
     }
 }
 
-/// Whether `message` can answer a reminder: a reply -- it names what it
-/// answers, by `In-Reply-To` or `References` -- filed somewhere other than
-/// the person's own folders, and not in Junk, where a stranger's mail
-/// that threads in by its subject would otherwise count as an answer.
-///
-/// A message that names nothing starts a conversation of its own, and no
-/// reminder can stand on that, so a notification costs no read. A reply
-/// threaded by its subject alone is not missed: the due timer asks who
-/// has written in the conversation before it fires a reminder.
+/// A reply names what it answers (`In-Reply-To` or `References`), is not in the person's own
+/// folders and not in Junk, where a stranger's mail threaded by subject would count.
+/// A subject-threaded reply is not missed: the due timer asks before it fires.
 fn may_answer(message: &FiledMessage<'_>) -> bool {
     let replies = message.message.in_reply_to.is_some() || !message.message.references.is_empty();
     replies
@@ -443,15 +366,10 @@ fn may_answer(message: &FiledMessage<'_>) -> bool {
         )
 }
 
-/// A reply from somebody else cancels the reminder waiting on it, and
-/// settles one that had already surfaced (spec 007 FR-044): the person was
-/// waiting to hear, and has.
-///
-/// One read per call, and only when a reply arrived: whether a reminder
-/// stands on any of the conversations the replies joined. Only when one
-/// does is the person's own list of addresses read, to tell their own
-/// follow-up -- which leaves the reminder waiting -- from somebody else's
-/// answer.
+/// A reply from somebody else cancels the reminder waiting on it, and settles one that had surfaced
+/// (spec 007 FR-044).
+/// One read per call, and the person's own addresses only when a reminder stands, to tell their own
+/// follow-up from an answer.
 async fn answer_reminders(
     transaction: &Connection,
     filed: &[FiledMessage<'_>],
@@ -500,9 +418,8 @@ async fn answer_reminders(
     Ok(())
 }
 
-/// A classifier's reason as the store spells it (`filter_decisions`). One
-/// vocabulary, held in two crates so the store never depends on what
-/// decides; this is where they meet, and a test holds them equal.
+/// A classifier's reason as the store spells it (`filter_decisions`); one vocabulary in two crates,
+/// held equal by a test.
 pub(crate) fn stored_reason(kind: ReasonKind) -> FilterReason {
     match kind {
         ReasonKind::Spam => FilterReason::Spam,
@@ -514,7 +431,6 @@ pub(crate) fn stored_reason(kind: ReasonKind) -> FilterReason {
     }
 }
 
-/// A classifier's layer as the store spells it.
 pub(crate) fn stored_layer(layer: Layer) -> FilterLayer {
     match layer {
         Layer::Header => FilterLayer::Header,
@@ -530,9 +446,6 @@ mod tests {
 
     #[test]
     fn the_store_spells_every_reason_the_classifier_gives_as_the_classifier_does() {
-        // One vocabulary (FR-113), two crates: every reason the classifier
-        // can give has a stored spelling, the same one, and every stored
-        // reason is one the classifier can give.
         for kind in ReasonKind::ALL {
             assert_eq!(stored_reason(kind).as_str(), kind.as_str(), "{kind:?}");
         }
@@ -569,9 +482,6 @@ mod tests {
 
     #[tokio::test]
     async fn every_reason_the_classifier_gives_is_one_the_store_keeps() {
-        // The CHECK on `filter_decisions` is the vocabulary's last word: a
-        // reason it refuses is never stored. Each of the classifier's, as
-        // the pass records it, is kept and read back as itself.
         let database = postio_storage::test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
         let (account, inbox) = postio_storage::test_support::account_with_inbox(&connection).await;

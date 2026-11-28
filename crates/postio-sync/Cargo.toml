@@ -11,23 +11,14 @@ repository.workspace = true
 [dependencies]
 async-trait = { workspace = true }
 chrono = { workspace = true, features = ["std"] }
-# `default-features = false` drops `io-imap` and its TLS stack: all this crate
-# needs is the `MailBackend` seam and its mock. See ADR 0001 and the feature
-# comment in `postio-account/Cargo.toml`.
-# Spelled as a path rather than inherited from the workspace: cargo will not
-# let an inherited dependency turn default features off, and turning them off
-# is the entire point here.
+# `default-features = false` drops `io-imap` and its TLS stack (ADR 0001). A path, not the workspace
+# entry: an inherited dependency cannot turn default features off.
 postio-account = { version = "0.6.2", path = "../postio-account", default-features = false }
-# Focus's filing pass asks the classifier what to do with each arrival, in
-# the transaction that filed it (spec 007, contracts/engine.md). The
-# classifier sends nothing and reaches nothing: its boundary rule keeps this
-# crate, and everything that sends, out of its graph.
+postio-calendar.workspace = true
 postio-classify.workspace = true
-# `[focus]`: whether Focus files mail away at all, and the senders it never
-# does (spec 007 FR-119, FR-111), which the pass reads as it is built.
+postio-dav.workspace = true
 postio-config.workspace = true
-# The search index's body column. A body is only ever indexable at the moment
-# it lands, and this crate is where it lands -- see `fetch_body` (#327).
+# A body is only indexable at the moment it lands, which is in this crate (`fetch_body`, #327).
 postio-index.workspace = true
 postio-model.workspace = true
 postio-smtp.workspace = true
@@ -38,15 +29,10 @@ tracing = { workspace = true }
 postio-workspace-hack.workspace = true
 
 [dev-dependencies]
-# Decoding the SASL PLAIN argument a transcript recorded, so a test can say
-# *which* credential reached the server rather than only that one did.
 base64 = { workspace = true }
-# Tests only: the real io-imap-backed backend and the in-process IMAP server
-# it can be pointed at, so the engine can be driven over a loopback socket
-# rather than only against the mock. Everything above still goes through
-# `MailBackend` — no io-imap type appears anywhere in this crate — and the
-# ordinary build keeps `default-features = false` above, which is what keeps
-# the protocol crate out of the engine's dependency graph.
+# Tests only: the real io-imap backend and the in-process IMAP server, so the engine runs over a
+# loopback socket.
+# No io-imap type appears in this crate; the ordinary build keeps `default-features = false`.
 postio-account = { path = "../postio-account", features = ["imap", "test-server"] }
 postio-storage = { workspace = true, features = ["test-support"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

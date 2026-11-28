@@ -1,8 +1,3 @@
-//! HTML-only mail with remote images, opened in Focus (US2 scenario 4,
-//! T072): drawn from its HTML, sanitised, its images blocked until the
-//! sender is allowed, no script run, and no request made -- over the corpus
-//! fixtures the reader's own no-request cases use.
-
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -19,9 +14,6 @@ fn html_of(name: &str) -> String {
 
 pub fn remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
         let (pixel, _) = fixture
             .file(("Shop", "offers@shop.example"), "New lamps", "Brass.", 5)
@@ -41,10 +33,7 @@ pub fn remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for() {
             .write_html_body(scripted, &html_of("html-script-forms"))
             .await;
         let (window, _client) = fixture.open().await;
-        assert!(
-            crate::settle_until(async || support::subjects(&window).len() == 2).await,
-            "the inbox never reached the screen"
-        );
+        support::rows_shown(&window, 2).await;
         support::press(&window, "Return", gtk::gdk::ModifierType::empty());
         let reading = window.reading().expect("open");
         let asked: Rc<RefCell<Vec<String>>> = Rc::default();
@@ -57,8 +46,6 @@ pub fn remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for() {
             "the remote images were not held back behind the banner"
         );
         let document = reading.reader().test_document();
-        // The images' hosts, not the domain: the fixture's click-tracking
-        // link stays a link, which opens only when chosen.
         for host in [
             "pixel.tracker.example.org",
             "images.tracker.example.org",
@@ -69,8 +56,6 @@ pub fn remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for() {
                 "an image from {host} survived into the document before the sender was allowed"
             );
         }
-        // Longer than the dwell after which an allowed image would be asked
-        // for: nothing is, because nothing is allowed.
         crate::settle_for(std::time::Duration::from_millis(1500)).await;
         assert!(
             asked.borrow().is_empty(),
@@ -100,10 +85,6 @@ pub fn remote_images_stay_blocked_scripts_go_and_nothing_is_asked_for() {
     });
 }
 
-/// A window over `senders`' messages, newest first (so `j` lands on the
-/// first listed), each with the tracking-pixel mail's HTML. The reader's
-/// fetch is a recorder: what it holds is what the app asked the network
-/// for.
 async fn shop(
     senders: &[(&str, &str, &str)],
 ) -> (postio_gtk::window::FocusWindow, Rc<RefCell<Vec<String>>>) {
@@ -113,8 +94,6 @@ async fn shop(
             .file((name, address), subject, "Lamps.", minutes)
             .await;
         fixture
-            // Each message's images are its own: a URL fetched for one is
-            // not asked for again for the next.
             .write_html_body(
                 message,
                 &html_of("html-tracking-pixel-remote-images").replace(
@@ -144,14 +123,8 @@ async fn shop(
     (window, asked)
 }
 
-/// Show images, once: nothing is asked for until the button is pressed, then
-/// the message's images are, and the next message from the sender is held
-/// back again.
 pub fn show_fetches_once_and_asks_for_nothing_before() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, asked) = shop(&[
             ("Shop", "once@shop.example", "New lamps"),
             ("Shop", "once@shop.example", "More lamps"),
@@ -180,7 +153,6 @@ pub fn show_fetches_once_and_asks_for_nothing_before() {
         );
         let asked_for_first = asked.borrow().len();
 
-        // Once means this message: the sender's next one is held back.
         support::keys(&window, &["j"]);
         assert!(
             crate::settle_until(async || reading.title() == "More lamps").await,
@@ -199,14 +171,8 @@ pub fn show_fetches_once_and_asks_for_nothing_before() {
     });
 }
 
-/// Always show from this sender (`alt+I`): the images are asked for, and the
-/// sender's next message opens with them, no banner; another sender's does
-/// not.
 pub fn always_holds_for_the_senders_next_message() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let (window, asked) = shop(&[
             ("Shop", "always@shop.example", "New lamps"),
             ("Shop", "always@shop.example", "More lamps"),

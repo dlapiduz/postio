@@ -1,10 +1,5 @@
-//! The GTK half of storyboards (spec 008), which Postio's runner drives: how a
-//! scripted key reaches a window, where typed text lands, whether the
-//! keyboard is on something a person could use, when a frame has settled,
-//! and the outlined frame a reviewer reads.
-//!
-//! Everything here works on a plain `gtk::Window` and knows nothing of the
-//! app's own widgets.
+//! The GTK half of storyboards (spec 008): key delivery, reachability, settling and outlined frames
+//! on a plain `gtk::Window`.
 
 pub mod deliver;
 pub mod outline;

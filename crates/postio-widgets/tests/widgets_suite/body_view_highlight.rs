@@ -1,9 +1,3 @@
-//! A highlighted range in the body (specs/007-postio-focus T065, research
-//! R2): the sentence a marker quotes, found in the rendered text, is drawn
-//! over its own rectangles and brought into view -- and belongs to the
-//! message it was found in.
-
-use gtk::gdk;
 use gtk::prelude::*;
 use postio_widgets::body_view::BodyView;
 
@@ -11,8 +5,6 @@ use crate::support::{conversation, reader_deadline, until};
 
 const TARGET: &str = "Please leave comments by Wednesday";
 
-/// A message long enough that its last paragraph starts below the first
-/// screen, ending in the sentence a marker would quote.
 fn long_message() -> String {
     let mut html = String::new();
     for n in 0..60 {
@@ -27,10 +19,6 @@ fn long_message() -> String {
 }
 
 pub fn a_highlighted_range_is_drawn_over_its_rectangles_and_scrolled_into_view() {
-    if adw::init().is_err() || gdk::Display::default().is_none() {
-        eprintln!("skipping: no display (see scripts/test-headless.sh --status)");
-        return;
-    }
     let view = BodyView::new(reader_deadline());
     let scroller = gtk::ScrolledWindow::builder().child(&view).build();
     let window = gtk::Window::builder()

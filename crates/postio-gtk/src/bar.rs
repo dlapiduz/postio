@@ -1,16 +1,8 @@
-//! The command bar (screens 07-09; contracts/focus-surface.md, "The command
-//! bar"): `/` or `Ctrl K` opens one bar for search, places and commands.
-//!
-//! What the bar says is the controller's (`postio_focus`, spec 009 slice
-//! 8): what is typed, the lines it answers with, which of them runs what,
-//! and which results are current. This draws [`BarView`] and spec 010's
-//! dropdown, and hands back what a person does -- the words as they change,
-//! Return or a click on a line, `Tab`, a saved search's pill -- through
-//! [`Bar::connect_input`]. The arrows' highlight is
-//! the toolkit's, as on the Mac: the view says only where a run or a
-//! landing moved it.
-//!
-//! Everything here is local. Nothing typed leaves the machine.
+//! The command bar: `/` or `Ctrl K` opens one bar for search, places and commands. The controller
+//! (`postio_focus`) owns what it says;
+//! this draws it and hands back what a person does. The arrows' highlight is the toolkit's; the
+//! view says only where a run or landing moved it.
+//! Everything typed stays local.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -24,88 +16,58 @@ use postio_ui::command_bar::{self as rules, SAVED};
 use postio_widgets::widgets::keyhint;
 use postio_widgets::widgets::space::{S1, S2, S3};
 
-/// The bar's width, as the screens draw it.
 const WIDTH: i32 = 860;
-/// The top bar's field, which the bar's input takes the place of.
 const FIELD_WIDTH: i32 = 480;
 
-/// What the field says while it is spec 009's: commands and correspondents.
 const BLEND_PLACEHOLDER: &str = "Search mail, go to a folder, or run a command";
 
-/// What a person did in the bar, for the controller.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BarInput {
-    /// The field holds these words now.
     Typed(String),
-    /// Return on the highlighted line, or a click on one: its token.
     Run(u64),
-    /// A saved search's pill, or another command the bar has a control for.
     Command(CommandId),
-    /// The arrows came to rest on the dropdown's row with this token.
     Highlighted(u64),
 }
 
 type Handler = Rc<dyn Fn(BarInput)>;
 type TabHandler = Rc<dyn Fn() -> bool>;
 
-/// The bar.
 pub struct Bar {
     root: gtk::Box,
-    /// The bar over its scrim: what the window lays over the list.
     over: gtk::Overlay,
-    /// The input line: the field's width, the top bar's or the dropdown's.
     input: gtk::Box,
-    /// What dims the list behind spec 009's lines.
     scrim: gtk::Box,
     entry: gtk::Entry,
-    /// The rest of the best word, after the caret (screen 02).
     ghost: gtk::Label,
-    /// "Tab completes", at the field's end while there is a ghost.
     ghost_hint: gtk::Box,
     echo: gtk::Label,
     list: gtk::ListBox,
     keymap: RefCell<Keymap>,
-    /// The lines drawn now, one per row of `list`.
     lines: RefCell<Vec<BarLine>>,
-    /// The view drawn now.
     view: RefCell<BarView>,
     open: Cell<bool>,
-    /// Set while the bar puts the controller's own words in the field, so
-    /// they are not said back as typing.
+    /// Set while the bar puts the controller's own words in the field, so they are not said back as
+    /// typing.
     quiet: Cell<bool>,
-    /// Whether the places have been read since the bar last opened.
     places_known: Cell<bool>,
-    /// The top bar's field, which the bar's input stands in for while open.
     field: RefCell<Option<gtk::Widget>>,
     handler: RefCell<Option<Handler>>,
     tab: RefCell<Option<TabHandler>>,
-    /// This bar, weakly: what a signal comes back to.
     me: RefCell<std::rc::Weak<Bar>>,
-    /// The saved row across the top.
     saved_row: gtk::Box,
-    /// Where the keyboard goes when the bar closes: the list, once the
-    /// window says which widget that is.
     home: RefCell<Option<Rc<dyn Fn()>>>,
-    /// Spec 009's blend of lines: the saved row, the echo, the lines and
-    /// their footer.
     blend: gtk::Box,
-    /// Spec 010's dropdown, drawn in the blend's place while the
-    /// controller sends [`postio_focus::Intent::Dropdown`].
     dropdown: Rc<crate::dropdown::Dropdown>,
     dropping: Cell<bool>,
 }
 
 impl Bar {
-    /// The commands the bar has a control for beyond its command rows: a
-    /// pill for each saved search, and a row for each message found.
     pub fn controls() -> Vec<CommandId> {
         SAVED
             .into_iter()
             .chain([
                 CommandId::OpenMessage,
                 CommandId::ToggleResultOrder,
-                // The dropdown's own: its Show all row, and the keys its
-                // Recent and People rows name.
                 CommandId::ShowAllResults,
                 CommandId::ForgetRecent,
                 CommandId::ExcludeSuggestion,
@@ -113,7 +75,6 @@ impl Bar {
             .collect()
     }
 
-    /// A closed bar, its keys from `keymap`.
     pub fn new(keymap: &Keymap) -> Rc<Self> {
         let icon = gtk::Image::from_icon_name("system-search-symbolic");
         icon.set_accessible_role(gtk::AccessibleRole::Presentation);
@@ -125,8 +86,7 @@ impl Bar {
         let input = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         input.add_css_class("focus-bar-input");
         input.append(&icon);
-        // The ghost is laid over the entry, after what is typed, and takes
-        // no pointer: a click lands on the entry under it.
+        // The ghost sits over the entry and takes no pointer: a click lands on the entry under it.
         let ghost = gtk::Label::new(None);
         ghost.add_css_class("focus-bar-ghost");
         ghost.add_css_class("dim-label");
@@ -175,9 +135,6 @@ impl Bar {
         let saved_row = gtk::Box::new(gtk::Orientation::Horizontal, S2);
         saved_row.add_css_class("focus-bar-saved");
         saved_row.set_visible(false);
-        // The bar opens in place (C24): its input is drawn where the top
-        // bar's own field is -- same width, centred the same way -- and the
-        // results hang below it as a panel of their own.
         input.set_halign(gtk::Align::Center);
         input.set_width_request(FIELD_WIDTH);
         let blend = gtk::Box::new(gtk::Orientation::Vertical, S2);
@@ -198,9 +155,7 @@ impl Bar {
         root.set_valign(gtk::Align::Start);
         root.append(&input);
         root.append(&panel);
-        // The list dims behind the bar (screens 07-09). The dimming is
-        // paint only: it takes no pointer, so the list under it behaves as
-        // it did.
+        // Paint only: it takes no pointer, so the list under it behaves as before.
         let scrim = gtk::Box::new(gtk::Orientation::Vertical, 0);
         scrim.add_css_class("focus-bar-scrim");
         scrim.set_can_target(false);
@@ -237,8 +192,8 @@ impl Bar {
         });
         bar.me.replace(Rc::downgrade(&bar));
         let weak = Rc::downgrade(&bar);
-        // The scrim is the bar's: a press on it, outside the bar, closes
-        // the bar as Escape does, rather than reaching the list beneath.
+        // A press on the scrim, outside the bar, closes it as Escape does rather than reaching the
+        // list.
         let outside = gtk::GestureClick::new();
         outside.connect_pressed({
             let weak = weak.clone();
@@ -275,10 +230,7 @@ impl Bar {
         bar.entry.connect_changed({
             let weak = weak.clone();
             move |entry| {
-                // A ghost belongs to the words it was drawn for: the next
-                // view draws the one for these.
                 if let Some(bar) = weak.upgrade() {
-                    // Its words too, so a placing still to come draws none.
                     bar.ghost.set_text("");
                     bar.ghost.set_visible(false);
                     bar.dress_terms();
@@ -318,8 +270,7 @@ impl Bar {
         bar
     }
 
-    /// The top bar's field: the input takes its place while the bar is open,
-    /// so the field is hidden (still laid out) until the bar closes.
+    /// The field is hidden (still laid out) while the bar is open; the input stands in for it.
     pub fn set_field(&self, field: gtk::Widget) {
         field.set_opacity(if self.open.get() { 0.0 } else { 1.0 });
         self.field.replace(Some(field));
@@ -331,39 +282,28 @@ impl Bar {
         }
     }
 
-    /// The bar, to lay over the window.
     pub fn widget(&self) -> &gtk::Overlay {
         &self.over
     }
 
-    /// Hand what a person does in the bar to `handler`.
     pub fn connect_input(&self, handler: impl Fn(BarInput) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
 
-    /// Ask `tab` what `Tab` in the field does: `false` when it is the
-    /// toolkit's key, with no chip to step into.
+    /// `false` when `Tab` is the toolkit's key, with no chip to step into.
     pub fn connect_tab(&self, tab: impl Fn() -> bool + 'static) {
         self.tab.replace(Some(Rc::new(tab)));
     }
 
-    /// Read the keys the bar shows of its own from `keymap`: the saved
-    /// searches'. A line's key comes with the line.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         self.show_saved();
     }
 
-    /// Hand the keyboard home whenever the bar closes: `home` puts it
-    /// there, wherever that is then -- the list, or a search's results in
-    /// its place.
     pub fn set_home(&self, home: impl Fn() + 'static) {
         self.home.replace(Some(Rc::new(home)));
     }
 
-    /// Show the bar with `text` in its field and `select` of it selected:
-    /// the controller's [`postio_focus::Intent::OpenBar`]. Also how the
-    /// controller puts new words in the field of a bar already up.
     pub fn open_on(&self, text: &str, select: Option<(u32, u32)>) {
         if !self.open.get() {
             self.open.set(true);
@@ -383,17 +323,13 @@ impl Bar {
         }
     }
 
-    /// Close the bar, as the controller says. Nothing it showed is kept.
     pub fn close(&self) {
         if !self.open.replace(false) {
             return;
         }
-        // The keyboard leaves the entry with the bar: left in a hidden
-        // entry, every single-letter key after it would be taken for typing.
-        // Asked now, and handed over once the bar is down: what hiding it
-        // does to the focus is then done, and cannot move it on again. A
-        // keyboard on nothing goes home too -- the field could not take it
-        // on a busy window, or a popover let it go -- since on the window
+        // A keyboard left in a hidden entry would make every single-letter key typing. Handed over
+        // once the bar is down, so hiding
+        // it cannot move focus again; a keyboard on nothing goes home too, since on the window
         // itself `j` and Escape reach nothing.
         let had_keyboard = self.entry.root().filter(|root| {
             root.focus().is_none_or(|focus| {
@@ -414,8 +350,6 @@ impl Bar {
         while let Some(child) = self.list.first_child() {
             self.list.remove(&child);
         }
-        // Home when the window said where that is, to nothing otherwise: a
-        // window's own keys are heard from either.
         if let Some(root) = had_keyboard {
             let home = self.home.borrow().clone();
             match home {
@@ -425,29 +359,24 @@ impl Bar {
         }
     }
 
-    /// Closed by the toolkit -- a click outside -- rather than by the
-    /// controller, which hears it as Back.
+    /// Closed by the toolkit (a click outside); the controller hears it as Back.
     fn dismiss(&self) {
         self.say(BarInput::Command(CommandId::Back));
     }
 
-    /// The places the bar can go have been read since it opened.
     pub fn places_read(&self) {
         if self.open.get() {
             self.places_known.set(true);
         }
     }
 
-    /// Draw `view`, whole: the controller's
-    /// [`postio_focus::Intent::BarLines`].
     pub fn show(&self, view: &BarView) {
         self.drop_down(false);
         self.show_ghost(None, None);
         let kept = self.highlighted_line();
         self.echo.set_visible(view.echo.is_some());
         self.echo.set_text(view.echo.as_deref().unwrap_or_default());
-        // The same lines under new tokens -- a later answer drawing what is
-        // already there -- keep their rows: only what runs them changes.
+        // The same lines under new tokens keep their rows: only what runs them changes.
         let same_words = {
             let lines = self.lines.borrow();
             lines.len() == view.lines.len()
@@ -474,9 +403,8 @@ impl Bar {
         if saved_changed {
             self.show_saved();
         }
-        // Where a run or a landing put it; else where the arrows left it,
-        // while that line is still drawn -- the same line, though a later
-        // answer drew it under a new token; else the first line that runs.
+        // Where a run or landing put it; else where the arrows left it while that line is still
+        // drawn; else the first line that runs.
         let lines = self.lines.borrow();
         let at = view
             .highlight
@@ -496,8 +424,6 @@ impl Bar {
         }
     }
 
-    /// Draw the dropdown, whole: the controller's
-    /// [`postio_focus::Intent::Dropdown`], in the lines' place.
     pub fn show_dropdown(&self, view: &postio_focus::DropdownView) {
         self.drop_down(true);
         self.dropdown.show(view);
@@ -505,9 +431,6 @@ impl Bar {
         self.show_ghost(view.ghost.as_deref(), view.ghost_hint.as_ref());
     }
 
-    /// The operator terms in the field, drawn as chips where they are typed
-    /// while the dropdown is up (spec 010 screens 04-05, #2082): a quiet
-    /// ground, the operator in mono, an exclusion's value struck through.
     /// The text stays the text, so typing and the caret are the entry's.
     fn dress_terms(&self) {
         let attributes = gtk::pango::AttrList::new();
@@ -540,8 +463,6 @@ impl Bar {
         self.entry.set_attributes(&attributes);
     }
 
-    /// The ranges of the field drawn as chips, and whether each is struck:
-    /// what a test reads of them.
     pub fn chip_ranges(&self) -> Vec<(u32, u32, bool)> {
         let Some(attributes) = self.entry.attributes() else {
             return Vec::new();
@@ -564,9 +485,7 @@ impl Bar {
             .collect()
     }
 
-    /// Draw `ghost` after the caret, and its hint at the field's end; or
-    /// neither. Placed once the entry has its size, at the end of what is
-    /// typed, measured in the entry's own font.
+    /// Placed once the entry has its size, measured in the entry's own font.
     fn show_ghost(&self, ghost: Option<&str>, hint: Option<&postio_ui::hints::Hint>) {
         while let Some(child) = self.ghost_hint.first_child() {
             self.ghost_hint.remove(&child);
@@ -592,16 +511,12 @@ impl Bar {
         });
     }
 
-    /// Put the ghost at the end of what is typed, when it fits beside it.
     fn place_ghost(&self) {
         if self.ghost.text().is_empty() {
             return;
         }
-        // A view can land before the bar's first frame -- on a busy machine
-        // the controller answers inside the turn `/` opened it in -- and a
-        // field with no width yet has no room: placed now, the ghost would
-        // stay hidden. It is placed on the first frame that has laid the
-        // field out (#2151).
+        // A view can land before the first frame, when the field has no width and the ghost would
+        // stay hidden: place it on the first laid-out frame (#2151).
         let Some(field) = self.ghost.parent() else {
             return;
         };
@@ -627,9 +542,6 @@ impl Bar {
         self.ghost.set_visible(wide as f32 <= room);
     }
 
-    /// Where what is typed ends, from the left of the overlay the ghost is
-    /// laid in: its text's own start, and the typed words measured in its
-    /// font.
     fn typed_end(&self) -> Option<f32> {
         let text = self.entry.delegate()?;
         let field = self.ghost.parent()?;
@@ -640,32 +552,24 @@ impl Bar {
         Some(start + wide as f32)
     }
 
-    /// The ghost drawn after the caret, while it is.
     pub fn ghost(&self) -> Option<String> {
         (self.ghost.is_visible() && !self.ghost.text().is_empty())
             .then(|| self.ghost.text().to_string())
     }
 
-    /// Where the ghost starts and where what is typed ends, from the
-    /// field's left, for a test to hold one against the other.
     pub fn ghost_at(&self) -> Option<(f32, f32)> {
         let at = self.ghost.compute_bounds(&self.ghost.parent()?)?.x();
         Some((at, self.typed_end()?))
     }
 
-    /// The dropdown, for what a test reads of it.
     pub fn dropdown(&self) -> &crate::dropdown::Dropdown {
         &self.dropdown
     }
 
-    /// Show the dropdown, or the blend of lines, in the panel.
     fn drop_down(&self, dropping: bool) {
         self.dropping.set(dropping);
         self.dropdown.widget().set_visible(dropping);
         self.blend.set_visible(!dropping);
-        // Spec 010 US1: the dropdown's field grows to the panel's width
-        // and says what it searches, over an inbox it does not dim; the
-        // commands and correspondents keep spec 009's (C24).
         self.input
             .set_width_request(if dropping { WIDTH } else { FIELD_WIDTH });
         self.entry.set_placeholder_text(Some(if dropping {
@@ -680,7 +584,6 @@ impl Bar {
         }
     }
 
-    /// Whether the list behind the bar is dimmed.
     pub fn dims_the_list(&self) -> bool {
         self.over.is_visible() && !self.scrim.has_css_class("focus-bar-scrim-clear")
     }
@@ -721,7 +624,6 @@ impl Bar {
         }
     }
 
-    /// One line's row.
     fn line_row(&self, line: &BarLine) -> gtk::ListBoxRow {
         let row = gtk::ListBoxRow::new();
         match line.kind {
@@ -743,19 +645,15 @@ impl Bar {
         row
     }
 
-    /// Whether the bar is up.
     pub fn is_open(&self) -> bool {
         self.open.get()
     }
 
-    /// Whether the places the bar can go have been read since it opened.
     pub fn places_known(&self) -> bool {
         self.places_known.get()
     }
 
-    /// Handle one key in the bar's entry, as its key controller does;
-    /// `true` when the bar used it. The arrows walk the lines; `Tab` steps
-    /// into the chips, and on from chip to chip.
+    /// `true` when the bar used the key.
     pub fn press(&self, key: gtk::gdk::Key, state: gtk::gdk::ModifierType) -> bool {
         match key {
             gtk::gdk::Key::Down if self.dropping.get() => self.dropdown.step(1),
@@ -766,40 +664,34 @@ impl Bar {
                 let tab = self.tab.borrow().clone();
                 return tab.is_some_and(|tab| tab());
             }
-            // Typing wins: `O` is a letter for the entry. The order key
-            // carries `alt` and is the window's command.
+            // Typing wins: `O` is a letter for the entry; the order key carries `alt` and is the
+            // window's.
             _ => return false,
         }
         true
     }
 
-    /// Run the highlighted row, as Return does.
     pub fn run_search_row(&self) {
         self.run_selected();
     }
 
-    /// The bar's input, where the words are typed.
     pub fn input(&self) -> gtk::Widget {
         self.entry.clone().upcast()
     }
 
-    /// What the entry holds now.
     pub fn typed(&self) -> String {
         self.entry.text().to_string()
     }
 
-    /// The query a search would ask: the words typed.
     pub fn query(&self) -> String {
         self.entry.text().trim().to_owned()
     }
 
-    /// Put `text` in the bar, as typing it would.
     pub fn set_text(&self, text: &str) {
         self.entry.set_text(text);
         self.entry.set_position(-1);
     }
 
-    /// Every command the bar can list: what typing its name finds.
     pub fn commands(&self) -> Vec<CommandId> {
         let state = postio_core::Availability {
             scope: AccountScope::Unified,
@@ -811,15 +703,12 @@ impl Bar {
         rules::add_account_verbs(&mut entries, &keymap, state, "");
         entries
             .into_iter()
-            .filter_map(|entry| match entry.id {
-                ActionId::Builtin(command) => Some(command),
-                ActionId::Ext(_) => None,
+            .map(|entry| match entry.id {
+                ActionId::Builtin(command) => command,
             })
             .collect()
     }
 
-    /// The subjects of the messages listed, top to bottom: the dropdown's
-    /// hits, which are the only messages the bar lists.
     pub fn result_subjects(&self) -> Vec<String> {
         if self.dropping.get() {
             return self.dropdown.hit_subjects();
@@ -827,8 +716,6 @@ impl Bar {
         Vec::new()
     }
 
-    /// The highlighted row, as a storyboard observes it: what kind of row
-    /// it is, and its own labels, as a person reads it.
     pub fn highlighted(&self) -> Option<(&'static str, String)> {
         if self.dropping.get() {
             use postio_focus::DropdownRowKind as Kind;
@@ -860,7 +747,6 @@ impl Bar {
         Some((kind, said(selected.upcast_ref())))
     }
 
-    /// How many lines of the empty bar's hints are showing.
     pub fn hints(&self) -> usize {
         self.lines
             .borrow()
@@ -869,7 +755,6 @@ impl Bar {
             .count()
     }
 
-    /// Everything the bar says, as a person reads it.
     pub fn texts(&self) -> Vec<String> {
         let mut said = Vec::new();
         let mut stack = vec![self.root.clone().upcast::<gtk::Widget>()];
@@ -905,7 +790,6 @@ impl Bar {
         self.lines.borrow().get(index).cloned()
     }
 
-    /// Move the selection `by` rows, skipping what runs nothing.
     fn step(&self, by: i32) {
         let count = self.lines.borrow().len() as i32;
         let mut at = self.list.selected_row().map_or(-1, |row| row.index());
@@ -924,10 +808,8 @@ impl Bar {
         }
     }
 
-    /// Scroll the results so `row` is wholly in view, moving them no further
-    /// than that. The keyboard stays in the entry while the arrows walk the
-    /// results, so the list never scrolls to its selection by itself: the
-    /// highlight walked off the bottom and the results stayed put.
+    /// The keyboard stays in the entry while the arrows walk the results, so the list never scrolls
+    /// to its selection by itself.
     fn reveal(&self, row: &gtk::ListBoxRow) {
         let Some(scroller) = self
             .list
@@ -964,7 +846,6 @@ impl Bar {
         }
     }
 
-    /// Run row `index`: the controller says what it does.
     fn run(&self, index: usize) {
         let Some(line) = self.lines.borrow().get(index).cloned() else {
             return;
@@ -975,13 +856,10 @@ impl Bar {
     }
 }
 
-/// Whether `line` is `was` drawn again: the same token, or the same kind
-/// of line saying the same thing.
 fn same_line(line: &BarLine, was: &BarLine) -> bool {
     line.token == was.token || (line.kind == was.kind && line.title == was.title)
 }
 
-/// Every label under `widget`, as a person reads it, top to bottom.
 fn said(widget: &gtk::Widget) -> String {
     let mut said = Vec::new();
     let mut pending = vec![widget.clone()];
@@ -1001,8 +879,6 @@ fn said(widget: &gtk::Widget) -> String {
     said.join(" ")
 }
 
-/// A command's, a place's or the search's line: its title, its dimmer
-/// detail, and its key.
 fn plain_line(line: &BarLine) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, S3);
     let name = gtk::Label::new(Some(&line.title));

@@ -1,19 +1,8 @@
-//! The open-email dialog (screen 04; contracts/focus-surface.md, "The
-//! open-email dialog"): `Enter` opens the conversation under the cursor over
-//! the list, and the list stays in place behind it.
-//!
-//! Its message view is placed in one of two hosts (T232): the dialog, or the
-//! reading pane beside the list ([`OpenMessage::place`]). It is one view
-//! moved between them, never two built alike, so the pane and the dialog
-//! cannot drift: the header, the action row, the column and everything in
-//! it follow the width of whichever holds it.
-//!
-//! One dialog and one [`Reader`] for the window's life (scenario 7): the
-//! hundredth open reuses the message view the first one built. The header --
-//! the subject, the position, the thread chip, the labels -- is drawn from
-//! the row already in hand, so the dialog is up before anything is read; the
-//! body arrives from the store and is drawn only if it is still the message
-//! on screen when it lands.
+//! The open-email dialog: `Enter` opens the conversation under the cursor over the list. Its
+//! message view is one view moved between two hosts, the dialog and the reading pane
+//! ([`OpenMessage::place`]), so they cannot drift. One dialog and one [`Reader`] for the window's
+//! life: the header is drawn from the row already in hand, and the body is drawn only if it is
+//! still the message on screen when it lands.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -36,190 +25,117 @@ use postio_widgets::widgets::{Action, ActionBar, Kind, Size};
 use crate::list::FocusRow;
 use crate::open_header::HeaderCard;
 
-/// The window size the dialog is fitted to before it knows its window's:
-/// the window's own default.
 const WINDOW: (i32, i32) = (1440, 900);
 
-/// The toolbar, in the order screen 04 draws it
-/// (`postio_ui::focus_dialog::OPEN_TOOLBAR`).
 fn toolbar() -> &'static [Action] {
     crate::verbs::actions("focus-open-", focus_dialog::OPEN_TOOLBAR)
 }
 
-/// The action row of a message on its way or stopped (T239): which of these
-/// show is `focus_dialog::send_verbs`'s answer for the message's state.
 fn send_toolbar() -> &'static [Action] {
     crate::verbs::actions("focus-open-", focus_dialog::SEND_TOOLBAR)
 }
 
-/// What a narrow dialog folds into More (T206).
 const FOLDED: [CommandId; 3] = focus_dialog::FOLDED;
 
-/// What a control in the dialog asks the window to do.
 type Handler = Rc<dyn Fn(CommandId)>;
 
-/// What the window is told when a message has been open long enough to
-/// count as read.
 type ReadHandler = Rc<dyn Fn(MessageId)>;
 
-/// Where the dialog is in the list: the row's place and how many there are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
-    /// The row's index in the list, from 0.
     pub index: u32,
-    /// How many rows the list has.
     pub total: u32,
 }
 
-/// The dialog, and the one message view in it.
 pub struct OpenMessage {
     client: Client,
     dialog: adw::Dialog,
-    /// What the dialog holds: the column, with room for a toast above it.
     toasts: adw::ToastOverlay,
     title: gtk::Label,
     subtitle: gtk::Label,
     up_key: gtk::Box,
     down_key: gtk::Box,
     toolbar: Rc<ActionBar>,
-    /// The action row in place of [`Self::toolbar`] while the message is a
-    /// draft with a send state (T239).
     send_bar: Rc<ActionBar>,
-    /// That state, from the row the message was opened from.
     send_state: Cell<Option<postio_model::DraftState>>,
-    /// The message on screen is a draft another client wrote: the received
-    /// row stands without the verbs that answer a correspondent (#1212).
+    /// A draft another client wrote: the received row stands without the verbs that answer a
+    /// correspondent (#1212).
     foreign_draft: Cell<bool>,
-    /// The line above the subject: "Message 4 of 6 · ] newer · [ older".
     thread_chip: gtk::Box,
     kicker: gtk::Label,
-    /// What the kicker says now: the header's place line for a message that
-    /// is no list row.
     kicker_said: RefCell<String>,
-    /// The thread bar under the action row, and the older-message banner
-    /// above the kicker (spec 013 US3): the controller's words, drawn.
     thread_bar: Rc<crate::thread_bar::ThreadBar>,
     banner: Rc<crate::thread_bar::OlderBanner>,
-    /// "Ana replied. Read it }": a reply that arrived while reading.
     new_reply: Rc<crate::thread_bar::OlderBanner>,
-    /// "match 1 of 3 in this thread": a window a search opened.
     match_banner: Rc<crate::thread_bar::MatchBanner>,
     subject: gtk::Label,
     labels: gtk::Box,
-    /// What holds the column to its width, centred in the dialog (T207).
     clamp: adw::Clamp,
-    /// More's menu: the folded verbs, with their keys.
     more: gtk::Popover,
     more_items: gtk::Box,
-    /// The message view: the header, the action row, find and the column.
-    /// The dialog's child, or the reading pane's while it is placed there.
     content: gtk::Box,
-    /// The reading pane's slot the view is in, while it is placed there.
     slot: RefCell<Option<gtk::Box>>,
-    /// Raised while the view moves between hosts: the dialog closing on the
-    /// way out is a move, not the message closing.
+    /// Raised while the view moves between hosts: the dialog closing on the way out is a move, not
+    /// the message closing.
     placing: Cell<bool>,
-    /// What the dialog is presented over.
     parent: RefCell<Option<glib::WeakRef<gtk::Widget>>>,
-    /// Told whenever the message opens or closes, in either host.
     changed: RefCell<Option<Rc<dyn Fn()>>>,
-    /// Told which part a chip under the body stands for (T240).
     chip: RefCell<Option<ChipHandler>>,
-    /// The list row on screen, by its id: what `Return` on the same row
-    /// would show again.
     row: Cell<Option<MessageId>>,
-    /// The window's size the dialog was last fitted to, and whether it
-    /// follows the window's resizes yet.
     window: Cell<(i32, i32)>,
     following: Cell<bool>,
-    /// How wide the action row is with every verb laid out, once measured.
     row_width: Cell<Option<i32>>,
-    /// The dialog itself, for a handler that must not keep it alive.
     this: RefCell<std::rc::Weak<OpenMessage>>,
-    /// Who it is from, to and copied, and when (screen 04): drawn here, in
-    /// place of the reader's own header, which Focus does not show.
     header_card: Rc<HeaderCard>,
     reader: Reader,
     fold_line: gtk::Button,
     fold_label: gtk::Label,
     keymap: RefCell<Keymap>,
-    /// The message on screen, and a count that moves with every open, so a
-    /// body that lands for an earlier one is dropped.
+    /// A count that moves with every open, so a body that lands for an earlier one is dropped.
     shown: Rc<Cell<Option<MessageId>>>,
-    /// The message whose marked sentence the column was taken to: once, as
-    /// it opened. Every later draw of it -- `O`, images allowed, a fold --
-    /// marks the sentence where it stands and leaves the place the person's.
+    /// Every later draw of it (`O`, images allowed, a fold) marks the sentence where it stands and
+    /// leaves the place the person's.
     revealed: Cell<Option<MessageId>>,
-    /// The inline parts of the message on screen, by content id: what the
-    /// reader's `cid:` images resolve to.
     inline: Inline,
     generation: Rc<Cell<u64>>,
-    /// Raised when the message whose body is being prepared off the
-    /// interface thread is no longer the one on screen (T223): a worker
-    /// still queued for it then does nothing, so `j` held down prepares the
-    /// message it lands on and not every one it passed.
+    /// Raised when the message being prepared off the interface thread is no longer the one on
+    /// screen: a worker still queued does nothing, so `j` held down prepares the message it lands
+    /// on and not every one it passed.
     preparing: RefCell<Arc<AtomicBool>>,
-    /// A reading of the store is on its way (#1609): one at a time, so `j`
-    /// held over the pane reads the message it lands on, not every one it
-    /// passed. What was asked for meanwhile, the latest only, waits here.
+    /// One reading at a time (#1609): `j` held over the pane reads the message it lands on; the
+    /// latest asked for waits here.
     reading: Cell<bool>,
     waiting: Cell<Option<(MessageId, u64)>>,
     open: Rc<Cell<bool>>,
     handler: RefCell<Option<Handler>>,
-    /// The conversation's messages, oldest first, once read, and which of
-    /// them is on screen; the row's place in the list.
     thread_total: Cell<usize>,
     at: Rc<Cell<usize>>,
     position: Cell<Position>,
-    /// Where a search's hit is among the hits, while one is on screen.
     hit: Cell<Option<Position>>,
-    /// The enabled accounts' addresses, by id, while there is more than one:
-    /// the place line names the message's account only then.
     accounts: RefCell<Vec<(postio_model::AccountId, String)>>,
-    /// The account the message on screen is in, as that line names it.
     account_said: Rc<RefCell<Option<String>>>,
-    /// The place line without its account.
     line_said: Rc<RefCell<String>>,
     messages: Cell<u32>,
-    /// The parts of the message on screen, as its row lists them.
     parts: Rc<RefCell<Vec<Attachment>>>,
-    /// The row's marker, and the message it belongs to.
     marker: RefCell<Option<(MessageId, postio_model::listing::MarkerSummary)>>,
-    /// The dot each label's pill carries: its name and colour, `#rrggbb`.
     dots: RefCell<Vec<(String, String)>>,
-    /// The card drawn for it, while it is shown.
     card: RefCell<Option<gtk::Box>>,
-    /// The body on screen, once it has landed: where the marker's sentence
-    /// is looked for.
     body: Rc<RefCell<Option<MessageBody>>>,
-    /// Whether a to-do's card offers Task: once a vault is configured.
     capture: Cell<bool>,
-    /// The read clock (T237): started when a message is shown, cancelled
-    /// when another is, when it closes, or when the person sets its read
-    /// state themselves.
     dwell: RefCell<Option<glib::SourceId>>,
-    /// The message the clock has finished with: marked read, or left alone
-    /// by the person's own choice. Refocusing the window does not start its
-    /// clock again.
+    /// Refocusing the window does not start its clock again.
     settled: Cell<Option<MessageId>>,
-    /// Whether the window is not the active one: nobody is reading, so no
-    /// clock runs.
     away: Cell<bool>,
-    /// Another composition has taken the message's place on screen.
     covered: Cell<bool>,
-    /// Who is told when the clock runs out.
     read: RefCell<Option<ReadHandler>>,
 }
 
 impl OpenMessage {
-    /// The commands the dialog has a control for: its toolbar, Close and
-    /// the two steps.
     pub fn controls() -> Vec<CommandId> {
         toolbar()
             .iter()
             .map(|action| action.command)
             .chain([
-                // A message on its way or stopped (T239).
                 CommandId::CancelSend,
                 CommandId::RetrySend,
                 CommandId::MarkSent,
@@ -227,34 +143,24 @@ impl OpenMessage {
                 CommandId::PrevMessage,
                 CommandId::NextMessage,
                 CommandId::DismissMarker,
-                // The thread bar's Thread button (spec 013 FR-019).
                 CommandId::ThreadMenu,
-                // The render-mode line's switch, over an HTML body (T213).
                 CommandId::SwitchTreatment,
-                // The shared banner's two buttons, over held-back images.
                 CommandId::ShowImages,
                 CommandId::AlwaysShowImages,
             ])
             .collect()
     }
 
-    /// The dialog, reading through `client`, with the remote-image allow
-    /// list at `allowlist` and its keys from `keymap`.
-    ///
-    /// `runtime` is where a remote image is fetched, for a sender the person
-    /// allowed or a message they chose to show once; with none, nothing is
-    /// ever fetched.
+    /// `runtime` is where a remote image is fetched; with none, nothing is ever fetched.
     pub fn new(
         client: Client,
         keymap: &Keymap,
         allowlist: &std::path::Path,
         runtime: Option<tokio::runtime::Handle>,
     ) -> Rc<Self> {
-        // Inline (`cid:`) images resolve against the message on screen. The
-        // reader asks synchronously, while it lays the document out, so the
-        // message's inline parts are read from the store's owner before it
-        // is rendered (`load`) and the reader is answered from them -- never
-        // a blocking call on the main thread (#1608).
+        // The reader asks for inline (`cid:`) images synchronously while it lays the document out,
+        // so the message's inline parts are read before render and the reader is answered from
+        // them: never a blocking call on the main thread (#1608).
         let shown: Rc<Cell<Option<MessageId>>> = Rc::default();
         let inline: Inline = Rc::default();
         let source = {
@@ -262,16 +168,12 @@ impl OpenMessage {
             Rc::new(move |content_id: &str| inline.borrow().get(&cid_key(content_id)).cloned())
         };
         let reader = Reader::sharing(source, allowlist);
-        // The subject is the column's heading, over the header card.
         reader.header().widget().set_visible(false);
         let header_card = Rc::new(HeaderCard::new());
         if let Some(runtime) = runtime {
             reader.set_remote_fetch(remote_fetch(runtime));
         }
 
-        // The header: Close, the title and position, and the steps.
-        // An X icon at the right (T189), apart from the verbs; Escape
-        // still closes, so it carries no keycap.
         let close = postio_widgets::widgets::close_button();
         close.add_css_class("focus-open-close");
 
@@ -285,12 +187,8 @@ impl OpenMessage {
         titles.append(&title);
         titles.append(&subtitle);
 
-        // The steps (T219): one pair, each a single control carrying its
-        // key inside it -- the chevron, then its cap -- as every verb in the
-        // dialog carries its own ("Reply e"). A cap standing beside its
-        // button made four things of two, and taught a screen reader
-        // nothing: a cap inside a button is the button's shortcut
-        // (`a11y::teach_shortcuts`).
+        // A cap inside a button is the button's shortcut (`a11y::teach_shortcuts`); a cap beside it
+        // made four things of two and taught a screen reader nothing.
         let (up, up_key) = step("go-up-symbolic", "Previous message");
         let (down, down_key) = step("go-down-symbolic", "Next message");
         let steps = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -307,22 +205,17 @@ impl OpenMessage {
         header.set_end_widget(Some(&close));
 
         let toolbar = ActionBar::new(toolbar(), "focus-open-toolbar");
-        // The handoff's verbs sit edge to edge, each padded 8px a side.
         if let Some(row) = toolbar.widget().downcast_ref::<gtk::Box>() {
             row.set_spacing(0);
         }
         tighten_keycaps(&toolbar.widget());
-        // Its own class: the received row stays the one `focus-open-toolbar`,
-        // and the sheet dresses both alike.
         let send_bar = ActionBar::new(send_toolbar(), "focus-open-send-toolbar");
         if let Some(row) = send_bar.widget().downcast_ref::<gtk::Box>() {
             row.set_spacing(0);
         }
         tighten_keycaps(&send_bar.widget());
         send_bar.set_visible(false);
-        // More, and the menu it opens: built once, filled from the keymap.
         let more_items = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        // The row menu's dress (T199): one menu pattern (FR-092).
         more_items.add_css_class("focus-row-menu");
         let more = gtk::Popover::builder()
             .child(&more_items)
@@ -331,9 +224,8 @@ impl OpenMessage {
             .build();
         more.add_css_class("focus-row-menu-popover");
         more.add_css_class("focus-open-more-menu");
-        // Opened from the keyboard, the menu draws one highlight, where the
-        // keyboard is: a pointer resting under it highlights nothing until
-        // it moves.
+        // Opened from the keyboard, the menu draws one highlight, where the keyboard is: a pointer
+        // resting under it highlights nothing until it moves.
         let motion = gtk::EventControllerMotion::new();
         motion.connect_motion({
             let items = more_items.downgrade();
@@ -357,11 +249,8 @@ impl OpenMessage {
             });
         }
 
-        // The column: the thread marker, the subject, the labels, the
-        // sender block, the reader (the action card, the body, the
-        // attachments), and the fold line. Each block carries the gap the
-        // handoff gives it (`rhythm`), so a block that is absent takes its
-        // gap with it (T208).
+        // Each block carries the gap the handoff gives it (`rhythm`), so a block that is absent
+        // takes its gap with it.
         let thread_chip = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::THREAD_GAP);
         thread_chip.add_css_class("focus-open-thread");
         thread_chip.set_margin_bottom(rhythm::MARKER_TO_SUBJECT);
@@ -400,15 +289,13 @@ impl OpenMessage {
         let header_widget = header_card.widget();
         header_widget.set_margin_top(rhythm::LABELS_TO_SENDER);
         let reader_widget = reader.widget();
-        // The body sits 24px under the action card, or under the sender
-        // block when there is no card.
         reader.view().set_margin_top(rhythm::CARD_TO_BODY);
         let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         column.add_css_class("focus-open-column");
         column.set_margin_top(rhythm::TOP);
         column.set_margin_bottom(rhythm::BOTTOM);
-        // Its own height, not the page's: the bottom padding sits under the
-        // last block, not at the foot of a stretched column.
+        // Its own height, not the page's: the bottom padding sits under the last block, not at the
+        // foot of a stretched column.
         column.set_valign(gtk::Align::Start);
         column.append(match_banner.widget());
         column.append(banner.widget());
@@ -418,12 +305,9 @@ impl OpenMessage {
         column.append(&header_widget);
         column.append(&reader_widget);
         column.append(&fold_line);
-        // One column for everything inside the message (T207): its width
-        // comes from the dialog's and the body's treatment
-        // (`focus_dialog::column_width`), centred, and every block fills
-        // it, so they share both edges. Everything from the thread marker
-        // to the fold line scrolls together (screen 04), the body drawn in
-        // it rather than in a scroller of its own.
+        // One column for everything inside the message: width from the dialog's and the body's
+        // treatment, centred, every block filling it.
+        // Everything scrolls together, the body drawn in it rather than in a scroller of its own.
         let clamp = adw::Clamp::builder()
             .child(&column)
             .maximum_size(focus_dialog::column_width(
@@ -442,22 +326,12 @@ impl OpenMessage {
             .build();
         scroller.add_css_class("focus-open-scroller");
         reader.flow_in(&scroller);
-        // The marker's sentence is revealed as the message opens (FR-035),
-        // but never by scrolling the subject and sender off (#2125).
+        // The marker's sentence is revealed as the message opens, but never by scrolling the
+        // subject and sender off (#2125).
         reader.view().keep_in_view_on_reveal(&subject);
-        // The reader's notice -- the list a message came from, images held
-        // back, a decode caveat -- is one more block about the message: 12
-        // under the action card (or the sender block), as the card is under
-        // the sender block, and the 24 to the body is then the notice's.
-        // The slot is hidden while it has nothing to say, so with no notice
-        // the gap goes too.
+        // The slot is hidden while it has nothing to say, so with no notice its gap goes too.
         reader.notice_slot().set_margin_top(rhythm::CARD_TO_NOTICE);
-        // Every body in app colours or as sent on paper, named by a line
-        // above it (T210-T213); `reader.treatment()` is what the column's
-        // width follows.
         reader.use_treatments();
-        // Over an HTML body the line takes the card's 24 above it and keeps
-        // 12 of its own to the body (T208); with no line, the body has the 24.
         if let Some(line) = reader.render_mode_line() {
             let line = line.widget();
             line.set_margin_top(rhythm::CARD_TO_BODY);
@@ -477,13 +351,10 @@ impl OpenMessage {
         content.append(&toolbar.widget());
         content.append(&send_bar.widget());
         content.append(thread_bar.widget());
-        // Find sits above the column, not at its top, so opening it keeps
-        // the reading position (T203).
+        // Find sits above the column, not at its top, so opening it keeps the reading position.
         content.append(reader.find_bar().widget());
-        // A reply that arrives while reading is said over the foot of the
-        // message, not above it and not beside it: anything that gives the
-        // text a different place or size would move what is being read
-        // (spec 013 US4, FR-018).
+        // A reply that arrives while reading is said over the foot of the message: anything that
+        // gave the text a different place or size would move what is being read.
         let overlay = gtk::Overlay::new();
         overlay.set_vexpand(true);
         overlay.set_child(Some(&scroller));
@@ -497,7 +368,6 @@ impl OpenMessage {
         overlay.add_overlay(said);
         content.append(&overlay);
 
-        // Toasts raised under the dialog are drawn in this overlay, above it.
         let toasts = adw::ToastOverlay::new();
         toasts.set_child(Some(&content));
         let dialog = adw::Dialog::builder()
@@ -506,8 +376,8 @@ impl OpenMessage {
             .child(&toasts)
             .build();
         dialog.set_widget_name(DIALOG_NAME);
-        // The keyboard starts on the message: Space and Page Down read it,
-        // and Return does not press a step button in the header.
+        // Space and Page Down read the message, and Return does not press a step button in the
+        // header.
         dialog.set_focus(Some(&scroller));
         let open = Rc::new(Cell::new(false));
 
@@ -583,7 +453,6 @@ impl OpenMessage {
 
         let weak = Rc::downgrade(&page);
         page.this.replace(weak.clone());
-        // "Latest }" is the key's own command, asked for.
         page.match_banner.connect(
             {
                 let weak = weak.clone();
@@ -618,7 +487,6 @@ impl OpenMessage {
                 }
             }
         });
-        // A chip asks: where the verbs live is the window's chooser (T240).
         page.reader.connect_attachment({
             let weak = weak.clone();
             move |node| {
@@ -678,8 +546,8 @@ impl OpenMessage {
                 }
             }
         });
-        // When the body view has the new snapshot, not when the render was
-        // asked for: the fold line and the highlight are read off it.
+        // When the body view has the new snapshot, not when the render was asked for: the fold line
+        // and highlight are read off it.
         page.reader.view().connect_rendered({
             let weak = weak.clone();
             move |_| {
@@ -689,8 +557,6 @@ impl OpenMessage {
                 }
             }
         });
-        // A body shown on paper takes the wider column; one shown in the
-        // app's colours the narrower. The dialog itself does not move.
         page.reader.connect_treatment_changed({
             let weak = weak.clone();
             move |_| {
@@ -704,9 +570,6 @@ impl OpenMessage {
         page
     }
 
-    /// Place the message view in `slot`, the reading pane beside the list,
-    /// or with `None` back in the dialog (T232). A message that is open stays
-    /// open, and is drawn where it now is.
     pub fn place(&self, slot: Option<&gtk::Box>) {
         let here = self.slot.borrow().clone();
         match (slot, here) {
@@ -749,28 +612,22 @@ impl OpenMessage {
         self.fit(width, height);
     }
 
-    /// Whether the view is in the reading pane rather than the dialog.
     pub fn in_pane(&self) -> bool {
         self.slot.borrow().is_some()
     }
 
-    /// The message view, wherever it is placed.
     pub fn view(&self) -> gtk::Widget {
         self.content.clone().upcast()
     }
 
-    /// Run `changed` whenever the message opens or closes.
     pub fn connect_changed(&self, changed: impl Fn() + 'static) {
         self.changed.replace(Some(Rc::new(changed)));
     }
 
-    /// Run `chip` with the part whenever an attachment chip is activated.
     pub fn connect_chip(&self, chip: impl Fn(postio_model::ids::AttachmentId) + 'static) {
         self.chip.replace(Some(Rc::new(chip)));
     }
 
-    /// The part `id`, as the parts tree has it: what a save names its file
-    /// from.
     pub fn part_node(
         &self,
         id: postio_model::ids::AttachmentId,
@@ -780,8 +637,6 @@ impl OpenMessage {
             .find(|node| node.attachment == Some(id))
     }
 
-    /// Every named part of the message on screen, in the order it lists
-    /// them: what Save all writes, and what the chooser offers.
     pub fn part_nodes(&self) -> Vec<postio_ui::reader::parts::Node> {
         postio_ui::reader::parts::tree("multipart/mixed", &self.parts.borrow())
             .into_iter()
@@ -789,7 +644,6 @@ impl OpenMessage {
             .collect()
     }
 
-    /// The attachment chips under the body, as drawn.
     pub fn attachment_chips(&self) -> Vec<gtk::Widget> {
         let mut found = Vec::new();
         let mut stack = vec![self.reader.widget()];
@@ -813,13 +667,10 @@ impl OpenMessage {
         }
     }
 
-    /// The list row on screen, while one is.
     pub fn showing_row(&self) -> Option<MessageId> {
         self.open.get().then(|| self.row.get()).flatten()
     }
 
-    /// Open the host, over `parent` when it is the dialog: once, while the
-    /// message is not already open.
     fn present(&self, parent: &gtk::Widget) {
         if self.open.get() {
             return;
@@ -828,13 +679,12 @@ impl OpenMessage {
         self.follow(parent);
         if !self.in_pane() {
             self.dialog.present(Some(parent));
+            self.focus_message();
         }
         self.open.set(true);
         self.tell_changed();
     }
 
-    /// How wide the view's host is: the dialog's width for the window, or
-    /// the reading pane's.
     fn host_width(&self) -> i32 {
         let window = self.window.get().0;
         let dialog = focus_dialog::dialog_width(window);
@@ -845,9 +695,8 @@ impl OpenMessage {
         }
     }
 
-    /// Size the dialog for a window `width` by `height` (T205): its width
-    /// and height come from the window and nothing else, so stepping
-    /// through the list never resizes it.
+    /// Its size comes from the window and nothing else, so stepping through the list never resizes
+    /// it.
     fn fit(&self, width: i32, height: i32) {
         if width <= 0 || height <= 0 {
             return;
@@ -866,11 +715,9 @@ impl OpenMessage {
         self.fold_into_more(focus_dialog::folds_into_more(host) || self.full_row_width() > host);
     }
 
-    /// How wide the action row is with every verb laid out: the handoff's
-    /// 760px rule assumes its narrower face, so a row that would not fit
-    /// folds too, rather than widening the dialog past its window's rule.
-    /// Measured once on screen and kept: only its words and its keys
-    /// change it.
+    /// The handoff's 760px rule assumes its narrower face, so a row that would not fit folds too,
+    /// rather than widening the dialog past its window's rule. Measured once on screen and kept:
+    /// only its words and keys change it.
     fn full_row_width(&self) -> i32 {
         if let Some(width) = self.row_width.get() {
             return width;
@@ -909,7 +756,6 @@ impl OpenMessage {
         natural
     }
 
-    /// Fold Label, Move and Delete into More, or lay them out again.
     fn fold_into_more(&self, fold: bool) {
         for command in FOLDED {
             if let Some(button) = self.toolbar.button(command) {
@@ -924,16 +770,12 @@ impl OpenMessage {
         }
     }
 
-    /// Whether the action row has folded its last verbs into More.
     pub fn folded(&self) -> bool {
         self.toolbar
             .button(CommandId::MoreActions)
             .is_some_and(|button| button.widget().is_visible())
     }
 
-    /// More (`.`): the verbs the action row folded away, in a menu under
-    /// its button, each running its one command. Nothing when nothing is
-    /// folded.
     pub fn show_more(&self) {
         if !self.folded() {
             return;
@@ -976,17 +818,14 @@ impl OpenMessage {
         }
     }
 
-    /// Whether More's menu is open.
     pub fn more_open(&self) -> bool {
         self.more.is_visible()
     }
 
-    /// The overlay a toast is drawn in while the dialog is up.
     pub fn toast_overlay(&self) -> adw::ToastOverlay {
         self.toasts.clone()
     }
 
-    /// Close More's menu and give the keyboard back to its button.
     pub fn close_more(&self) {
         self.more.popdown();
         if let Some(button) = self.toolbar.button(CommandId::MoreActions) {
@@ -994,9 +833,7 @@ impl OpenMessage {
         }
     }
 
-    /// Where a picker opened over the message hangs from: the dialog, under
-    /// its action row and level with the column's left edge. `None` while
-    /// the message is in the reading pane, whose list is no obstacle.
+    /// `None` while the message is in the reading pane, whose list is no obstacle.
     pub fn picker_anchor(&self) -> Option<(gtk::Widget, gtk::gdk::Rectangle)> {
         if self.in_pane() || !self.dialog.is_mapped() {
             return None;
@@ -1009,7 +846,6 @@ impl OpenMessage {
         Some((child, gtk::gdk::Rectangle::new(56, below, 1, 1)))
     }
 
-    /// Whether `widget` is the message's column or inside it.
     pub fn message_has(&self, widget: &gtk::Widget) -> bool {
         self.reader
             .view()
@@ -1017,8 +853,7 @@ impl OpenMessage {
             .is_some_and(|scroller| *widget == scroller || widget.is_ancestor(&scroller))
     }
 
-    /// Give the keyboard to the message's column: where it is when the
-    /// message opens, and where it returns after a composer closes over it.
+    /// Also where the keyboard returns after a composer closes over the message.
     pub fn focus_message(&self) {
         if self.in_pane() {
             return;
@@ -1032,8 +867,6 @@ impl OpenMessage {
         }
     }
 
-    /// The words of the More item that holds the keyboard, while More's menu
-    /// is open.
     pub fn more_item_with_focus(&self) -> Option<String> {
         if !self.more.is_visible() {
             return None;
@@ -1052,12 +885,10 @@ impl OpenMessage {
         None
     }
 
-    /// More's menu, for a test to read.
     pub fn more_menu(&self) -> gtk::Popover {
         self.more.clone()
     }
 
-    /// The column's width, for the dialog's and the body's treatment.
     fn fit_column(&self) {
         let column = focus_dialog::column_width(self.host_width(), self.reader.treatment());
         if self.clamp.maximum_size() != column {
@@ -1066,11 +897,8 @@ impl OpenMessage {
         }
     }
 
-    /// Fit the dialog to `parent`'s window now, and again whenever that
-    /// window is resized: its surface's `layout` says when, for every new
-    /// size, maximised and tiled ones included, and the window's own size
-    /// is read then -- the surface's includes the shadow a restored window
-    /// draws around itself.
+    /// The window's own size is read on each layout: the surface's includes the shadow a restored
+    /// window draws around itself.
     fn follow(&self, parent: &gtk::Widget) {
         let Some(window) = parent.root().and_downcast::<gtk::Window>() else {
             return;
@@ -1098,13 +926,10 @@ impl OpenMessage {
         });
     }
 
-    /// Whether a to-do's card offers Task `T` beside Snooze: once a vault is
-    /// configured (spec C9). Read when a card is next drawn.
     pub fn set_capture(&self, capture: bool) {
         self.capture.set(capture);
     }
 
-    /// Run `handler` with the command a control stands for.
     pub fn connect_command(&self, handler: impl Fn(CommandId) + 'static) {
         self.handler.replace(Some(Rc::new(handler)));
     }
@@ -1116,11 +941,9 @@ impl OpenMessage {
         }
     }
 
-    /// Read every key the dialog shows from `keymap`.
     pub fn set_keymap(&self, keymap: &Keymap) {
         self.keymap.replace(keymap.clone());
         self.toolbar.set_keymap(keymap);
-        // The action row's caps are tight: `Del`, not `Delete` (SPEC 2).
         for action in toolbar() {
             if let Some(button) = self.toolbar.button(action.command) {
                 let key = hints::key(keymap, action.command).map(|key| hints::short(&key));
@@ -1134,7 +957,6 @@ impl OpenMessage {
                 button.set_key(key.as_deref());
             }
         }
-        // The render-mode line's cap among them (T213).
         self.reader.set_keymap(keymap);
         // Its keys are part of its width.
         self.row_width.set(None);
@@ -1152,8 +974,6 @@ impl OpenMessage {
         self.show_fold_line();
     }
 
-    /// Show `row`, at `position` in the list, over `parent`: at once, from
-    /// what the row says, then the body from the store.
     pub fn show(&self, parent: &impl IsA<gtk::Widget>, row: &FocusRow, position: Position) {
         let Some(conversation) = row.as_conversation() else {
             return;
@@ -1181,10 +1001,7 @@ impl OpenMessage {
         self.show_message(message);
     }
 
-    /// Show `message`, which is no row of the list -- a search's hit, a
-    /// digest's email -- under `subject`, with no marker or labels until the
-    /// reading has them. `j` and `k` are the controller's: a hit's step to
-    /// the next hit (spec 009 slice 8).
+    /// `j` and `k` are the controller's: a hit's step is to the next hit.
     pub fn show_found(
         &self,
         parent: &impl IsA<gtk::Widget>,
@@ -1199,13 +1016,10 @@ impl OpenMessage {
         self.read_hit_thread(message);
     }
 
-    /// Show `message`, a step of the thread the window is walking, in place:
-    /// the same subject, labels and place, the body and the clock new.
     pub fn show_in_place(&self, message: MessageId) {
         self.show_message(message);
     }
 
-    /// What a hit shows before its message is read.
     fn begin_hit(&self, message: MessageId, subject: &str) {
         let _ = message;
         self.title.set_text(subject);
@@ -1219,9 +1033,6 @@ impl OpenMessage {
         self.set_send_state(None);
     }
 
-    /// The hit's own conversation: how many messages it has, and the list
-    /// `p` and `n` step through, once the store has said -- and its subject,
-    /// when what opened it did not know it.
     fn read_hit_thread(&self, message: MessageId) {
         use postio_model::listing::MailStore as _;
         let client = self.client.clone();
@@ -1241,9 +1052,8 @@ impl OpenMessage {
                 return;
             }
             let Some(page) = weak.upgrade() else { return };
-            // Whatever opened it said its subject, when it knew it: the
-            // results view's rows are no list's, so a result opened from
-            // there is titled by the message itself.
+            // The results view's rows are no list's, so a result opened from there is titled by the
+            // message itself.
             if page.subject.text().is_empty()
                 && let Some(subject) = row.subject.as_deref()
             {
@@ -1255,14 +1065,11 @@ impl OpenMessage {
         });
     }
 
-    /// Show `message` of the conversation on screen: clear what the last
-    /// one left, and read this one.
     fn show_message(&self, message: MessageId) {
         let generation = self.generation.get() + 1;
         self.generation.set(generation);
         let preparing = std::mem::take(&mut *self.preparing.borrow_mut());
         preparing.store(true, Ordering::Relaxed);
-        // The inline-image source reads this same cell.
         self.shown.set(Some(message));
         self.set_foreign_draft(false);
         self.revealed.set(None);
@@ -1275,20 +1082,15 @@ impl OpenMessage {
         self.reader
             .show_absent(postio_ui::reader::document::Absent::Partial);
         self.reader.set_unsubscribe(None);
-        // Whatever the last message was read down to, this one is read from
-        // its top: the view is put there now, and the new document's first
-        // snapshot starts there too.
+        // The view is put at the top now, and the new document's first snapshot starts there too.
         self.reader.view().scroll_to_edge(false);
         self.settled.set(None);
         self.arm_dwell(message);
         self.load(message, generation);
     }
 
-    /// `BodyLoaded` (#1788): `message`'s words are on this machine now. If
-    /// it is the one on screen and was drawn without them, read it again
-    /// and draw it in place: the same generation, nothing cleared first and
-    /// the view left where it is, so "Downloading this message" goes
-    /// straight to the body. Only the open message is read, never the list.
+    /// Only the open message is read, never the list. Same generation, nothing cleared first and
+    /// the view left where it is, so "Downloading this message" goes straight to the body (#1788).
     pub fn body_landed(&self, message: MessageId) {
         if !self.is_open() || self.shown.get() != Some(message) || self.body.borrow().is_some() {
             return;
@@ -1296,8 +1098,6 @@ impl OpenMessage {
         self.load(message, self.generation.get());
     }
 
-    /// A reading came back, or was not needed: the latest ask that waited
-    /// for it, if it is still for what is on screen, is read now.
     fn read_landed(&self) {
         self.reading.set(false);
         if let Some((message, generation)) = self.waiting.take()
@@ -1307,9 +1107,6 @@ impl OpenMessage {
         }
     }
 
-    /// Draw the action row for a message whose draft is in `state`: the
-    /// received verbs for mail on its way nowhere, and otherwise the verbs
-    /// that settle that state (T239; `focus_dialog::send_verbs`).
     fn set_send_state(&self, state: Option<postio_model::DraftState>) {
         self.send_state.set(state);
         let verbs = focus_dialog::send_verbs(state);
@@ -1324,9 +1121,7 @@ impl OpenMessage {
         }
     }
 
-    /// Draw the received row for a message that is, or is not, a draft
-    /// another client wrote: Reply, Reply all and Forward answer a
-    /// correspondent a draft does not have (`focus_dialog::received_offers`).
+    /// Reply, Reply all and Forward answer a correspondent a draft does not have.
     fn set_foreign_draft(&self, foreign: bool) {
         self.foreign_draft.set(foreign);
         for action in toolbar() {
@@ -1338,25 +1133,18 @@ impl OpenMessage {
         }
     }
 
-    /// Whether the message on screen is a draft another client wrote.
     pub fn foreign_draft(&self) -> bool {
         self.foreign_draft.get()
     }
 
-    /// The send state of the draft on screen, when it is one (T239).
     pub fn send_state(&self) -> Option<postio_model::DraftState> {
         self.send_state.get()
     }
 
-    /// Run `read` with a message that has stayed open for the dwell
-    /// (screens.md, "Reading marks it read").
     pub fn connect_read(&self, read: impl Fn(MessageId) + 'static) {
         self.read.replace(Some(Rc::new(read)));
     }
 
-    /// Start the read clock on `message`, the one now shown, stopping any
-    /// other. The delay and the rule are `postio_ui::dwell`'s, shared with
-    /// the other frontends; only the timer is this toolkit's.
     fn arm_dwell(&self, message: MessageId) {
         self.stop_dwell();
         if !self.open.get() || self.away.get() || self.covered.get() {
@@ -1401,18 +1189,15 @@ impl OpenMessage {
         self.dwell.replace(Some(source));
     }
 
-    /// Stop the read clock without starting another: the message closed, or
-    /// the person set its read state themselves, which the clock must not
-    /// overrule.
+    /// The clock must not overrule the person's own read state.
     pub fn cancel_dwell(&self) {
         self.settled.set(self.shown.get());
         self.stop_dwell();
     }
 
-    /// The window gained or lost the focus. A message left open in a window
-    /// that is not the active one is not being read: the clock stops, and
-    /// when the window is back it starts again from the top -- for the same
-    /// message, still open, that the clock has not already finished with.
+    /// A message left open in a window that is not the active one is not being read: the clock
+    /// stops, and restarts from the top when the window is back, unless it has already finished
+    /// with that message.
     pub fn set_window_active(&self, active: bool) {
         tracing::debug!(active, "the window's focus changed under an open message");
         self.away.set(!active);
@@ -1426,10 +1211,8 @@ impl OpenMessage {
         }
     }
 
-    /// The composer took the message's place on screen, or gave it back. A
-    /// message that is not on screen is not being read: the clock stops, and
-    /// starts again from the top when the message is back, if it has not
-    /// already been read.
+    /// A message not on screen is not being read: the clock stops, and restarts from the top when
+    /// it is back, if not already read.
     pub fn set_covered(&self, covered: bool) {
         self.covered.set(covered);
         if covered {
@@ -1442,14 +1225,12 @@ impl OpenMessage {
         }
     }
 
-    /// Stop the clock, leaving the message unsettled.
     fn stop_dwell(&self) {
         if let Some(source) = self.dwell.borrow_mut().take() {
             source.remove();
         }
     }
 
-    /// Nothing of a thread is on screen: no bar, kicker, banner or Reply to.
     fn clear_thread(&self) {
         self.thread_total.set(0);
         self.at.set(0);
@@ -1463,8 +1244,6 @@ impl OpenMessage {
         self.header_card.set_reply_to(None);
     }
 
-    /// The thread's bar, as the controller composed it for the message on
-    /// screen: where the message is among them is the ringed chip.
     pub fn set_thread_bar(&self, view: &postio_ui::thread_bar::ThreadBarView) {
         self.thread_bar.set(view);
         self.thread_total.set(
@@ -1480,7 +1259,6 @@ impl OpenMessage {
         self.show_position(false);
     }
 
-    /// The line above the subject; none for a thread of one.
     pub fn set_kicker(&self, kicker: &str) {
         self.kicker.set_text(kicker);
         self.kicker_said.replace(kicker.to_owned());
@@ -1488,64 +1266,51 @@ impl OpenMessage {
         self.show_position(false);
     }
 
-    /// The banner on a message that is not the latest, or none.
     pub fn set_older_banner(&self, banner: Option<&postio_ui::thread_bar::BannerView>) {
         self.banner.set(banner);
     }
 
-    /// The banner for a reply that arrived while reading, or none.
     pub fn set_new_reply(&self, banner: Option<&postio_ui::thread_bar::BannerView>) {
         self.new_reply.set(banner);
     }
 
-    /// The banner of a window opened from a search, or none.
     pub fn set_match_banner(&self, banner: Option<&postio_ui::thread_bar::MatchBannerView>) {
         self.match_banner.set(banner);
         self.show_position(false);
     }
 
-    /// What the match banner says, while it is up.
     pub fn match_banner_said(&self) -> Option<String> {
         self.match_banner.said()
     }
 
-    /// The chips a search matched, from zero.
     pub fn matched_chips(&self) -> Vec<u32> {
         self.thread_bar.matched()
     }
 
-    /// Whether that banner is up.
     pub fn new_reply_up(&self) -> bool {
         self.new_reply.said().is_some()
     }
 
-    /// The Thread button, which the thread menu and the outline hang from.
     pub fn thread_button(&self) -> gtk::Button {
         self.thread_bar.menu_button().clone()
     }
 
-    /// Run `handler` when the Thread button is pressed.
     pub fn connect_thread_menu(&self, handler: impl Fn() + 'static) {
         self.thread_bar.connect_menu(handler);
     }
 
-    /// Run `handler` when a thread-bar chip is clicked.
     pub fn connect_thread_chip(&self, handler: impl Fn(crate::thread_bar::ChipClick) + 'static) {
         self.thread_bar.connect_chip(handler);
     }
 
-    /// The sender block's Reply to row, or none.
     pub fn set_reply_to(&self, reply_to: Option<&str>) {
         self.header_card.set_reply_to(reply_to);
     }
 
-    /// Run `handler` with how many thread-bar chips fit the window.
     pub fn connect_bar_room(&self, handler: impl Fn(u32) + 'static) {
         self.thread_bar.connect_room(handler);
     }
 
-    /// Step `by` messages through the thread: `[` is -1, `]` is 1. The
-    /// controller decides where that goes; this only asks.
     pub fn step_thread(&self, by: isize) {
         self.run(if by < 0 {
             CommandId::PrevInConversation
@@ -1554,29 +1319,22 @@ impl OpenMessage {
         });
     }
 
-    /// The list row the window was opened from.
     pub fn row(&self) -> Option<MessageId> {
         self.row.get()
     }
 
-    /// The thread bar's current chip, from zero, and how many chips are
-    /// drawn.
     pub fn thread_bar_state(&self) -> (Option<u32>, usize) {
         (self.thread_bar.current(), self.thread_bar.chip_count())
     }
 
-    /// The older-message banner's words, while it is up.
     pub fn banner_said(&self) -> Option<String> {
         self.banner.said()
     }
 
-    /// The sender block's Reply to row, while it is drawn.
     pub fn reply_to_said(&self) -> Option<String> {
         self.header_card.reply_to()
     }
 
-    /// The position line and the thread chip, for where the dialog is: the
-    /// row's place in the list, and the message's in the conversation.
     fn show_position(&self, latest: bool) {
         let position = self.position.get();
         let messages = self.messages.get();
@@ -1585,9 +1343,8 @@ impl OpenMessage {
         let kicker = self.kicker_said.borrow().clone();
         let from_results = self.match_banner.said().is_some();
         let said = if !kicker.is_empty() && (self.hit.get().is_none() || from_results) {
-            // A message of a thread the window walks: the header says where
-            // it is in the thread, as the kicker does, never where its row
-            // is in the inbox.
+            // The header says where the message is in the thread, as the kicker does, never where
+            // its row is in the inbox.
             postio_ui::thread_bar::place(self.at.get(), thread_len)
         } else if let Some(hit) = self.hit.get() {
             focus_dialog::result_line(
@@ -1613,8 +1370,6 @@ impl OpenMessage {
         self.draw_place_line();
     }
 
-    /// Say which accounts are enabled: the place line names the message's
-    /// account only while there is more than one to tell apart.
     pub fn set_accounts(&self, accounts: Vec<(postio_model::AccountId, String)>) {
         let several = accounts.len() > 1;
         self.accounts
@@ -1623,7 +1378,6 @@ impl OpenMessage {
         self.draw_place_line();
     }
 
-    /// The place line, with the account the message is in.
     fn draw_place_line(&self) {
         let line = self.line_said.borrow();
         let account = self.account_said.borrow();
@@ -1631,9 +1385,7 @@ impl OpenMessage {
             .set_text(&focus_dialog::with_account(&line, account.as_deref()));
     }
 
-    /// Read `message` from the store, and draw it if it is still the one on
-    /// screen when it lands. While a reading is on its way, the ask waits,
-    /// and only the latest: the store is read for where the cursor landed.
+    /// While a reading is on its way, the ask waits, and only the latest.
     fn load(&self, message: MessageId, generation: u64) {
         if self.reading.replace(true) {
             self.waiting.set(Some((message, generation)));
@@ -1655,7 +1407,6 @@ impl OpenMessage {
         shown_parts.borrow_mut().clear();
         inline.borrow_mut().clear();
         glib::spawn_future_local(async move {
-            // Moved on before this turn came round: nothing to read for.
             if current.get() != generation {
                 if let Some(page) = page.upgrade() {
                     page.read_landed();
@@ -1698,8 +1449,8 @@ impl OpenMessage {
                     row.subject.as_deref(),
                     row.date.unwrap_or(row.received_at),
                 );
-                // A message is read once, and its warning rides the same
-                // reading as the header it belongs under (#1928).
+                // A message is read once, and its warning rides the same reading as the header it
+                // belongs under (#1928).
                 header_card.set_warning(reading.sender_warning.as_deref());
                 reader.set_sender_warning(reading.sender_warning.as_deref());
             }
@@ -1727,10 +1478,7 @@ impl OpenMessage {
                         &root_type(content_type.as_deref(), &body, &parts),
                         &parts,
                     );
-                    // The inline images, before the reader asks for them.
                     for content_id in parts.iter().filter_map(|part| part.content_id.clone()) {
-                        // Asked for as a `cid:` URI names it, as the reader
-                        // would have asked.
                         let asked = content_id
                             .trim()
                             .trim_start_matches('<')
@@ -1745,14 +1493,10 @@ impl OpenMessage {
                             inline.borrow_mut().insert(cid_key(&content_id), found);
                         }
                     }
-                    // Sanitised, classified and treated both ways on a
-                    // worker (T223), under the policy this sender is drawn
-                    // with: the interface thread only hands the result to
-                    // the view. A message nobody is waiting for any more is
-                    // not prepared at all. Preparation is *before* the render
-                    // deadline, not inside it: the deadline times the engine's
-                    // render from `render_prepared`, so a slow sanitise delays
-                    // the draw without tipping it into the plain-text fallback.
+                    // Sanitised, classified and treated on a worker, under the policy this sender
+                    // is drawn with. A message nobody waits for is not prepared.
+                    // Preparation is before the render deadline, not inside it: a slow sanitise
+                    // delays the draw without tipping it into the plain-text fallback.
                     let remote = reader.remote_images_for(sender.as_deref());
                     let prepared = {
                         let body = body.clone();
@@ -1770,16 +1514,11 @@ impl OpenMessage {
                     if current.get() != generation {
                         return;
                     }
-                    // The body counts as on screen when the view has it, as
-                    // it did when this was one synchronous step.
                     shown_body.replace(Some(body.clone()));
                     reader.render_prepared(&body, sender.as_deref(), prepared);
                     reader.set_encoding_problems(encoding_problems);
-                    // After `render_prepared`, which clears it: the notice
-                    // belongs to this message. The shared rule names the
-                    // list and withholds it from mail on its way out; the band
-                    // is for list mail only (`List-Id` or `List-Unsubscribe`),
-                    // while `M` is not (`FocusWindow::act`).
+                    // After `render_prepared`, which clears it. The band is for list mail only
+                    // (`List-Id` or `List-Unsubscribe`), while `M` is not (`FocusWindow::act`).
                     let offer = reading.row.as_deref().and_then(|row| {
                         postio_ui::unsubscribe::banner(
                             reading.send_state,
@@ -1805,7 +1544,6 @@ impl OpenMessage {
         });
     }
 
-    /// The line above the subject as it reads.
     pub fn thread_chip_said(&self) -> String {
         self.kicker.text().to_string()
     }
@@ -1816,14 +1554,11 @@ impl OpenMessage {
         }
         let mut dots = Vec::new();
         for label in labels {
-            // The pill: the label's colour dot, as the list's pills draw it,
-            // and its name.
             let colour = crate::places::label_rgb(label);
             let pill = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::LABEL_GAP);
             pill.add_css_class("focus-open-label-pill");
             let dot = crate::places::colour_dot(colour);
             dot.add_css_class("focus-open-label-dot");
-            // The dot's own size, so the pill's 8px inset reaches it.
             dot.set_content_width(focus_dialog::LABEL_DOT);
             pill.append(&dot);
             pill.append(&gtk::Label::new(Some(&label.name)));
@@ -1849,8 +1584,6 @@ impl OpenMessage {
         self.labels.append(&add);
     }
 
-    /// The fold line under the body: what the first closed fold hides, and
-    /// the raw source's key.
     fn show_fold_line(&self) {
         let folds = self.reader.view().folds();
         let Some((_, words, _)) = folds.iter().find(|(_, _, open)| !open) else {
@@ -1865,7 +1598,6 @@ impl OpenMessage {
         self.fold_line.set_visible(true);
     }
 
-    /// Open the first closed fold: what the fold line does.
     fn open_first_fold(&self) {
         let folds = self.reader.view().folds();
         if let Some((id, _, _)) = folds.iter().find(|(_, _, open)| !open) {
@@ -1873,8 +1605,6 @@ impl OpenMessage {
         }
     }
 
-    /// Close the message: the dialog, or the pane's message, which leaves the
-    /// pane empty. The list has not moved.
     pub fn close(&self) {
         self.cancel_dwell();
         if !self.in_pane() {
@@ -1885,28 +1615,22 @@ impl OpenMessage {
         }
     }
 
-    /// Whether the message is open, in the dialog or the pane.
     pub fn is_open(&self) -> bool {
         self.open.get()
     }
 
-    /// The dialog, for a test to read.
     pub fn dialog(&self) -> adw::Dialog {
         self.dialog.clone()
     }
 
-    /// The header's title: the subject.
     pub fn title(&self) -> String {
         self.title.text().to_string()
     }
 
-    /// The header's position line.
     pub fn subtitle(&self) -> String {
         self.subtitle.text().to_string()
     }
 
-    /// What `A` offers for the message on screen: its links, each with the
-    /// words it was written behind and its full target, then its parts.
     pub fn choices(&self) -> Vec<crate::chooser::Choice> {
         use crate::chooser::Choice;
         let mut choices: Vec<Choice> = Vec::new();
@@ -1946,7 +1670,6 @@ impl OpenMessage {
         choices
     }
 
-    /// Press the card's Dismiss, as a click does; whether there was one.
     pub fn dismiss_marker(&self) -> bool {
         let Some(card) = self.card.borrow().clone() else {
             return false;
@@ -1968,7 +1691,6 @@ impl OpenMessage {
         false
     }
 
-    /// What the marker card says, piece by piece; empty with no card.
     pub fn marker_card_said(&self) -> Vec<String> {
         let Some(card) = self.card.borrow().clone() else {
             return Vec::new();
@@ -1988,8 +1710,6 @@ impl OpenMessage {
         said
     }
 
-    /// The marker card under the header, for `message` when the marker is
-    /// its (a thread's other messages have none).
     fn show_marker_card(&self, message: MessageId) {
         let card = self
             .marker
@@ -2002,9 +1722,6 @@ impl OpenMessage {
         self.card.replace(card);
     }
 
-    /// The card for `marker` (contracts/focus-surface.md, 04.5): its kind,
-    /// its date, its sentence, and the actions that answer it with their
-    /// keys -- or what is true instead.
     fn marker_card(&self, marker: &postio_model::listing::MarkerSummary) -> gtk::Box {
         let line = postio_ui::focus_row::marker_line(
             marker,
@@ -2018,18 +1735,21 @@ impl OpenMessage {
         let chip = gtk::Label::new(Some(line.chip));
         chip.add_css_class("focus-marker-chip");
         chip.set_valign(gtk::Align::Center);
+        chip.update_property(&[gtk::accessible::Property::Label(line.spoken)]);
         card.append(&chip);
         if let Some(date) = &line.date {
             let date = gtk::Label::new(Some(date));
             date.add_css_class("focus-marker-date");
             card.append(&date);
         }
+        if line.automated {
+            card.add_css_class("automated");
+        }
         if let Some(quote) = &line.quote {
             let quote = gtk::Label::new(Some(&format!("\u{201c}{quote}\u{201d}")));
             quote.add_css_class("focus-marker-quote");
-            // The whole sentence, wrapping onto a second line when it needs
-            // one (SPEC section 5): it is what the card is about, and cut
-            // short it no longer says what was asked.
+            // The whole sentence wraps onto a second line: cut short, it no longer says what was
+            // asked.
             quote.set_wrap(true);
             quote.set_wrap_mode(pango::WrapMode::WordChar);
             quote.set_width_chars(1);
@@ -2065,8 +1785,6 @@ impl OpenMessage {
             });
             card.append(&button);
         }
-        // `-`: the marker was wrong, or is done with (T118). Quieter than
-        // the answers: it answers nothing.
         let dismiss = gtk::Button::new();
         postio_widgets::widgets::button::style(&dismiss, Kind::Ghost, Size::Regular);
         dismiss.add_css_class("focus-marker-dismiss");
@@ -2086,7 +1804,6 @@ impl OpenMessage {
         card
     }
 
-    /// Take the marker card away: its marker was dismissed.
     pub fn clear_marker(&self) {
         self.marker.replace(None);
         if let Some(shown) = self.shown.get() {
@@ -2095,10 +1812,8 @@ impl OpenMessage {
         self.reader.view().set_highlight(None);
     }
 
-    /// Highlight the marker's sentence in the body, where it is drawn
-    /// (spec 007 FR-035, research R2): found by its words through
-    /// `TextIndex::locate`, whose offset is chars into the body's own text,
-    /// the text the detector read.
+    /// Found by its words through `TextIndex::locate`, whose offset is chars into the body's own
+    /// text, the text the detector read.
     fn highlight_marker(&self) {
         let Some(shown) = self.shown.get() else {
             return;
@@ -2117,8 +1832,8 @@ impl OpenMessage {
             return;
         };
         let own = postio_body::own_text(&body);
-        // Where the sentence starts in that text. The first place its words
-        // stand: the marker keeps its span, the listing does not carry it.
+        // The first place its words stand: the marker keeps its span, the listing does not carry
+        // it.
         let offset = own.find(&excerpt).map_or(0, |at| own[..at].chars().count());
         let range = document.text.locate(postio_render::Excerpt {
             text: &excerpt,
@@ -2133,18 +1848,14 @@ impl OpenMessage {
         }
     }
 
-    /// How many of the conversation's messages `p` and `n` can step
-    /// through: none until the conversation has been read.
     pub fn thread_known(&self) -> usize {
         self.thread_total.get()
     }
 
-    /// The message on screen.
     pub fn shown(&self) -> Option<MessageId> {
         self.shown.get()
     }
 
-    /// The words of the body as drawn.
     pub fn body_text(&self) -> String {
         self.reader
             .view()
@@ -2153,22 +1864,17 @@ impl OpenMessage {
             .unwrap_or_default()
     }
 
-    /// Each label's dot: its name and colour as `#rrggbb`.
     pub fn label_dots(&self) -> Vec<(String, String)> {
         self.dots.borrow().clone()
     }
 
-    /// The message view.
     pub fn reader(&self) -> &Reader {
         &self.reader
     }
 }
 
-/// The dialog's widget name, so it can be told from another dialog.
 pub const DIALOG_NAME: &str = "focus-open-message";
 
-/// The MIME type the attachment chips hang from: the stored one, or what
-/// the body and the parts imply.
 fn root_type(stored: Option<&str>, body: &MessageBody, parts: &[Attachment]) -> String {
     if let Some(content_type) = stored {
         return content_type.to_owned();
@@ -2181,15 +1887,12 @@ fn root_type(stored: Option<&str>, body: &MessageBody, parts: &[Attachment]) -> 
     }
 }
 
-/// Told which part a chip stands for.
 type ChipHandler = Rc<dyn Fn(postio_model::ids::AttachmentId)>;
 
-/// `RemoteImageAllowList`'s own file: the one every reader of the app shares.
 pub fn allowlist_path() -> std::path::PathBuf {
     RemoteImageAllowList::path()
 }
 
-/// The words drawn inside `rect`.
 fn words_in(document: &postio_render::RenderedDocument, rect: postio_render::Rect) -> String {
     let inside: Vec<&postio_render::Cluster> = document
         .text
@@ -2211,9 +1914,6 @@ fn words_in(document: &postio_render::RenderedDocument, rect: postio_render::Rec
     }
 }
 
-/// The reader's remote-image fetch, on `runtime`: the desktop app's fetcher
-/// (`postio_runtime::remote_images`), which the reader asks only for URLs
-/// its allow list or a "show once" has cleared.
 fn remote_fetch(
     runtime: tokio::runtime::Handle,
 ) -> impl Fn(Vec<String>, postio_widgets::reader::view::RemoteArrived) + 'static {
@@ -2236,11 +1936,9 @@ fn remote_fetch(
     })
 }
 
-/// The inline parts of the message on screen, by content id.
 type Inline = Rc<RefCell<std::collections::HashMap<String, (Vec<u8>, String)>>>;
 
-/// A content id as a `cid:` URI and a part header both spell it: without
-/// the angle brackets a `Content-ID` header wears, in any case.
+/// Without the angle brackets a `Content-ID` header wears, in any case.
 fn cid_key(content_id: &str) -> String {
     content_id
         .trim()
@@ -2249,8 +1947,6 @@ fn cid_key(content_id: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Close each keycap under `root` up to its words: the handoff's 6px, where
-/// the shared keycap button leaves 8.
 fn tighten_keycaps(root: &gtk::Widget) {
     let mut stack = vec![root.clone()];
     while let Some(widget) = stack.pop() {
@@ -2267,10 +1963,6 @@ fn tighten_keycaps(root: &gtk::Widget) {
     }
 }
 
-/// One of the header's steps: a button showing `icon` and, after it, the
-/// holder its key's cap is put in from the keymap. The shared icon button's
-/// dress -- its name as the tooltip and accessible label -- with words
-/// inside, so it is sized by them rather than as a square.
 fn step(icon: &str, name: &str) -> (gtk::Button, gtk::Box) {
     let image = gtk::Image::from_icon_name(icon);
     image.set_accessible_role(gtk::AccessibleRole::Presentation);

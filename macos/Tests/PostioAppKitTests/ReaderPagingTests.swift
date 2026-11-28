@@ -6,33 +6,12 @@ import WebKit
 @testable import PostioAppKit
 @testable import PostioKit
 
-/// `space` turns the page, and the proof is that the document moved.
-///
-/// The most-used key in a mail client did nothing on macOS. Worse than a
-/// no-op: `KeyMonitor` returns `true` for any key the resolver claims, so
-/// `space` and `Page Down` were *swallowed* and never reached the view
-/// underneath either. A long message could not be read past its first screen
-/// without the trackpad.
-///
-/// The mechanism was already there and unused. A hardened reader has no
-/// scroll-by-amount call — JavaScript that arrived in the message is off
-/// (ADR 0003), and neither WebKit exposes one to the host with it off — so
-/// the shared document lays down sixty invisible anchors and a page turn is
-/// a same-document jump between them. GTK has jumped between them since it
-/// had a reader.
-///
-/// **This asserts the scroll position, not the call.** The load-bearing
-/// question is whether host-evaluated script still runs in a view whose
-/// `allowsContentJavaScript` is `false` — a claim about WebKit that is worth
-/// proving rather than reading in a document, because if it is wrong the key
-/// goes on doing nothing and every other test still passes.
 @MainActor
 struct ReaderPagingTests {
     @MainActor final class Progress {
         var loaded = false
     }
 
-    /// A document tall enough to page, with the shared anchors in it.
     private func tall() -> String {
         """
         <!doctype html><html><head><meta charset="utf-8">
@@ -87,7 +66,6 @@ struct ReaderPagingTests {
         try #require(start >= 0, "host script does not run in this view at all")
         #expect(start == 0, "it did not start at the top: \(start)")
 
-        // Page down twice, through the same helper the application uses.
         var page: UInt32 = 0
         for _ in 0..<2 {
             page = readerPageAfter(current: page, forward: true)
@@ -100,7 +78,6 @@ struct ReaderPagingTests {
             "the page key did not move the document: \(start) → \(down)"
         )
 
-        // And back.
         page = readerPageAfter(current: page, forward: false)
         await ReaderPaging.scroll(view, to: page)
         try? await Task.sleep(for: .milliseconds(300))

@@ -1,15 +1,8 @@
-//! The local-first mutation queue.
-//!
-//! Every mutating action in Postio writes SQLite and enqueues here in the same
-//! transaction, then repaints; the network happens later and somewhere else.
-//! That is what makes the app work offline, what makes undo a replay rather
-//! than a second implementation, and what keeps the UI off the network — the
-//! three invariants `CLAUDE.md` states for mutations.
-//!
-//! The vocabulary — which operations exist and what each one's inverse is —
-//! belongs to [`postio_model::Operation`]. This module only stores it, which is
-//! why `op_type` carries no `CHECK` constraint: adding an operation must not
-//! need a migration.
+//! The local-first mutation queue: every mutating action writes SQLite and enqueues here in the
+//! same transaction, then repaints; the network happens elsewhere later. That makes undo a replay
+//! and keeps the UI off the network.
+//! The vocabulary belongs to [`postio_model::Operation`]; `op_type` carries no `CHECK` so adding an
+//! operation needs no migration.
 
 use chrono::{DateTime, Utc};
 use postio_model::{
@@ -24,86 +17,31 @@ use crate::sql::{self, RowExt as _, bind};
 use crate::store::Connection;
 use turso::Row;
 
-/// One row of the mutation queue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueuedOperation {
-    /// Local id. Also the drain order — see [`OperationId`].
     pub id: OperationId,
-    /// The account whose server this will be replayed against.
     pub account_id: AccountId,
-    /// What it acts on.
     pub target: OperationTarget,
-    /// What to do.
     pub operation: Operation,
-    /// What undoes it, decided at enqueue time. `None` when nothing does.
     pub inverse: Option<Operation>,
-    /// The mailbox the drainer has to select, when the operation names one.
     pub mailbox_id: Option<MailboxId>,
-    /// Where it is in its life cycle.
     pub state: OperationState,
-    /// How many times it has been tried.
     pub attempts: u32,
-    /// What went wrong on the last attempt.
     pub last_error: Option<String>,
-    /// Backoff: the drainer skips this row until then.
     pub next_attempt_at: Option<DateTime<Utc>>,
-    /// When the user performed the action.
     pub created_at: DateTime<Utc>,
-    /// When the row last changed.
     pub updated_at: DateTime<Utc>,
-    /// Where the message sat on the server when this was enqueued.
-    ///
-    /// Snapshotted for message-target rows, because the local half of a Move
-    /// or Delete nulls the live row's coordinates in the same transaction —
-    /// by drain time this row is the only thing that remembers them (#289).
-    /// The backend's own identity (#543); `None` for rows written before the
-    /// snapshot existed, for non-message targets, and for messages that had
-    /// never been uploaded; the drainer falls back to the live row.
+    /// Snapshotted for message-target rows: the local half of a Move or Delete nulls the live row's
+    /// coordinates in the same transaction (#289). The backend's own identity (#543); `None` for
+    /// non-message targets and never-uploaded messages, where the drainer falls back to the live
+    /// row.
     pub source_remote_id: Option<RemoteId>,
 }
 
-/// Reads and writes the mutation queue.
-///
-/// # Enqueue is part of the caller's write
-///
-/// Every method takes a borrowed [`Connection`], and the repository's own
-/// atomic scopes are savepoints, so an enqueue nests inside the transaction
-/// that performs the local write:
-///
-/// ```no_run
-/// # use postio_model::{AccountId, MailboxId, MessageId, Operation, OperationTarget};
-/// # use postio_storage::repository::OperationQueueRepository;
-/// # async fn demo() -> Result<(), postio_storage::Error> {
-/// # use postio_storage::key::{Purpose, StoreKey};
-/// # let key = StoreKey::generate().derive(Purpose::Database);
-/// # let database = postio_storage::Store::open("postio.db", &key).await?;
-/// # let connection = database.connect().await?;
-/// # let (account, message) = (AccountId::new(1), MessageId::new(1));
-/// # let (inbox, archive) = (MailboxId::new(1), MailboxId::new(2));
-/// postio_storage::transaction(&connection, |transaction| async move {
-///     // Enqueue FIRST, then perform the local write: a Move or Delete nulls
-///     // the row's server coordinates, and the enqueue is what snapshots them
-///     // while they are still there (#289).
-///     OperationQueueRepository::new(&transaction)
-///         .enqueue(
-///             account,
-///             OperationTarget::Message(message),
-///             &Operation::Move { from: inbox, to: archive },
-///             chrono::Utc::now(),
-///         )
-///         .await?;
-///     // ... perform the local write ...
-///     Ok::<_, postio_storage::Error>(())
-/// })
-/// .await?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// Enqueueing outside the local write is the bug this shape exists to prevent:
-/// a queue row without its local write tells the server about something the
-/// user never saw happen, and a local write without its row silently never
-/// reaches the server.
+/// Every method takes a borrowed [`Connection`] and its atomic scopes are savepoints, so an enqueue
+/// nests inside the transaction performing the local write. Enqueue first, then write locally: a
+/// Move or Delete nulls the server coordinates the enqueue snapshots (#289). Enqueueing outside the
+/// local write is the bug this shape prevents.
 #[derive(Debug)]
 pub struct OperationQueueRepository<'a> {
     connection: &'a Connection,
@@ -114,17 +52,12 @@ id, account_id, op_type, target_kind, target_id, mailbox_id, payload, inverse, s
 attempts, last_error, next_attempt_at, created_at, updated_at, source_remote_id";
 
 impl<'a> OperationQueueRepository<'a> {
-    /// Borrows a connection.
     pub fn new(connection: &'a Connection) -> Self {
         Self { connection }
     }
 
-    /// Appends an operation to the account's queue.
-    ///
-    /// The inverse is computed and stored now rather than when undo is pressed:
-    /// by then the mailbox the message came from may no longer be where it is,
-    /// and reconstructing "where was this before" from the current state is
-    /// exactly the guesswork undo must not do.
+    /// The inverse is stored now, not when undo is pressed: by then the mailbox may no longer be
+    /// where the message was.
     pub async fn enqueue(
         &self,
         account_id: AccountId,
@@ -136,17 +69,10 @@ impl<'a> OperationQueueRepository<'a> {
             .await
     }
 
-    /// Appends an operation the drainer must not touch before `not_before` —
-    /// a scheduled send, or anything else the user asked to happen later.
-    ///
-    /// Reuses the same gate [`defer`](Self::defer) puts a backed-off retry
-    /// behind ([`pending`](Self::pending) skips any row whose
-    /// `next_attempt_at` is still in the future), which is what makes this
-    /// restart-safe for free: the row is read from SQLite on every drain
-    /// pass, not timed from an in-memory clock that a restart would lose.
-    /// Unlike a deferred row this one has made no attempt and failed
-    /// nothing, so `attempts` stays `0` and `last_error` stays `None` — a
-    /// scheduled send must not read like a retry in a bug report.
+    /// Reuses the gate [`defer`](Self::defer) puts a backed-off retry behind
+    /// ([`pending`](Self::pending) skips rows whose `next_attempt_at` is in the future), so it is
+    /// restart-safe: the row is read from SQLite each drain pass. `attempts` stays `0` and
+    /// `last_error` `None`, so a scheduled send does not read like a retry.
     pub async fn enqueue_not_before(
         &self,
         account_id: AccountId,
@@ -174,10 +100,9 @@ impl<'a> OperationQueueRepository<'a> {
             let encoded_inverse = inverse.as_ref().map(encode).transpose()?;
             let mailbox_id = operation.mailbox().filter(|id| id.is_assigned());
 
-            // The snapshot has to be read before the caller's local write nulls
-            // it — which is why enqueue comes before the move in every Move and
-            // Delete path (#289). A target that is not a message, or a row that
-            // does not exist, snapshots nothing.
+            // Read before the caller's local write nulls it, which is why enqueue precedes the move
+            // in every Move and Delete path (#289). A non-message target, or a missing row,
+            // snapshots nothing.
             let source_remote_id: Option<String> = match target {
                 OperationTarget::Message(id) => sql::first(
                     &scope,
@@ -235,27 +160,12 @@ impl<'a> OperationQueueRepository<'a> {
         .await
     }
 
-    /// Enqueues `operation` once per message a [`MessageSet`] names, in one
-    /// statement, and returns the run of rows it wrote.
+    /// One row per message, resolved now: a single "move everything in INBOX" row would be resolved
+    /// by the drainer later, after mail that arrived since had landed in INBOX, and file it away
+    /// unseen. One `INSERT ... SELECT` over the move's index; `postio-sync`'s coalescer folds a run
+    /// of identical moves before any is sent.
     ///
-    /// # Why one row per message rather than one row for the mailbox
-    ///
-    /// The queue is a promise about *specific* messages. A single row saying
-    /// "move everything in INBOX to Archive" would be resolved by the drainer
-    /// later — by which time mail that arrived after the user acted would be
-    /// sitting in INBOX too, and the drainer would file it away. That is not a
-    /// slower version of the right answer; it is the user losing mail they
-    /// never saw. So the set is resolved *now*, against the mailbox as it was
-    /// when the key was pressed, and each row carries the message whose UID the
-    /// drainer will need.
-    ///
-    /// What must not happen is one statement per row, and does not: this is a
-    /// single `INSERT ... SELECT` over the same index the move uses. The rows
-    /// it writes cost the server nothing extra either — `postio-sync`'s
-    /// coalescer folds a run of identical moves before any of it is sent.
-    ///
-    /// Returns `None` when the set named nothing, which is not an error: a
-    /// whole-mailbox action over an empty mailbox has simply nothing to do.
+    /// Returns `None` when the set named nothing.
     pub async fn enqueue_set(
         &self,
         account_id: AccountId,
@@ -268,11 +178,9 @@ impl<'a> OperationQueueRepository<'a> {
         let encoded_inverse = operation.inverse().as_ref().map(encode).transpose()?;
         let mailbox_id = operation.mailbox().filter(|id| id.is_assigned());
         sql::in_scope(self.connection, |scope| async move {
-            // Read before writing: `first` is one past whatever the queue already
-            // held, so the run this returns cannot swallow a row somebody else
-            // wrote. Taking it from `last - changes + 1` instead would assume the
-            // statement's rowids came out contiguous, which is true today and is
-            // not something the schema promises.
+            // Read before writing: `first` is one past what the queue held, so the run cannot
+            // swallow another row; `last - changes + 1` would assume contiguous rowids, which the
+            // schema does not promise.
             let highest = sql::scalar(
                 &scope,
                 "SELECT coalesce(max(id), 0) FROM operation_queue",
@@ -280,14 +188,10 @@ impl<'a> OperationQueueRepository<'a> {
             )
             .await?;
 
-            // `ORDER BY messages.id` is not decoration: without it the queue's
-            // own order is whatever order the planner happened to walk the rows
-            // in, and that is a property of the *indexes*, not of this statement.
-            // #638 widened the list indexes and the order silently reversed --
-            // the planner could suddenly answer the predicate from
-            // `idx_messages_list`, which is keyed `received_at DESC, id DESC`,
-            // where before it had scanned in rowid order. The queue drains in id
-            // order, so this decides the order operations reach the server.
+            // `ORDER BY messages.id` is not decoration: without it the queue order is whatever the
+            // planner walked, a property of the indexes. #638 widened the list indexes and the
+            // order silently reversed. The queue drains in id order, so this decides the order
+            // operations reach the server.
             let (predicate, arguments) = set.predicate(8);
             let sql = format!(
                 "INSERT INTO operation_queue (account_id, op_type, target_kind, target_id,
@@ -315,9 +219,8 @@ impl<'a> OperationQueueRepository<'a> {
             }
             let last = OperationId::new(scope.last_insert_rowid());
 
-            // One statement rather than `refresh_pending_flag` per row: the flag
-            // says "this message has something queued", and every row this wrote
-            // is a message that now does.
+            // One statement, not `refresh_pending_flag` per row: every row written is a message
+            // that now has something queued.
             let (predicate, arguments) = set.predicate(1);
             sql::execute(
                 &scope,
@@ -334,21 +237,10 @@ impl<'a> OperationQueueRepository<'a> {
         .await
     }
 
-    /// Enqueues `operation` once for each of `ids`, in one statement.
-    ///
-    /// The named twin of [`enqueue_set`](Self::enqueue_set): a multi-select
-    /// has no mailbox predicate to enqueue against — the caller already
-    /// resolved it to a list of ids — so this takes that list directly rather
-    /// than building a throwaway [`super::MessageSet`] around it. What both
-    /// share is the shape that matters: one `INSERT ... SELECT` and one flag
-    /// `UPDATE`, whatever the length of `ids`, rather than a loop calling
-    /// [`enqueue`](Self::enqueue) once per message. A 500-row multi-select
-    /// through that loop is 500 savepoints and 500
-    /// `has_pending_operations` refreshes for the same net effect.
-    ///
-    /// Does nothing, successfully, for an empty `ids` — a verb with an empty
-    /// selection has already been rejected further up before this is ever
-    /// called.
+    /// The named twin of [`enqueue_set`](Self::enqueue_set) for a multi-select already resolved to
+    /// ids: one `INSERT ... SELECT` and one flag `UPDATE` whatever the length, where a loop over
+    /// [`enqueue`](Self::enqueue) is 500 savepoints and refreshes for 500 rows. Does nothing for an
+    /// empty `ids`.
     pub async fn enqueue_many(
         &self,
         account_id: AccountId,
@@ -390,9 +282,6 @@ impl<'a> OperationQueueRepository<'a> {
             );
             sql::execute(&scope, &sql, parameters).await?;
 
-            // One statement rather than `refresh_pending_flag` per row, same as
-            // `enqueue_set`: every id this wrote a row for is a message that now
-            // has something queued.
             let flag_sql = format!(
                 "UPDATE messages SET has_pending_operations = 1 WHERE id IN ({})",
                 super::messages::placeholders(ids.len(), 1)
@@ -409,15 +298,9 @@ impl<'a> OperationQueueRepository<'a> {
         .await
     }
 
-    /// Where `message` sat on the server before the first move or delete of
-    /// it queued after `after` and not yet settled: that row's source mailbox
-    /// and its snapshot, when it has both.
-    ///
-    /// For a flag change queued ahead of a move. The move's local half nulls
-    /// the live row's coordinates, and a flag row carries a snapshot but no
-    /// mailbox, so the move that follows it is what still names both -- and
-    /// the queue drains in order, so the message is still there when the flag
-    /// change runs.
+    /// For a flag change queued ahead of a move: the move's local half nulls the live row's
+    /// coordinates, a flag row carries a snapshot but no mailbox, so the move still names both, and
+    /// the queue drains in order.
     pub async fn leaving_after(
         &self,
         message: MessageId,
@@ -438,7 +321,6 @@ impl<'a> OperationQueueRepository<'a> {
         Ok(found.map(|(mailbox, remote_id)| (MailboxId::new(mailbox), RemoteId::new(remote_id))))
     }
 
-    /// One row.
     pub async fn get(&self, id: OperationId) -> Result<Option<QueuedOperation>> {
         let mut statement = sql::statement(
             self.connection,
@@ -448,11 +330,8 @@ impl<'a> OperationQueueRepository<'a> {
         crate::sql::first_of(&mut statement, [id.get()], read_queued).await
     }
 
-    /// The account's operations that are due to be drained at `now`, in order.
-    ///
-    /// Ascending id, which is enqueue order, which is the order the user
-    /// performed the actions in. A row whose backoff has not elapsed is
-    /// skipped and keeps its place for the next pass.
+    /// Ascending id is enqueue order. A row whose backoff has not elapsed is skipped and keeps its
+    /// place.
     pub async fn pending(
         &self,
         account_id: AccountId,
@@ -480,13 +359,8 @@ impl<'a> OperationQueueRepository<'a> {
         .await
     }
 
-    /// The unsettled row against `target`, if there is one.
-    ///
-    /// A target has at most one row in `pending`/`in_flight` at a time in
-    /// practice — the caller that would enqueue a second one guards against
-    /// it — so the earliest by id (there is only ever the one) is what this
-    /// returns. Used by [`super::DraftRepository::cancel_send`] to find the
-    /// `Send` a queued draft is waiting on.
+    /// The earliest by id; in practice a target has one `pending`/`in_flight` row. Used by
+    /// [`super::DraftRepository::cancel_send`].
     pub async fn pending_for(&self, target: OperationTarget) -> Result<Option<QueuedOperation>> {
         let mut statement = sql::statement(
             self.connection,
@@ -506,20 +380,10 @@ impl<'a> OperationQueueRepository<'a> {
         .await
     }
 
-    /// Why the last attempt against `target` gave up, if one did.
-    ///
-    /// [`pending_for`](Self::pending_for) answers for work still in progress;
-    /// this answers for work that stopped. A surface reopening a failed draft
-    /// has a `DraftId` and nothing else, and the reason lives on a queue row
-    /// keyed by target — without a query from one to the other the reason is
-    /// durable and unreachable, which is exactly what it was (#1487).
-    ///
-    /// Read rather than copied onto the draft: one source of truth, and a
-    /// second copy is one that can come to disagree with the first about why
-    /// a send failed.
-    ///
-    /// The most recent, since a target may have failed more than once and the
-    /// current reason is the one worth saying.
+    /// [`pending_for`](Self::pending_for) answers for work in progress; this for work that stopped.
+    /// A surface reopening a failed draft has only a `DraftId`, and the reason lives on a queue row
+    /// keyed by target (#1487). Read, not copied onto the draft, so two copies cannot disagree. The
+    /// most recent failure wins.
     pub async fn last_failure_for(&self, target: OperationTarget) -> Result<Option<String>> {
         let reason: Option<Option<String>> = sql::first(
             self.connection,
@@ -531,14 +395,11 @@ impl<'a> OperationQueueRepository<'a> {
             |row| row.col(0),
         )
         .await?;
-        // Flattened: no failed row and a failed row that recorded no reason
-        // are the same answer to "what should I tell them", and a caller that
-        // had to tell them apart would have nothing to do with the
-        // difference.
+        // Flattened: no failed row and a failed row with no reason are the same answer to "what
+        // should I tell them".
         Ok(reason.flatten())
     }
 
-    /// Whether anything unsettled is queued against `target`.
     pub async fn has_pending(&self, target: OperationTarget) -> Result<bool> {
         let count: i64 = sql::one(
             self.connection,
@@ -551,22 +412,12 @@ impl<'a> OperationQueueRepository<'a> {
         Ok(count > 0)
     }
 
-    /// Whether anything queued against `mailbox` is still unreconciled.
+    /// Asks by mailbox, not target, and counts `failed` alongside `pending` and `in_flight`: a
+    /// failed row is a local move the server never heard of, and only the user clears it.
     ///
-    /// Wider than [`has_pending`](Self::has_pending) in two ways, and both are
-    /// deliberate. It asks by *mailbox* rather than by target, because the
-    /// question behind it is about the mailbox as a whole: does its local
-    /// contents already reflect a mutation the server has not been told about?
-    /// And it counts `failed` alongside `pending` and `in_flight`, because a
-    /// failed row is precisely that — the local move stands, the server never
-    /// heard, and only the user can clear it.
-    ///
-    /// What it is for: a mailbox holding fewer messages than the server's
-    /// `EXISTS` has either lost mail or is carrying a local move the server
-    /// has not caught up with, and the row counts alone cannot tell those
-    /// apart. This can. See `resync`'s short-of-`EXISTS` path — without it,
-    /// re-enumerating would refetch the very message the user just archived
-    /// and put it back in the mailbox they took it out of.
+    /// For `resync`'s short-of-`EXISTS` path: a mailbox with fewer messages than `EXISTS` has
+    /// either lost mail or carries an unsent local move, and without this re-enumerating would
+    /// refetch the message the user just archived.
     pub async fn has_unsettled_in(&self, mailbox: MailboxId) -> Result<bool> {
         let count: i64 = sql::one(
             self.connection,
@@ -580,12 +431,8 @@ impl<'a> OperationQueueRepository<'a> {
         Ok(count > 0)
     }
 
-    /// Records why a row ended up the way it did, without changing its state.
-    ///
-    /// For the outcome that is neither success nor failure: an operation the
-    /// server had nothing to do about. The row is done, but *why* it was done
-    /// without a round trip is the difference between an explicable bug report
-    /// and a mystery.
+    /// For an operation the server had nothing to do about: why it was done without a round trip is
+    /// the difference between an explicable bug report and a mystery.
     pub async fn note(&self, id: OperationId, note: &str) -> Result<()> {
         let changed = sql::execute(
             self.connection,
@@ -602,28 +449,22 @@ impl<'a> OperationQueueRepository<'a> {
         Ok(())
     }
 
-    /// Hands a row to the drainer.
     pub async fn mark_in_flight(&self, id: OperationId, at: DateTime<Utc>) -> Result<()> {
         self.set_state(id, OperationState::InFlight, at, None, false)
             .await
     }
 
-    /// Records that the server applied a row.
     pub async fn mark_done(&self, id: OperationId, at: DateTime<Utc>) -> Result<()> {
         self.set_state(id, OperationState::Done, at, None, false)
             .await
     }
 
-    /// Gives up on a row. Only the user clears it from here.
     pub async fn mark_failed(&self, id: OperationId, at: DateTime<Utc>, error: &str) -> Result<()> {
         self.set_state(id, OperationState::Failed, at, Some(error), true)
             .await
     }
 
-    /// Puts a row back in the queue, not to be tried again before `retry_at`.
-    ///
-    /// The backoff schedule itself is the drainer's; this only records the
-    /// decision.
+    /// The backoff schedule is the drainer's; this records the decision.
     pub async fn defer(&self, id: OperationId, retry_at: DateTime<Utc>, error: &str) -> Result<()> {
         sql::in_scope(self.connection, |scope| async move {
             let changed = sql::execute(
@@ -651,12 +492,8 @@ impl<'a> OperationQueueRepository<'a> {
         .await
     }
 
-    /// Returns every in-flight row in an account to pending, and says how many.
-    ///
-    /// For start-up after a crash. A row left in flight is *not* known to have
-    /// failed — the server may have applied it and died before the reply — so
-    /// it is retried rather than dropped, and operations are written to be
-    /// idempotent precisely so that retrying is safe.
+    /// For start-up after a crash: a row left in flight is not known to have failed (the server may
+    /// have applied it), so it is retried, and operations are idempotent so that is safe.
     pub async fn requeue_in_flight(
         &self,
         account_id: AccountId,
@@ -678,11 +515,8 @@ impl<'a> OperationQueueRepository<'a> {
         Ok(changed as usize)
     }
 
-    /// Drops a row, returning whether there was one.
-    ///
-    /// This is how a send is cancelled: an operation that has not drained yet
-    /// can simply be taken off the queue, which is a better undo than any
-    /// compensating operation.
+    /// How a send is cancelled: an operation that has not drained can be taken off the queue, a
+    /// better undo than a compensating operation.
     pub async fn delete(&self, id: OperationId) -> Result<bool> {
         sql::in_scope(self.connection, |scope| async move {
             let target = self.get(id).await?.map(|queued| queued.target);
@@ -700,10 +534,7 @@ impl<'a> OperationQueueRepository<'a> {
         .await
     }
 
-    /// Removes settled rows older than `before`, returning how many went.
-    ///
-    /// Done rows are kept for a while so a late undo can still find them; this
-    /// is the sweep that stops the table growing without bound.
+    /// Done rows are kept for a while so a late undo can find them.
     pub async fn prune_settled(
         &self,
         account_id: AccountId,
@@ -759,12 +590,8 @@ impl<'a> OperationQueueRepository<'a> {
     }
 }
 
-/// Recomputes `messages.has_pending_operations` for whatever `target` covers.
-///
-/// The message list reads that column rather than joining the queue, which is
-/// what keeps a page of rows at a fixed number of queries and inside the 16 ms
-/// interaction budget. Only message-shaped targets have one; an operation on a
-/// mailbox or the account itself has no per-message flag to keep true.
+/// The message list reads that column rather than joining the queue, keeping a page at a fixed
+/// number of queries inside the 16 ms budget. Only message-shaped targets have one.
 async fn refresh_pending_flag(connection: &Connection, target: OperationTarget) -> Result<()> {
     let selector = match target {
         OperationTarget::Message(_) => "id = ?1",

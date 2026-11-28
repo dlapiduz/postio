@@ -1,17 +1,6 @@
 //! Opening a JMAP connection: the stream, the bearer, the cached session.
-//!
-//! `io-jmap`'s blocking client wraps one stream; this module opens those
-//! streams on the workspace's own cancellable `pimalaya-stream` — the same
-//! pattern `postio-account`'s OAuth exchange uses — and runs every blocking
-//! request under `spawn_blocking` so the async engine never parks a worker
-//! on a socket.
-//!
-//! The [`JmapSession`] object (api url, account id, blob url templates) is
-//! resolved once at [`JmapConnection::connect`] and cached: it changes so
-//! rarely that re-fetching it per call would double every request. Each
-//! call still opens a fresh stream — connection reuse is a later
-//! optimization, and HTTP/1.1 keep-alive across `spawn_blocking` calls is
-//! not worth the shared-mutable client it would take today.
+//! The session is resolved once at connect and cached; each call opens a
+//! fresh stream under `spawn_blocking`.
 
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -29,36 +18,26 @@ use url::Url;
 
 use crate::error::backend_error;
 
-/// Where a connection's bearer comes from.
 #[derive(Clone)]
 enum Auth {
-    /// A token handed in whole, `Bearer ` prefix included. Tests, mostly.
     Fixed(SecretString),
-    /// The account's [`TokenSource`] (ADR 0006): asked per request, so a
-    /// refreshed credential is picked up without reconnecting anything.
+    /// Asked per request, so a refreshed credential is picked up without reconnecting.
     Source {
         key: AccountKey,
         tokens: Arc<dyn TokenSource>,
     },
 }
 
-/// How to reach one JMAP server, plus the session it resolved.
 #[derive(Clone)]
 pub struct JmapConnection {
-    /// The RFC 8620 session resource URL —
-    /// `https://api.fastmail.com/jmap/session/` for Fastmail, or whatever
-    /// `.well-known/jmap` redirected to.
     session_url: Url,
-    /// Where the `Authorization` header comes from.
     auth: Auth,
-    /// Resolved once at connect; see the module docs.
     session: Arc<std::sync::Mutex<Option<JmapSession>>>,
 }
 
 impl std::fmt::Debug for JmapConnection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // The bearer never reaches a log (CLAUDE.md: credentials are
-        // keyring-and-wire only).
+        // The bearer never reaches a log.
         f.debug_struct("JmapConnection")
             .field("session_url", &self.session_url.as_str())
             .finish_non_exhaustive()
@@ -66,8 +45,6 @@ impl std::fmt::Debug for JmapConnection {
 }
 
 impl JmapConnection {
-    /// A connection that will resolve its session on first use.
-    ///
     /// `token` is the raw access token; the `Bearer ` prefix is added here.
     pub fn new(session_url: Url, token: &str) -> Self {
         Self {
@@ -77,9 +54,7 @@ impl JmapConnection {
         }
     }
 
-    /// A connection whose bearer comes from the account's token source,
-    /// asked per request (ADR 0006: one source per account, shared with
-    /// SMTP, so an invalidation is seen everywhere at once).
+    /// One source per account, shared with SMTP, so an invalidation is seen everywhere (ADR 0006).
     pub fn with_token_source(
         session_url: Url,
         key: AccountKey,
@@ -92,7 +67,6 @@ impl JmapConnection {
         }
     }
 
-    /// The `Authorization` value for the next request.
     async fn http_auth(&self) -> BackendResult<SecretString> {
         match &self.auth {
             Auth::Fixed(auth) => Ok(auth.clone()),
@@ -109,17 +83,14 @@ impl JmapConnection {
         }
     }
 
-    /// The host this connection dials, for error reporting.
     pub(crate) fn host(&self) -> String {
         self.session_url.host_str().unwrap_or("unknown").to_owned()
     }
 
-    /// The cached session, if one has been resolved.
     pub(crate) fn session(&self) -> Option<JmapSession> {
         self.session.lock().expect("session lock").clone()
     }
 
-    /// Resolves and caches the session object.
     pub(crate) async fn connect(&self, cancel: &CancelToken) -> BackendResult<JmapSession> {
         let url = self.session_url.clone();
         let auth = self.http_auth().await?;
@@ -139,8 +110,6 @@ impl JmapConnection {
         Ok(session)
     }
 
-    /// Runs one blocking client call on a fresh stream, resolving the
-    /// session first if this connection never has.
     pub(crate) async fn run<T, F>(&self, cancel: &CancelToken, call: F) -> BackendResult<T>
     where
         T: Send + 'static,
@@ -170,10 +139,7 @@ fn join_error(error: tokio::task::JoinError) -> BackendError {
     }
 }
 
-/// A cancellable, bounded stream to `url`'s origin — TLS for `https`,
-/// plain for `http` (only ever reached in tests, against a mock server on
-/// loopback; the seam's settings validation refuses cleartext anywhere
-/// else, and so does this).
+/// Plain `http` is only reached in tests, against loopback; cleartext anywhere else is refused.
 pub(crate) fn open_stream(
     url: &Url,
     cancel: &CancelToken,
@@ -214,12 +180,10 @@ fn io_error(error: impl std::fmt::Display) -> BackendError {
     }
 }
 
-/// What [`JmapClientStd::new`] wants of a stream.
 pub(crate) trait ReadWriteSend: Read + Write + Send {}
 impl<S: Read + Write + Send> ReadWriteSend for S {}
 
-/// A stream that fails fast once its token is spent, so a cancelled sync
-/// pass stops at the next read or write instead of finishing the request.
+/// Fails fast once its token is spent, so a cancelled sync pass stops at the next read or write.
 struct Cancellable<S> {
     inner: S,
     cancel: CancelToken,

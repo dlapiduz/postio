@@ -1,16 +1,7 @@
-//! vCard import and export.
-//!
-//! This crate maps between vCard files and Postio's contacts: which card
-//! properties become a person's name, addresses, organisation and note, which
-//! cards are groups, and how a card Postio has edited is written back out. It
-//! does no storage and no I/O of its own — the app reads the file the user
-//! picked, hands the bytes here, and writes what comes back into the store.
-//!
-//! Parsing is Pimalaya's `vcard-rs`, chosen because it round-trips every
-//! property it does not understand byte-for-byte, which is the property an
-//! honest import-then-export needs (`specs/005-contacts/research.md` R9). It
-//! is a leaf: no database engine, no toolkit, no async runtime —
-//! `scripts/checks/check-crate-boundaries.py` holds it to that.
+//! vCard import and export, mapping between vCard files and Postio's contacts. Parsing is
+//! `vcard-rs`, chosen because it round-trips every property it does not understand byte-for-byte,
+//! which an honest import-then-export needs (`specs/005-contacts/research.md` R9). A leaf: no
+//! storage, I/O, toolkit or async runtime (`scripts/checks/check-crate-boundaries.py`).
 
 use std::borrow::Cow;
 
@@ -20,25 +11,17 @@ use vcard::tree::cst::VcardCst;
 use vcard::tree::line::VcardLine;
 use vcard::tree::param::node::VcardParamNode;
 
-/// A person as the store hands them to export.
 #[derive(Debug, Clone, Copy)]
 pub struct ExportPerson<'a> {
-    /// Their `UID`.
     pub uid: &'a str,
-    /// Their name.
     pub name: Option<&'a str>,
-    /// Their addresses, and which is preferred.
     pub emails: &'a [(String, bool)],
-    /// Their organisation.
     pub organization: Option<&'a str>,
-    /// The user's note.
     pub note: Option<&'a str>,
 }
 
-/// Reads a `.vcf` file: every card that reads, and every one that does not
-/// with the reason (FR-054). A file is split into cards here rather than by
-/// the parser's own iterator, which stops at the first bad card -- one broken
-/// card must not cost the user the rest of their address book.
+/// A file is split into cards here rather than by the parser's own iterator, which stops at the
+/// first bad card: one broken card must not cost the rest of the address book.
 pub fn parse(bytes: &[u8]) -> Import {
     let text = String::from_utf8_lossy(bytes);
     let mut import = Import::default();
@@ -51,11 +34,9 @@ pub fn parse(bytes: &[u8]) -> Import {
     import
 }
 
-/// One 4.0 card for `person`. From a stored card, only the properties Postio
-/// models are rewritten -- in place, their group prefix kept -- and every
-/// other line is carried over byte for byte, save the four spellings 4.0
-/// forbids in a 3.0 source (contracts/vcard.md). With no stored card, a
-/// fresh one.
+/// From a stored card only the properties Postio models are rewritten (group prefix kept); every
+/// other line is carried over byte for byte, save the four spellings 4.0 forbids in a 3.0 source
+/// (contracts/vcard.md).
 pub fn export(person: &ExportPerson<'_>, raw: Option<&str>) -> String {
     if let Some(card) = raw.and_then(|raw| VcardCst::parse(raw).ok()) {
         return rewrite(&card, &Modelled::Person(person));
@@ -78,8 +59,6 @@ pub fn export(person: &ExportPerson<'_>, raw: Option<&str>) -> String {
     out
 }
 
-/// One 4.0 group card: its name and members as the store has them now,
-/// everything else from `raw` as [`export`] carries it.
 pub fn export_group(uid: &str, name: &str, members: &[String], raw: Option<&str>) -> String {
     if let Some(card) = raw.and_then(|raw| VcardCst::parse(raw).ok()) {
         return rewrite(&card, &Modelled::Group { uid, name, members });
@@ -94,9 +73,6 @@ pub fn export_group(uid: &str, name: &str, members: &[String], raw: Option<&str>
     out
 }
 
-// -- Reading ------------------------------------------------------------------
-
-/// The file's cards, `BEGIN` to `END`, each as it was written.
 fn split_cards(text: &str) -> Vec<String> {
     let mut cards = Vec::new();
     let mut current: Option<String> = None;
@@ -206,7 +182,6 @@ fn parse_card(chunk: &str) -> Result<ParsedCard, String> {
     if emails.is_empty() {
         return Err("it has no email address".to_owned());
     }
-    // Exactly one preferred: the first the card marks, else the first.
     let preferred = emails.iter().position(|(_, p)| *p).unwrap_or(0);
     for (index, (_, flag)) in emails.iter_mut().enumerate() {
         *flag = index == preferred;
@@ -223,7 +198,6 @@ fn parse_card(chunk: &str) -> Result<ParsedCard, String> {
     }))
 }
 
-/// `item1.EMAIL` → (`item1.`, `EMAIL`).
 fn split_name(name: &str) -> (&str, &str) {
     match name.rfind('.') {
         Some(dot) => (&name[..=dot], &name[dot + 1..]),
@@ -231,7 +205,6 @@ fn split_name(name: &str) -> (&str, &str) {
     }
 }
 
-/// `PREF=1` (4.0), `TYPE=pref` (3.0) or a bare `PREF` (2.1).
 fn is_preferred(line: &VcardLine<'_>) -> bool {
     line.params.iter().any(|param| {
         let name = param.name.get();
@@ -244,9 +217,6 @@ fn is_preferred(line: &VcardLine<'_>) -> bool {
     })
 }
 
-// -- Writing ------------------------------------------------------------------
-
-/// What the store says about the card, for the lines it owns.
 enum Modelled<'a> {
     Person(&'a ExportPerson<'a>),
     Group {
@@ -256,8 +226,6 @@ enum Modelled<'a> {
     },
 }
 
-/// Walks a stored card, writing the modelled lines from the store and
-/// carrying every other one over.
 fn rewrite(card: &VcardCst<'_>, modelled: &Modelled<'_>) -> String {
     let from_3 = card
         .version_line()
@@ -330,7 +298,6 @@ fn rewrite(card: &VcardCst<'_>, modelled: &Modelled<'_>) -> String {
             _ => out.push_str(&carried(line, from_3)),
         }
     }
-    // What the store has that the card did not.
     if !done.contains(&"UID") {
         push(&mut out, "", "UID", uid);
     }
@@ -369,8 +336,6 @@ fn rewrite(card: &VcardCst<'_>, modelled: &Modelled<'_>) -> String {
     out
 }
 
-/// One address, from its original line when the card had it -- its `TYPE`
-/// and group kept -- with `PREF=1` on the preferred one only.
 fn write_email(
     out: &mut String,
     card: &VcardCst<'_>,
@@ -405,7 +370,6 @@ fn write_email(
     out.push_str(&line_text(&line));
 }
 
-/// Takes every way of saying "preferred" off a line.
 fn drop_preference(line: &mut VcardLine<'_>) {
     line.params
         .retain(|param| !param.name.get().eq_ignore_ascii_case("PREF"));
@@ -473,7 +437,6 @@ fn carried(line: &VcardLine<'_>, from_3: bool) -> String {
     format!("{head}:data:{media};base64,{data}{}", line.eol.get())
 }
 
-/// One line, serialized exactly as the tree would write it.
 fn line_text(line: &VcardLine<'_>) -> String {
     let card = VcardCst {
         begin: None,
@@ -493,7 +456,6 @@ fn push_email(out: &mut String, group: &str, address: &str, preferred: bool) {
     out.push_str(&format!("{group}EMAIL{pref}:{address}\r\n"));
 }
 
-/// RFC 6350 3.4's text escapes.
 fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {

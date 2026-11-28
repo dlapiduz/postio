@@ -1,14 +1,3 @@
-//! The attachment indexer: text out of attachments that are already on
-//! this machine, and never a byte fetched to get it (spec 010 D10, FR-050,
-//! US8 scenarios 1 and 2; T124).
-//!
-//! The search seed is the honest case: six files whose bytes are stored,
-//! each saying "Atlas budget" where its format keeps words, and two PDFs
-//! whose bytes were never downloaded. The rest are the ways a pass can go
-//! wrong: a server that would happily serve the bytes if asked, a file the
-//! extractor cannot read, a blob the store has lost, and bytes that arrive
-//! after the pass has run.
-
 use std::time::Duration;
 
 use postio_account::backend::{
@@ -23,7 +12,6 @@ use postio_storage::repository::MessageRepository;
 use postio_storage::sql::{self, RowExt as _};
 use postio_storage::{BlobStore, Checkout, test_support};
 
-/// Every attachment row with this file name.
 async fn attachments_named(connection: &Checkout, name: &str) -> Vec<AttachmentId> {
     sql::all(
         connection,
@@ -35,7 +23,6 @@ async fn attachments_named(connection: &Checkout, name: &str) -> Vec<AttachmentI
     .expect("attachments by name")
 }
 
-/// How an attachment's extraction went, read straight from its record.
 #[derive(Debug, PartialEq, Eq)]
 struct Extraction {
     version: u32,
@@ -66,7 +53,6 @@ async fn extraction_of(
     .await
 }
 
-/// Poll `check` until it holds or the patience dial runs out.
 async fn eventually<F, Fut>(mut check: F) -> bool
 where
     F: FnMut() -> Fut,
@@ -159,8 +145,6 @@ async fn every_downloaded_attachment_of_the_search_seed_is_read_where_it_says_it
         }
     }
 
-    // The two PDFs whose bytes never came down are not read, not recorded,
-    // and not queued: there is nothing on this machine to read.
     for name in ["Contractor-invoices-Sep.pdf", "Invoice-2026-08.pdf"] {
         for id in attachments_named(&connection, name).await {
             assert_eq!(
@@ -190,8 +174,6 @@ async fn every_downloaded_attachment_of_the_search_seed_is_read_where_it_says_it
 const INBOX: &str = "INBOX";
 const VALIDITY: u32 = 1_707_000_000;
 
-/// A message whose PDF stays on the server: the structure says it is
-/// there, and the mock would serve its bytes to anyone who asked.
 fn message_with_a_remote_pdf() -> MockMessage {
     let structure = BodyStructure::from_parts(
         "multipart/mixed",
@@ -223,7 +205,6 @@ fn message_with_a_remote_pdf() -> MockMessage {
     .with_part("2", &b"JVBERi0xLjQK"[..])
 }
 
-/// One message in `mailbox` with one attachment, its bytes stored.
 async fn local_attachment(
     connection: &Checkout,
     blobs: &BlobStore,
@@ -285,8 +266,6 @@ async fn an_attachment_that_was_never_downloaded_is_never_fetched() {
     .await
     .expect("its message")
     .expect("a row");
-    // A sentinel whose bytes *are* here, so the pass has something to do
-    // and the test something to wait for.
     let (local_message, local) = local_attachment(
         &connection,
         &blobs,
@@ -331,8 +310,6 @@ async fn an_attachment_that_was_never_downloaded_is_never_fetched() {
         .await,
         "the downloaded attachment was indexed"
     );
-    // And once more after a full debounce, so a late request would have
-    // been made by now.
     tokio::time::sleep(postio_test_support::scaled(Duration::from_secs(1))).await;
     indexer.abort();
 
@@ -375,7 +352,6 @@ async fn a_file_that_cannot_be_read_is_recorded_and_the_pass_moves_on() {
         Some(b"%PDF-1.7 and then nothing a reader can use"),
     )
     .await;
-    // A row that says its bytes are here when the store has lost them.
     let (lost_message, lost) = local_attachment(
         &connection,
         &blobs,
@@ -460,8 +436,6 @@ async fn bytes_stored_later_are_indexed_on_the_event_that_says_so() {
         &tokio::runtime::Handle::current(),
     );
 
-    // The bytes land the way a payload fetch lands them: stored, recorded
-    // against the part, then announced.
     let blob = blobs
         .put(b"the Atlas figures arrived late\n")
         .expect("stored");

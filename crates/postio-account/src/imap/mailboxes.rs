@@ -1,20 +1,6 @@
-//! Finding out what folders an account has, and what each one is *for*.
-//!
-//! Routing archive, trash, junk and sent by name does not work: iCloud calls
-//! them `Sent Messages` and `Deleted Messages`, Gmail hides them under
-//! `[Gmail]/`, Exchange says `Sent Items`. Routing by RFC 6154 `SPECIAL-USE`
-//! attributes alone does not work either: iCloud advertises none.
-//!
-//! So both are used. The server's attribute always wins; where there is none,
-//! the folder name is matched against a table that knows the provider
-//! spellings, and — because a name can match by accident — the winner of each
-//! role is resolved across the whole listing rather than per row. A user's
-//! `Projects/Sent` does not become the account's Sent folder just because it
-//! sorted first.
-//!
-//! Persisting the result is the repository's job. What comes out of here is a
-//! [`MailboxSummary`] per folder, with its role, its hierarchy and whether the
-//! account is subscribed to it.
+//! Roles come from the server's `SPECIAL-USE` attribute first; without one (iCloud advertises none)
+//! the name is matched against a provider-spelling table. The winner of each role is resolved
+//! across the whole listing, so `Projects/Sent` does not win by sorting first.
 
 use std::collections::BTreeSet;
 
@@ -31,11 +17,8 @@ use crate::discovery::preset_for_imap_host;
 
 use super::{ConnectionPool, Dispatch, ImapSession, ListingStrategy, Priority};
 
-/// Lists the account's folders and resolves each one's role.
-///
-/// One connection is used for the whole listing, so `LIST` and the `LSUB` that
-/// tells us what is subscribed cannot disagree about a folder that was created
-/// between them.
+/// One connection for the whole listing, so `LIST` and `LSUB` cannot disagree about a folder
+/// created between them.
 #[tracing::instrument(skip_all, fields(pattern = %filter.pattern, subscribed_only = filter.subscribed_only))]
 pub async fn list_mailboxes(
     pool: &ConnectionPool,
@@ -46,17 +29,13 @@ pub async fn list_mailboxes(
     let subscribed_only = filter.subscribed_only;
 
     pool.execute(priority, async |session| {
-        // The strategy is chosen from *this* session's capability set rather
-        // than a pool-level cache, so the very first listing of an account
-        // gets the same decision as every later one.
         let strategy =
             Dispatch::new(session.capabilities().clone()).listing_strategy(subscribed_only);
         list_with(session, &pattern, strategy).await
     })
     .await
     .inspect(|mailboxes| {
-        // Folder *names*: the containers, not the mail in them. This is the
-        // line that says whether a server answered a LIST at all.
+        // Folder names, not mail content.
         tracing::info!(
             count = mailboxes.len(),
             paths = ?mailboxes.iter().map(|m| m.path.as_str()).collect::<Vec<_>>(),
@@ -67,22 +46,9 @@ pub async fn list_mailboxes(
     .map(|mailboxes| finish(mailboxes, filter, &pool.settings().host))
 }
 
-/// Creates `path`, and subscribes to it.
-///
-/// RFC 3501 `CREATE` followed by `SUBSCRIBE`, which is two commands because
-/// IMAP separates "this folder exists" from "this client wants to see it in a
-/// `LSUB`" — a folder created and not subscribed is invisible to any client
-/// listing subscriptions, which is how a role Postio just created could go
-/// missing on the next pass.
-///
-/// **Already existing is success.** Servers spell that refusal differently and
-/// some race with other clients, so rather than parse the reason, this asks
-/// whether the folder is there afterwards and reports `Ok` if it is. The
-/// caller wants the folder to exist, not to have been the one that made it.
-///
-/// A subscription that fails is *not* fatal: the folder exists, which is what
-/// was asked for, and a server that refuses `SUBSCRIBE` while accepting
-/// `CREATE` would otherwise make the whole role unusable.
+/// Already existing is success: servers spell that refusal differently, so it asks whether the
+/// folder exists afterwards.
+/// A failed `SUBSCRIBE` is not fatal: a server refusing it must not make the role unusable.
 pub async fn create_mailbox(
     pool: &ConnectionPool,
     path: &str,
@@ -94,8 +60,7 @@ pub async fn create_mailbox(
         let mailbox = mailbox_argument(&path)?;
 
         if let Err(error) = session.create(mailbox.clone()).await {
-            // Ask the server rather than read the refusal: "already exists" has
-            // no standard spelling, and `LIST`ing the one name is cheap.
+            // "Already exists" has no standard spelling; `LIST`ing the one name is cheap.
             let existing = session
                 .list(mailbox_argument("")?, list_pattern(&path)?)
                 .await
@@ -112,7 +77,6 @@ pub async fn create_mailbox(
             }
         }
 
-        // Best-effort: see the doc above.
         if let Err(error) = session.subscribe(mailbox).await {
             tracing::warn!(%error, "created the folder but could not subscribe to it");
         }
@@ -124,7 +88,6 @@ pub async fn create_mailbox(
     .inspect_err(|error| tracing::warn!(%error, "cannot create a folder for a mailbox role"))
 }
 
-/// Issues the listing commands against one open session.
 async fn list_with(
     session: &mut ImapSession,
     pattern: &str,
@@ -180,13 +143,8 @@ async fn list_with(
         .collect())
 }
 
-/// Applies the filter, settles contested roles, and puts the listing in a
-/// stable order.
-///
-/// `host` is the server this listing came from -- `pool.settings().host`,
-/// never a domain re-derived from the address -- so a role tie-break can ask
-/// which provider's own folder names apply (#959), the same host the
-/// account is already connected to rather than a fresh discovery lookup.
+/// `host` is the server this listing came from, not a domain re-derived from the address, so a role
+/// tie-break can ask which provider's folder names apply (#959).
 fn finish(
     mut mailboxes: Vec<MailboxSummary>,
     filter: &MailboxFilter,
@@ -203,11 +161,6 @@ fn finish(
     mailboxes
 }
 
-/// Orders a listing predictably: `INBOX`, then the rest by path.
-///
-/// A stable order, not a display order — the sidebar decides how folders are
-/// presented. This exists so that two listings of an unchanged account compare
-/// equal.
 fn sort_listing(mailboxes: &mut [MailboxSummary]) {
     mailboxes.sort_by(|a, b| {
         let inbox = |mailbox: &MailboxSummary| u8::from(mailbox.role != MailboxRole::Inbox);
@@ -218,10 +171,7 @@ fn sort_listing(mailboxes: &mut [MailboxSummary]) {
     });
 }
 
-/// The mailbox name as text, `INBOX` included.
-///
-/// `io-imap` has already decoded modified UTF-7, so these are ordinary
-/// unicode names by the time they reach us.
+/// `io-imap` has already decoded modified UTF-7.
 fn mailbox_name(mailbox: &Mailbox<'_>) -> String {
     match mailbox {
         Mailbox::Inbox => "INBOX".to_owned(),
@@ -320,10 +270,8 @@ mod tests {
 
     #[test]
     fn a_known_provider_name_wins_the_tie_the_alphabet_would_otherwise_win() {
-        // iCloud's own account (#501, #943): `Sent` sorts before
-        // `Sent Messages`, so the alphabet alone hands the role to the
-        // look-alike another client left behind. The provider's own name
-        // settles it instead.
+        // iCloud (#501, #943): `Sent` sorts before `Sent Messages`, so the alphabet hands the role
+        // to the look-alike.
         let mut mailboxes = vec![summary("Sent", &[]), summary("Sent Messages", &[])];
         let known_names = BTreeMap::from([(MailboxRole::Sent, "Sent Messages".to_owned())]);
 
@@ -338,25 +286,10 @@ mod tests {
         );
     }
 
-    /// iCloud's archive folder is `Archive`, and the preset naming it
-    /// `Archives` points the role at a folder the user made (#1178).
-    ///
-    /// Measured on the live account #959 and #501 were both reported from:
-    /// `Archive` holds 60,898 messages and has no children; `Archives` holds
-    /// 4, with `2024`, `2025` and `2026` under it holding 42 between them.
-    /// The second is somebody's filing scheme, and #959's own criterion for
-    /// telling the twins apart — "which twin has mail in it" — picks the
-    /// first by a factor of 1,300.
-    ///
-    /// This is the one row of the iCloud preset that inverted a default that
-    /// was already right: `Sent`/`Sent Messages` and `Trash`/`Deleted
-    /// Messages` need the preset, because the alphabet picks the wrong twin
-    /// there. `Archive` sorts before `Archives`, so the alphabet was correct
-    /// and the preset overrode it.
+    /// iCloud's archive folder is `Archive` (60,898 messages); the preset naming `Archives` pointed
+    /// the role at a user-made container holding 4 (#1178).
     #[test]
     fn icloud_archive_is_the_folder_the_account_archives_into() {
-        // The shape of the real account: no SPECIAL-USE anywhere, the
-        // provider's own archive beside a user-made container of years.
         let mut mailboxes = vec![
             summary("Archive", &[]),
             summary("Archives", &[]),
@@ -385,10 +318,8 @@ mod tests {
 
     #[test]
     fn a_known_name_absent_from_the_listing_falls_back_to_todays_behaviour() {
-        // A preset name the server never lists -- nothing here should
-        // suppress the role, only decline to help settle it. #959's third
-        // acceptance criterion. The name is deliberately not iCloud's own
-        // (which is "Archive", #1178): this case is about a *missing* one.
+        // A preset name the server never lists must not suppress the role, only decline to settle
+        // it (#959).
         let mut with_hint = vec![summary("Archive", &[]), summary("Nested/Archive", &[])];
         let mut without_hint = with_hint.clone();
         let known_names = BTreeMap::from([(MailboxRole::Archive, "Archives".to_owned())]);

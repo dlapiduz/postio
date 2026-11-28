@@ -1,274 +1,173 @@
-# Postio — what it is, and what it must do
+# Postio: what it is, and what it must do
 
-The product definition: the promises Postio makes, the budgets it holds itself
-to, and the scope it has deliberately cut. Written for whoever is about to
-build something and needs to know whether it belongs.
-
-This replaces `spec.md`, which was the original brief. It kept its section
-numbers — the codebase cites them from about eighty doc comments and tests, and
-those citations are how a constraint stays attached to the code that honours
-it — but not its content, most of which had been overtaken by the tree, the
-design, or an ADR.
-
-**One fact, one home.** Where something is recorded elsewhere, this document
-says where and stops. It is a map as much as a specification:
+The product definition: the promises Postio makes, its budgets, and the scope
+it has cut. Section numbers are cited from code and tests; never renumber.
+Where a fact lives elsewhere, this document links to it.
 
 | For | Read |
 |---|---|
-| How Postio is put together, and why | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| A decision and the alternatives it rejected | [`decisions/`](decisions) |
+| How Postio is put together | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
+| A decision and its rejected alternatives | [`decisions/`](decisions) |
 | Every key, generated from the registry | [`keybindings.md`](keybindings.md) |
-| Visual detail — each screen against its reference | [`specs/007-postio-focus/screens.md`](../specs/007-postio-focus/screens.md) |
-| Hard-won lessons | [`engineering-notes.md`](archive/engineering-notes.md) |
-| What is planned and not yet built | the [Postio Roadmap](https://github.com/users/dlapiduz/projects/2) |
+| Each screen against its reference | [`specs/007-postio-focus/screens.md`](../specs/007-postio-focus/screens.md) |
+| What is planned and not built | the [Postio Roadmap](https://github.com/users/dlapiduz/projects/2) |
 
 ---
 
 ## 1. What Postio is
 
 > Postio is a local-first, keyboard-first email client built for people who have
-> too much email.
->
-> **Read less. Find anything. Act faster.**
+> too much email. **Read less. Find anything. Act faster.**
 
-Three things Postio must do better than the alternatives: **speed, search, and
-keyboard interaction.** Everything else — AI, the interface, protocols,
-integrations — earns its place by reinforcing one of those three, or it does
-not ship.
+It must beat the alternatives at **speed, search and keyboard interaction**.
+Everything else (AI, the interface, protocols, integrations) earns its place by
+reinforcing one of those three, or it does not ship.
 
 ### The principles
 
-**Instant.** Opening the app is immediate. Navigation never waits for the
-network. Search is local and effectively instantaneous. §18 turns this into
-numbers, and CI enforces them.
-
-**Keyboard first.** Every operation has a keyboard shortcut. The mouse stays
-excellent and is never required.
-
-**Search first.** Search is a primary way to move around, not a feature in a
-box. §7.
-
-**Local first.** Mail syncs locally; the UI works against the local database;
-the network happens elsewhere. `ARCHITECTURE.md` §1 is the mechanism.
-
-**Native.** A real desktop application, not a website in a window.
-
-**Predictable.** *Destructive operations are confirmed or undoable* — an
-invariant the command registry machine-checks rather than a habit
-(`ARCHITECTURE.md` §2). Sync state is visible. The user always knows what
-happened.
-
-**Private.** Nothing leaves this machine that the user did not ask for. §21.
-
-**AI-native, eventually.** AI helps understand, find, write and act on mail,
-integrated into the workflow rather than parked in a sidebar — and it is
-deliberately absent from v1. §12, §23.
+- **Instant.** Navigation never waits for the network. Search is local. §18
+  gives the numbers.
+- **Keyboard first.** Every operation has a shortcut; the mouse stays
+  excellent and is never required. §8.
+- **Search first.** Search is a primary way to move around. §7.
+- **Local first.** The UI works against the local database (constitution I).
+- **Native.** A real desktop application, not a website in a window.
+- **Predictable.** Destructive operations are confirmed or undoable, which the
+  command registry machine-checks. Sync state is visible.
+- **Private.** Nothing leaves this machine that the user did not ask for. §21.
+- **AI-native, eventually.** Absent from v1. §12, §23.
 
 ---
 
 ## 2. Platforms
 
-**v1 is Linux only**: GTK4 and libadwaita, Wayland first, X11 where it happens
-to work. Verified against gtk4 4.22, libadwaita 1.9, WebKitGTK 2.52.
+**v1 is Linux only:** GTK4 and libadwaita, Wayland first, X11 where it works.
+Postio is one product with several interfaces on the same engine and store
+(constitution, Scope).
 
-**Postio is one product with several interfaces** on the same engine and
-store: the GTK interface, the terminal (§2 below) and macOS, with others to
-come (constitution, Scope). On the Linux desktop, Postio is the GTK interface,
-the Focus design —
-[`specs/007-postio-focus`](../specs/007-postio-focus/spec.md),
-[ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md): the crate
-`postio-gtk`, the binary `postio`, the app id `dev.postio.Postio`, and the one
-launcher in the desktop Flatpak. Home is one dense inbox, driven from the
-keyboard, that shows mail as it arrived; a message opens over it, or beside it
-for those who choose that, one message at a time (§9). Beside reading,
-writing, searching and filing mail, it does four things to mail:
+**The desktop app is Focus** ([ADR 0043](decisions/0043-focus-is-the-one-desktop-app.md),
+[`specs/007-postio-focus`](../specs/007-postio-focus/spec.md)): crate
+`postio-gtk`, binary `postio`, app id `dev.postio.Postio`. Home is one dense
+inbox driven from the keyboard that shows mail as it arrived. A message opens
+over it, or beside it by choice, one at a time (§9). Beyond reading, writing,
+searching and filing, Focus:
 
-- it calls out real actions: an invitation, a direct question, a to-do;
-- it holds some mail back into digests, on a cadence the user sets;
-- it files spam and automated updates away, each with its reason and one key
-  from restored;
-- it captures mail into an Obsidian vault as a task or a note.
+- calls out real actions: an invitation, a direct question, a to-do;
+- holds some mail back into digests on a cadence the user sets;
+- files spam and automated updates away, each with its reason and one key from
+  restored;
+- captures mail into an Obsidian vault as a task or a note.
 
-Its filing, digest and reminder rules act only while Focus — on the desktop
-or in the terminal — has the store. What it draws outside its own window
-lives in `postio-widgets`, which depends on no app. Its settings are `[focus]`
-in [`config.toml`](config.md).
+Its filing, digest and reminder rules act only while a Focus app has the
+store. Settings are `[focus]` in [`config.toml`](config.md). What Focus draws
+outside its window lives in `postio-widgets`, which depends on no app.
 
 **Focus may use a model the user runs on this computer**, named in
-`[focus.model]`. It is optional and off until named, it is reached only on
-this computer, and it is never required: without it, a built-in rule-based
-detector marks questions and to-dos, and a digest opens on its list of mail
-instead of a summary. Postio ships, downloads and starts no model (the
-constitution's Scope).
+`[focus.model]`: optional, off until named, local only, never required.
+Without it a rule-based detector marks questions and to-dos, and a digest
+opens on its list of mail. Postio ships, downloads and starts no model.
 
-**A terminal frontend uses the same store** — `postio-tui`,
-[`docs/archive/specs/005-tui-frontend`](archive/specs/005-tui-frontend/spec.md): the same
-commands, keys and verbs in a terminal, local or over SSH, with the mouse as
-well as the keyboard, and mail read and written as Markdown. It draws the
-Focus design in character cells (spec 007, C29,
-[`terminal.md`](../specs/007-postio-focus/terminal.md)), and Focus's
-filtering, digests and reminders act while it has the store. Only one app has the store open at a time:
-whichever starts first has the mailbox, and the other says so and asks for it
-to be closed ([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)).
-It ships as its own package, smaller than the desktop one. Images are labelled
-placeholders that open in the system viewer; drawing them in the terminal is
-the next iteration.
+**The terminal app** (`postio-tui`, [`docs/archive/specs/005-tui-frontend`](archive/specs/005-tui-frontend/spec.md))
+has the same commands, keys and verbs, local or over SSH, with mouse and
+keyboard, and reads and writes mail as Markdown. It drives the `postio-focus`
+controller and draws the Focus design in character cells
+([`terminal.md`](../specs/007-postio-focus/terminal.md)). Images are labelled
+placeholders that open in the system viewer. It ships as its own, smaller
+package.
 
-macOS and Windows frontends over the same Rust engine were always possible,
-and that possibility is the reason for two CI-enforced boundaries rather than
-an aspiration in a document: `postio-core` must not depend on GTK, and the
-desktop app's own code does no SQL and speaks no protocol — `postio-gtk` may
-not depend on the store engine or `io-imap` directly, and reaches mail
-through `postio-host` and `postio-client` (`ARCHITECTURE.md` §9).
+**One app holds the store at a time.** Whichever starts first has the
+mailbox; the other says so and asks for it to be closed
+([ADR 0041](decisions/0041-one-app-opens-the-store-at-a-time.md)).
 
-**A native macOS frontend is built, well past the read-only slice it was
-scoped as, and is on `main`** (#1306) — Swift over the same engine through the
-UniFFI boundary in `crates/postio-ffi` and the Swift package in `macos/`,
-[ADR 0019](decisions/0019-macos-frontend.md). A first-run wizard that looks
-an address's servers up and signs in before saving, sync, a three-pane
-shell, the list, the reader with its privacy behaviour, conversations,
-search with the chips that teach the query language, the palette, the cheat
-sheet, a menu bar built from the command registry, compose with rich text
-and attachments, notifications, and a settings window. Compose was deferred
-in the original scope and is not deferred any more. Focus on macOS is
-specified in [`specs/009-focus-macos`](../specs/009-focus-macos/spec.md).
+**The macOS app is built** (#1306; Swift over `postio-ffi` and `macos/`,
+[ADR 0019](decisions/0019-macos-frontend.md)): first-run wizard, sync, list,
+reader, conversations, search, palette, cheat sheet, a menu bar built from the
+registry, compose, notifications and settings. Focus on macOS is
+[`specs/009-focus-macos`](../specs/009-focus-macos/spec.md). It is built from
+the checkout, has no signed bundle, and is not part of v1. Windows is
+unscheduled.
 
-**Every command reaches something, and that is a test rather than a
-claim.** On the Mac, `crates/postio-ffi/tests/ffi_suite/command_coverage.rs`
-sweeps every command in the registry and fails if one reaches nothing and is
-not listed as debt with the issue that will build it; that list started at
-forty-nine and is empty. Three commands are scoped away by design rather than
-missing — `detach_composer`, `next_scope` and `darken_message`, whose surfaces
-the Mac's design does not have (`postio_core::registry::offered_on`). On the
-desktop, `focus_suite`'s `every_command` presses every command Focus binds
-and fails on one with no visible effect that `storyboards/gaps/focus.toml`
-does not name. The Mac app is built from the checkout; there is no signed
-bundle to download yet.
-
-macOS is **not part of v1**, which stays Linux. The invariant the boundary
-was kept for turned out to be load-bearing rather than merely tidy: measured
-on 2026-08-27, thirteen of what were then fifteen crates built and tested on
-macOS with no changes at all. Windows remains unscheduled.
+**Every command reaches something, and that is a test.** `postio-ffi`'s
+`command_coverage.rs` fails when a registry command reaches nothing and is not
+listed as debt with an issue. `focus_suite`'s `every_command` does the same on
+the desktop (gaps in `storyboards/gaps/focus.toml`). `detach_composer`,
+`next_scope` and `darken_message` are scoped away on the Mac by design
+(`postio_core::registry::offered_on`).
 
 ---
 
 ## 3. Accounts and providers
 
-Postio connects over **IMAP and SMTP**, over **JMAP**, or over the **Gmail
-REST API**, authenticated with a password, an app-specific password, or
-OAuth 2. The bearer mechanisms reach the IMAP and SMTP sessions as of #193;
-the authorization flow itself — the consent screen in the system browser, a
-loopback redirect, PKCE — is `crates/postio-account/src/oauth/`, and
-[ADR 0006](decisions/0006-oauth-and-provider-presets.md) is the design.
-**Multiple accounts are built**: one engine per enabled account, one
-database, and a unified inbox — every enabled account's inbox, not all its
-mail — that is a scope rather than a mailbox (`g a` walks the scopes, `account:` names one in a query) —
-[ADR 0005](decisions/0005-multiple-accounts.md). JMAP and Gmail are the two
-further `MailBackend` implementations of
-[ADR 0018](decisions/0018-jmap-and-gmail-backends.md), `crates/postio-jmap`
-and `crates/postio-gmail`, chosen per account by the preset row. Microsoft
-Graph is unscheduled, and the `MailBackend` seam (`ARCHITECTURE.md` §8) is
-what keeps it possible.
+Postio connects over **IMAP and SMTP**, **JMAP** or the **Gmail REST API**,
+authenticated by password, app-specific password or OAuth 2 (consent in the
+system browser, loopback redirect, PKCE: `crates/postio-account/src/oauth/`,
+[ADR 0006](decisions/0006-oauth-and-provider-presets.md)). JMAP and Gmail are
+`MailBackend` implementations ([ADR 0018](decisions/0018-jmap-and-gmail-backends.md)),
+chosen per account by the preset row. Microsoft Graph is unscheduled.
 
-**Providers are data, not code.** Server settings live in a preset table where
-every provider is one row — never a named constant, never a special-cased
-branch, never an identifier naming a vendor. Postio is not one provider's
-client, and the maintainer's own provider must not be visible in the shape of
-the code. Naming a provider in a *comment* is fine where it explains a real
-compatibility quirk.
+**Multiple accounts are built:** one engine per enabled account, one database,
+and a unified inbox that is a scope, not a mailbox. It holds every enabled
+account's inbox, not all their mail. `g a` walks scopes; `account:` names one
+in a query ([ADR 0005](decisions/0005-multiple-accounts.md)).
 
-Credentials live in the OS keyring. Never in `config.toml`, never in a log.
+**Providers are data, not code** (constitution VII): every provider is one row
+of the preset table. No named constant, special-cased branch or identifier
+names a vendor. A comment may name one to explain a real compatibility quirk.
+
+Credentials live in the OS keyring, never in `config.toml` or a log.
 
 ---
 
 ## 4. The domain model is Postio's own
 
-Postio's types are not IMAP's. `Account`, `Mailbox`, `Message`, `Thread`,
-`Attachment`, `Contact`, `ContactGroup`, `Label`, `Flag`, `Draft` and
-`Identity` are defined in `postio-model` and survive a second protocol without
-changing shape — which is what made §3's JMAP and Gmail backends a backend
-each rather than a rewrite. A `Rule` is designed
-([ADR 0008](decisions/0008-filters-and-rules.md)) and not yet built; it will
-be defined there too when it is.
+`Account`, `Mailbox`, `Message`, `Thread`, `Attachment`, `Contact`,
+`ContactGroup`, `Label`, `Flag`, `Draft` and `Identity` are defined in
+`postio-model` and are not IMAP's types, so a second protocol changes no
+shape. A `Rule` is designed ([ADR 0008](decisions/0008-filters-and-rules.md))
+and not built.
 
 ---
 
 ## 5. Threading is local
 
-Threads are reconstructed locally with JWZ over `Message-ID`, `In-Reply-To`,
-`References` and subject normalisation, using server threading as a hint where
-it exists and never as the answer. A server that threads badly, or not at all,
-must not make Postio thread badly.
+Threads are rebuilt locally with JWZ over `Message-ID`, `In-Reply-To`,
+`References` and subject normalisation. Server threading is a hint, never the
+answer.
 
-In the desktop app a message opens on its own, the latest of its thread by
-default, and `]`/`[` walk the thread (spec 007 FR-037). The macOS app shows a
-thread as one document whose messages expand and collapse
-([ADR 0032](decisions/0032-the-conversation-is-one-document.md)). Either way
-quoted content folds into `<details>` with no script involved (`postio-body`,
-[ADR 0004](decisions/0004-composer-document-model.md)).
-
-**A thread belongs to one account.** The unified inbox groups across accounts
-at read time instead; the reasoning is
-[ADR 0005](decisions/0005-multiple-accounts.md) Q2.
+- The desktop opens one message, the latest of its thread by default; `]`/`[`
+  walk the thread (spec 007 FR-037). The Mac shows a thread as one document
+  whose messages expand and collapse ([ADR 0032](decisions/0032-the-conversation-is-one-document.md)).
+- Quoted content folds into `<details>`, no script involved
+  ([ADR 0004](decisions/0004-composer-document-model.md)).
+- A thread belongs to one account. The unified inbox groups across accounts at
+  read time ([ADR 0005](decisions/0005-multiple-accounts.md) Q2).
 
 ---
 
 ## 6. What is stored locally
 
-An encrypted database for everything listable and searchable — Turso, a
-Rust rewrite of SQLite, encrypting every page with AES-256-GCM
-([ADR 0038](decisions/0038-the-store-is-turso-not-sqlcipher.md)) — plus a
-**content-addressed blob directory** for raw messages and attachments. No
-maildir, no mbox, no notmuch.
-
-The schema is one declared `HEAD` in `crates/postio-storage/src/schema.rs`:
-no numbered migrations and no `.sql` files, and a store an older schema
-wrote is resynced rather than migrated. The tables it declares are the
-requirement — `accounts`, `identities`, `signatures`, `mailboxes`,
-`mailbox_roles`, `mailbox_role_refusals`, `messages`, `threads`,
-`thread_links`, `recipients`, `addresses`, `attachments`, `labels`,
-`message_labels`, `drafts`, `contacts`, `contact_groups`,
-`contact_group_members`, `sync_state`, `settings`, `operation_queue`,
-`cross_account_moves`, `egress_log`, `unsubscribe_activations` and
-`message_search_bodies` — and `schema::declared()` reads that list back off
-the text so a test can hold it against every object the old migrations ever
-built: an object leaves the schema only by being named as deliberately
-absent, which makes this a checked requirement rather than a description.
-`contacts` and its groups are there because recipient autocomplete has to
-rank from somewhere ([`specs/005-contacts`](../specs/005-contacts/spec.md)).
-
-**Secrets are not among them.** No password and no token is ever written to the
-database or to `config.toml`.
-
-Search is the engine's own full-text index method, owned by `postio-index`:
-`CREATE INDEX … USING fts` over two ordinary tables, `search_documents` (one
-flattened metadata row per message — sender, recipients, subject, filenames,
-list id) and `message_search_bodies` (the body, folded for search). Hybrid
-lexical/vector retrieval was considered; the vector half is now
-[ADR 0009](decisions/0009-ai-subsystem.md), which re-ranks these results rather
-than replacing them. **The message row holds the text the reader shows**, and
-the index keeps a folded copy of it in a table of its own, because an index
-over a column can neither tokenise compressed bytes nor apply Postio's own
-fold. The blob store holds attachment payloads and raw `.eml`.
-
-The body in the message row is **zstd per row when that is smaller**, the
-text itself when it is not (`postio_storage::body_codec`); a reader tells the
-two apart by the frame's magic bytes, so there is no version column. ADR 0020
-compressed it against a *trained dictionary*, and the dictionary is gone —
-no training pass, no `body_dictionaries` table — because the engine change
-first moved the full-text index onto the column itself, where nothing could
-be compressed (`docs/archive/specs/004-turso-store`, ADR 0038); once the index read its own
-folded table instead, the column was free to be small again, and per-row
-zstd without a dictionary is what it costs nothing to have.
-
-**The store is a complete replica, and it has a budget.** Under §14's backfill
-every message's text ends up local, so the database and blob store together hold
-the whole mailbox rather than a recent slice of it. Blobs are compressed at rest,
-and because everything except drafts and the operation queue can be re-synced,
-the store has a configurable size limit past which it evicts what it can refetch
-— raw source first, then attachment payloads, never the text that search is made
-of. [ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)
-is the reasoning.
+- **An encrypted database** (Turso, AES-256-GCM per page,
+  [ADR 0038](decisions/0038-the-store-is-turso-not-sqlcipher.md)) for
+  everything listable and searchable, plus a **content-addressed blob
+  directory** for raw messages and attachments. No maildir, mbox or notmuch.
+- **The schema is one declared `HEAD`** in `crates/postio-storage/src/schema.rs`.
+  There are no numbered migrations; a store an older schema wrote is resynced.
+  `schema::declared()` lists the tables, and a test holds that list against
+  every object the old migrations built: an object leaves the schema only by
+  being named as deliberately absent.
+- **No secret is ever written** to the database or `config.toml`.
+- **Search** is the engine's full-text index, owned by `postio-index`, over
+  `search_documents` (one flattened metadata row per message) and
+  `message_search_bodies` (the body, folded for search). The message row holds
+  the text the reader shows. Vector retrieval, if built, re-ranks these
+  results ([ADR 0009](decisions/0009-ai-subsystem.md)).
+- **The body is zstd per row when smaller**, else plain
+  (`postio_storage::body_codec`); the frame's magic bytes tell them apart.
+- **The store is a complete replica with a budget.** Backfill (§14) puts every
+  message's text local. Blobs are compressed at rest. A configurable size limit
+  evicts what can be refetched: raw source first, then attachment payloads,
+  never the text search is made of
+  ([ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)).
 
 ---
 
@@ -276,14 +175,12 @@ is the reasoning.
 
 Search is a defining feature and a primary way to navigate.
 
-**One query language, everywhere.** The same string means the same thing typed
-in the command bar, saved as a pinned search, or written into `config.toml`. A
-saved search is a query with a name; a virtual folder is a saved search that is
-pinned; a rule is a saved search plus actions. `ARCHITECTURE.md` §6 holds the
-boundary that keeps this true, and
-[ADR 0008](decisions/0008-filters-and-rules.md) extends it to rules.
+**One query language, everywhere** (constitution III): the command bar, a
+pinned search and `config.toml` take the same string. A saved search is a named
+query; a virtual folder is a pinned one; a rule is a saved search plus actions
+([ADR 0008](decisions/0008-filters-and-rules.md)).
 
-Operators compose, and a leading `-` negates:
+Operators compose; a leading `-` negates:
 
 ```
 from:ada after:2026-01-01 has:attach
@@ -294,268 +191,184 @@ subject:invoice -in:archive
 `is:read` `is:flagged` `is:bulk` `is:automated` `before:` `after:` `larger:`
 `smaller:` `account:` `with:` `group:` `header:`
 
-An operator that names something takes either of several values in braces:
-`from:{ada tomas}` is mail from Ada or from Tomás, `label:{"Q3 close" atlas}`
-either label, and `-from:{ada tomas}` mail from neither. Two clauses still
-mean both, as typed. It is what checking a second person in a filter popover
-writes ([spec 010](../specs/010-focus-search/spec.md), D26).
+- **Braces take any of several values:** `from:{ada tomas}`,
+  `label:{"Q3 close" atlas}`, `-from:{ada tomas}` (neither). Two clauses still
+  mean both ([spec 010](../specs/010-focus-search/spec.md), D26).
+- **`with:a@x.example,b@y.example`** is mail from, to or copied to any of those
+  addresses, matched exactly. It names addresses, not a person, so a pinned
+  search keeps meaning the addresses it named (`specs/005-contacts`).
+- **`header:`** reaches any RFC 5322 field the envelope does not carry.
+  `header:x-mailer` tests presence; `header:x-mailer=mutt` tests that the value
+  contains `mutt` (case-insensitive substring); `header:x-mailer=` means
+  presence, not an error. The name is matched exactly, ignoring case. The value
+  splits at the first `=`. Headers arrive with the body, so a message whose
+  body is not fetched is not a hit
+  ([ADR 0025](decisions/0025-arbitrary-headers-are-indexed-rows.md)). Every
+  header is indexed, with no list of names (constitution III). One that must
+  match before the body arrives earns its own operator: `list:`, `is:bulk`,
+  `is:automated`.
+- **`account:`** takes a name or an address and composes with everything:
+  `account:work is:unread`, `-account:work`.
+- **Flagged, not starred.** `is:starred` is accepted as an alias of
+  `is:flagged`, `has:attachment` of `has:attach`.
+- The parser never errors on a half-typed query; results appear while typing.
+  One box, with a prefix selecting the mode, searches mail, runs a command,
+  jumps to a folder or finds a correspondent.
 
-`with:ada@work.example,ada@home.example` is mail from, to or copied to any of
-those addresses, matched exactly rather than as text — what picking a person
-in `@` or "show mail" in Contacts writes, since `{}` takes values of one
-operator and a person's mail is in three. It names addresses, not a person, so
-a search pinned from it keeps meaning the addresses it named
-(`specs/005-contacts`).
-
-`header:` reaches any RFC 5322 field the envelope does not carry:
-`header:x-mailer` asks whether a message has that field at all,
-`header:x-mailer=mutt` whether its value contains `mutt`, and
-`header:x-mailer=` — the instant after the `=` is typed — means presence
-rather than an error. The name is matched exactly and case-insensitively, so
-`header:x-mail` does not find `X-Mailer`; the value is matched as a
-case-insensitive substring, like `from:` and `subject:`. `=` rather than a
-second colon, split at the first one, so `header:authentication-results=spf=pass`
-asks what it looks like it asks.
-
-It answers over indexed mail, exactly as `body:` will: headers arrive with the
-body, so a message whose body has not been fetched yet is not a hit — not a
-message that lacks the field ([ADR 0025](decisions/0025-arbitrary-headers-are-indexed-rows.md)).
-Every header is indexed, with no list of names: a curated list is maintained
-forever, lies about every name off it, and converges on one provider's own
-vocabulary, which §3 is most explicit about. A header that must be matchable
-*before* the body arrives earns an operator of its own instead — `list:` is
-one that was, and `is:bulk` and `is:automated` (`List-Unsubscribe`,
-`Precedence`, `Auto-Submitted`) are two more.
-
-`account:` names an account by its name or by its address, and composes with everything else — `account:work is:unread` is one
-query rather than a mode you switch into. It is what keeps a saved search
-pinned to one account however it is opened, and `-account:work` means every
-other one.
-
-**It is `is:flagged`, not `is:starred`** — the app says Flagged, and the
-older spelling is accepted as an alias so that nobody's muscle memory or saved
-query breaks. Likewise `has:attach` with `has:attachment` as an alias.
-
-The parser never errors on a half-typed query: `is:` and `after:2026-` are
-ordinary intermediate states, and anything unrecognised stays free text.
-Results appear while typing, and one box — with a prefix selecting its mode —
-searches mail, runs a command, jumps to a folder, or finds a correspondent.
-
-Natural-language search (*invoices from Acme I haven't answered*) is
-[ADR 0009](decisions/0009-ai-subsystem.md), and it lowers to this same
-language rather than becoming a second one.
+Natural-language search ([ADR 0009](decisions/0009-ai-subsystem.md)) lowers to
+this language.
 
 ---
 
 ## 8. The keyboard is a system, not a list of shortcuts
 
-**Every command has a keyboard shortcut, a command-palette entry and an
-accessible action.** That is a structural requirement, and it is met by having
-exactly one enumerable table — `postio-core::registry` — from which the keymap,
-the command bar's commands (`mod+k`), the `?` key map, the row menu, the
-keycap inside every control and [`keybindings.md`](keybindings.md) are all
-derived. Three
-hand-maintained lists drift within a release; one table cannot.
+**Every command has a shortcut, a command-palette entry and an accessible
+action**, all derived from one table, `postio-core::registry`: the keymap, the
+command bar (`mod+k`), the `?` key map, the row menu, every keycap and
+[`keybindings.md`](keybindings.md), which a test regenerates. **A command not
+in the registry does not exist.** The bindings are in `keybindings.md` and
+nowhere else.
 
-**A command that is not in the registry does not exist** — not merely unbound,
-but absent from every way a user could discover it.
-
-**The bindings themselves are in [`keybindings.md`](keybindings.md)**, generated
-from the registry by a test that fails when the file drifts. They are not
-repeated here, for the same reason they are not repeated anywhere else.
-
-Worth knowing before reading that table: every Postio app — the desktop app,
-the terminal and macOS — has one keymap, the registry's
-(`specs/007-postio-focus/contracts/keymap.md`), and **it is Gmail's**
-(<https://support.google.com/mail/answer/6594>) wherever Postio has the
-command. `e` archives, `r` replies, `a` replies to all, `f` forwards, `#`
-deletes, `s` flags (Gmail's star; the app says Flagged), `b` snoozes, `l`
-labels, `v` moves, `Shift+I`/`Shift+U` mark read and unread, `z` undoes,
-`o` opens, `u` goes back to the list, `n`/`p` walk a thread in the open
-message, `;` expands a conversation, `* a` selects all, `x` selects one,
-`.` opens More, `Shift+T` captures a task, `c` composes, `/` searches, `?`
-shows the key map, `mod+Return` sends, and `g i`, `g s`, `g t`, `g d`,
-`g a`, `g b` and `g l` go to the inbox, flagged, sent, drafts, archive (all
-mail), snoozed and the folders. A command Gmail has no key for keeps its
-own (`h` remind, `y`/`Y` invitations, `d`/`D` digests, `-` dismiss a
-marker, `!` has-action), or takes a new one in Gmail's style where Gmail's
-displaced it: `E` archives a thread, `V` views source, `A` opens an
-attachment or link, `N` captures a note, `M` unsubscribes, `Z` folds one
-message, `g o` the outbox, `g r` the digest rules, `g c` the next scope.
-Two of Gmail's keys land on one Postio verb: `I` and `U` both reach
-`toggle_read`, which toggles, so each does what it says on the message it
-is meant for. Gmail keys with no Postio command (`m` mute, `!` spam, `* n`
-deselect, `:` collapse, `g k`) stay unbound rather than borrowed, except `!`,
-which keeps Postio's has-action filter.
-
-A command only some apps offer keeps its key in the others and leaves it
-free there. The original brief proposed `r` for reply and the design canvas
-gave it `e`; the maintainer chose Gmail's keymap on 2026-10-14, so that a
-person arriving from Gmail's web client loses no muscle memory, and that
-reversed the canvas's `e` reply, `a` archive and `r` read. Every binding is
-overridable from `[keys]` in `config.toml`, keyed by command id — which
-makes command ids a file format that is not renamed casually
-(`ARCHITECTURE.md` §3): the Gmail keymap moved defaults and renamed none;
-the one keymap before it renamed two, `mark_unread` to `toggle_read` and
-`focus_sidebar` to `go_to_folders`, and kept no alias.
+- Every Postio app has one keymap, the registry's
+  (`specs/007-postio-focus/contracts/keymap.md`), and **it is Gmail's**
+  wherever Postio has the command: `e` archive, `r` reply, `a` reply all, `f`
+  forward, `#` delete, `s` flag, `z` undo, `c` compose, `/` search, `g i`
+  inbox, and so on. A command Gmail has no key for keeps its own, or takes a
+  new key in Gmail's style where Gmail's displaced it (`E` archives a thread,
+  `N` captures a note, `M` unsubscribes, `g o` the outbox).
+- `I` and `U` both reach `toggle_read`, which toggles. Gmail keys with no
+  Postio command (`m`, `* n`, `:`, `g k`) stay unbound.
+- A command only some apps offer keeps its key in the others and leaves it
+  free there.
+- Every binding is overridable from `[keys]` in `config.toml`, keyed by command
+  id. Ids are a file format and are not renamed casually.
 
 ---
 
 ## 9. Layout
 
-**One list.** The desktop app shows every account's inbox as one dense list,
-newest first under day headings, with no folder sidebar. A row shows mail as
-it arrived — sender, subject and first line, verbatim, never a rewritten
-subject or a score. The list is windowed over the paged store and is never
-fully materialised (§18). Above it, a top bar holds Compose, the command
-bar's field, the sync state and the main menu; a header strip names the place
-("Inbox ▾", `g o`), its counts and the "Has action" toggle (`!`), and, while
-they are in use, how much was filtered today and how many digest rules there
-are.
+**One list.** The desktop shows every account's inbox as one dense list,
+newest first under day headings, with no folder sidebar. A row shows mail as it
+arrived: sender, subject and first line, verbatim, never a rewritten subject or
+a score. The list is windowed over the paged store (§18). A top bar holds
+Compose, the command bar, the sync state and the main menu. A header strip
+names the place ("Inbox", `g o`), its counts and the "Has action" toggle
+(`!`).
 
-**Rows are two heights, fixed by kind** — 40px for a conversation, 72px for
-one with a marker — and focus, hover and selection change what a row draws,
-never how tall it is, so the list never moves under the cursor.
+**Rows have two fixed heights:** 40px for a conversation, 72px for one with a
+marker. Focus, hover and selection change what a row draws, never its height.
 
 **Markers call out real actions** on a row's second line: an invitation
-(Accept `y`, Decline `Y`), a direct question (Reply `e`), a to-do (Snooze
-`s`, or Task `t` with a vault), and a reply that has not come. A question or
-to-do quotes the sentence that raised it verbatim. `!` shows only marked
-mail, and `-` dismisses a wrong marker, which is remembered.
+(Accept `y`, Decline `Y`), a direct question (Reply `e`), a to-do (Snooze `s`,
+or Task `t` with a vault), a reply that has not come. A question or to-do
+quotes its sentence verbatim. `!` shows only marked mail; `-` dismisses a wrong
+marker, and that is remembered.
 
-**Digests** hold some mail back on a cadence the user sets (`d` makes a rule,
-`g d` lists them). A delivery is one row; it opens on a summary when the
-user has connected a local model (§12), every statement in it citing the mail
-it came from, and `Tab` switches to the plain list. **Filtered** (`g f`) holds
-spam and automated updates, each with its reason and `R` from restored.
-Filtered mail is archived, never deleted automatically.
+**Digests** hold mail back on a cadence the user sets (`d` makes a rule, `g d`
+lists them). A delivery is one row. It opens on a summary when a local model is
+connected (§12), each statement citing its mail; `Tab` switches to the plain
+list. **Filtered** (`g f`) holds spam and automated updates, each with its
+reason and `R` from restored. Filtered mail is archived, never deleted
+automatically.
 
-**The open message is a dialog over the list**, one message at a time:
-`]`/`[` walk its thread, `j`/`k` the list, and `Esc` closes it onto the same
-row. Its frame follows from the window, never from the message. `F8` places
-it beside the list instead (`[focus] reading = "pane"`); a window narrower
-than 980px uses the dialog whatever the setting says, because the window's
-width decides what is *shown*, never what the user asked for.
+**The open message is a dialog over the list**, one at a time: `]`/`[` walk the
+thread, `j`/`k` the list, `Esc` closes onto the same row. `F8` places it beside
+the list (`[focus] reading = "pane"`). A window narrower than 980px always uses
+the dialog: width decides what is shown, never what the user asked for.
 
-**One box, and one popover.** The command bar (`/` for mail, `mod+k` for
-commands) searches as you type, and a prefix chooses what else to ask (§7).
-The folders popover (`g o`, or a click on "Inbox ▾") lists the mailboxes
-and folders with their counts, the Flagged (`g *`) and Snoozed (`g z`) views, and the labels.
-A distinction runs under it that is
-load-bearing: a *folder* is one the server has — Inbox, Archive, Sent,
-Drafts, Trash, Junk, and whatever else the account holds — and a *view* is a
-saved question about messages filed elsewhere — Flagged (`g *`), Snoozed
-(`g z`), Filtered (`g f`) and the **Outbox** — with a name, a place and a
-count, and nothing a message can be moved into. Every account has a real folder for all six roles, created
-on the server if it has none, so archive and delete always have somewhere to
-put mail. [ADR 0036](decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md).
+**One box, one popover.** The command bar (`/` mail, `mod+k` commands) searches
+as you type (§7). The folders popover (`g o`, or a click on the place name)
+lists mailboxes, folders with counts, the Flagged (`g *`) and Snoozed (`g z`)
+views and labels. A *folder* is one the server has. A *view* is a saved
+question about mail filed elsewhere (Flagged, Snoozed, Filtered, Outbox) with a
+name, a place and a count, and nothing can be moved into it. Every account has
+a real folder for all six roles, created on the server if missing
+([ADR 0036](decisions/0036-a-sidebar-row-is-a-folder-or-a-view.md)).
 
-**The Outbox holds what is on its way**, and is not listed when it holds
-nothing, which is its ordinary state. Pressing Send puts the message there
-immediately — offline included — and it leaves for Sent when the server
-accepts it. What it is *not* is a place things pile up: Drafts holds what you
-are writing and what has stopped, and a draft's row says which.
+**The Outbox holds what is on its way** and is not listed when empty. Send puts
+the message there at once, offline included; it leaves for Sent when the server
+accepts it. Drafts holds what is being written and what has stopped, and a
+draft's row says which.
 
-**The list has a cursor *and* a selection**, and they are not the same thing —
-the cursor is where the keyboard is, the selection is what `a` would archive.
-Conflating them is the classic bug, because it only surfaces once a selection
-is more than one row (`ARCHITECTURE.md` §4). A selected row is a neutral
-background and a checked box, and the bulk bar acts on the selection.
+**The list has a cursor and a selection** (constitution II). A selected row is
+a neutral background and a checked box; the bulk bar acts on the selection.
 
-How each surface looks is spec 007's
-[`contracts/focus-surface.md`](../specs/007-postio-focus/contracts/focus-surface.md),
-held against its reference in [`screens.md`](../specs/007-postio-focus/screens.md).
-§19.
+Each surface's look is
+[`contracts/focus-surface.md`](../specs/007-postio-focus/contracts/focus-surface.md)
+held against [`screens.md`](../specs/007-postio-focus/screens.md). §19.
+
+**Calendar is a mode of the main window** (`g e`; `specs/017-calendar`).
+Agenda lists occurrences under day headings in the list's language; `c` adds
+an event, `mod+e` edits one, `v` moves and `#` deletes it, each undoable, and
+`mod+shift+o` gives Calendar a window of its own. Times are typed the way search
+reads them ("thu 3pm", "1h"). An invitation in mail says what it clashes
+with. Events live on this computer or in an account's CalDAV calendars, kept
+in both directions; nothing in an event is fetched.
 
 ---
 
 ## 10. Compose
 
-The composer opens where the open message is: in its dialog over the list,
-or in the pane when the user reads beside the list (spec 007 FR-050). It is
-**not a separate window**. The list keeps its scroll and its cursor
-underneath, so context never disappears, and `Esc` closes the composer,
-keeps the draft, and returns you exactly where you were. There is one
-composer, `postio-widgets`' — the desktop app has none of its own.
-
-A composition **can** be detached into a window of its own
-(`detach_composer`, or Detach in the composer's header), which is the
-inverse of what most clients default to and deliberately so: losing your
-place in the list to write a reply is the failure the in-place design exists
-to avoid, so nothing ever opens detached and detaching is only ever asked
-for. It exists because writing while reading something *else* is the one
-thing an in-place composer genuinely cannot do. It is the same composition
-either way — the same widget, moved — so there is never a second composer to
-keep in step.
-
-Recipients autocomplete from the people in the address book -- one name for
-each person, their preferred address first -- whether the user made them or
-the mail did ([`specs/005-contacts`](../specs/005-contacts/spec.md)); Cc and Bcc appear on
-demand; identities are pickable; drafts autosave; attachments drag and drop.
-
-**The document is Postio's own, not the toolkit's.** The composer edits a
-neutral document type and each platform's editor is a view over it, so a second
-frontend's composer is a port rather than a rewrite and identical gestures
-produce identical bytes on the wire. Rich text is
-[ADR 0003](decisions/0003-rich-text-compose.md); where the document lives is
-[ADR 0004](decisions/0004-composer-document-model.md). **The composer is rich
-text over that model**: its editing surface is a WebView (`postio_widgets::composer::editor`)
-with bold, italic, bulleted
-and numbered lists, links, quote blocks and inserted images — the bindings are
-in [`keybindings.md`](keybindings.md). Plain text is what a message that used
-none of that is sent as, not the only thing the editor can do; deciding the
-model first is what let the editor grow without the wire format moving.
-
-Outgoing HTML is *generated* from that document for everything the user
-writes, and for a forward. A **reply's quote** is the exception, decided in
-[ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md): it carries
-the original as the reader rendered it, because a quote rebuilt from the
-closed type does not look like the message being answered. What the sender
-wrote is therefore re-emitted — as the reader's own sanitiser permits it, and
-never more than that (§21).
+- The composer opens where the open message is: in its dialog, or in the pane
+  when reading beside the list (spec 007 FR-050). It is not a separate window.
+  The list keeps its scroll and cursor; `Esc` closes it, keeps the draft and
+  returns you to the same place. There is one composer, `postio-widgets`'.
+- A composition can be **detached** into its own window (`detach_composer`)
+  only when the user asks; nothing opens detached. It is the same widget
+  moved, never a second composer.
+- Recipients autocomplete from the address book, one name per person with the
+  preferred address first, whether the user or the mail made them
+  ([`specs/005-contacts`](../specs/005-contacts/spec.md)). Cc and Bcc appear on
+  demand; identities are pickable; drafts autosave; attachments drag and drop.
+- **The document is Postio's own, not the toolkit's**
+  ([ADR 0003](decisions/0003-rich-text-compose.md),
+  [ADR 0004](decisions/0004-composer-document-model.md)). Each platform's
+  editor is a view over `postio_body::Document`, so a second frontend is a port
+  and identical gestures produce identical bytes. The editor is a WebView
+  (`postio_widgets::composer::editor`). A message that used no formatting is
+  sent as plain text.
+- **The composer formats everything a Markdown file can** (CommonMark and GFM,
+  [spec 014](../specs/014-compose-formatting/spec.md)): six heading levels;
+  bold, italic, strikethrough; inline code and code blocks with a language;
+  nested quotes; bulleted, numbered and task lists, nested; links, autolinks
+  and inline images; tables with alignment; dividers and line breaks.
+  Markdown is a way in and a view, never the stored format: `mod+alt+s`
+  switches a draft to its Markdown source and back, losing nothing.
+- Outgoing HTML is generated from the document, for a forward too. **A reply's
+  quote** carries the original as the reader rendered it
+  ([ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md)),
+  re-emitted only as the reader's sanitiser permits (§21).
 
 ---
 
 ## 11. Attachments
 
-Download, open, save as, and preview where practical — inline images and PDF
-first. Indexed by filename: `has:attach`, `filename:contract`.
+Download, open, save as, and preview inline images and PDF first. Indexed by
+filename: `has:attach`, `filename:contract`.
 
-**Attachments are the one thing fetched lazily.** Bodies are not: every message's
-text is pulled unprompted and to completion (§14), because search and offline
-reading depend on it. Attachment payloads are different — they are ~90% of a
-mailbox by weight and contribute nothing to search but their filename — so they
-arrive when the user opens or saves one, and a message whose text is local but
-whose payloads are not is a normal, fully searchable, fully readable state.
-New mail is the exception: its attachments, up to 25 MB a message, come down
-right after its text as it arrives, so the one you were just told about opens
-at once. Inline images small enough to matter for rendering come with the text, so HTML
-mail reads correctly offline. Someone who wants a complete archive can ask for
-attachments eagerly; someone on a metered link can refuse them entirely.
-[ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)
-has the measurements and the policy.
+**Attachments are the one thing fetched lazily.** Bodies are not (§14).
+Payloads are about 90% of a mailbox by weight and add only a filename to
+search, so they arrive when the user opens or saves one. A message with its
+text local and payloads not is a normal, searchable, readable state.
+Exceptions: new mail's attachments up to 25 MB a message arrive right after its
+text, and inline images small enough to matter for rendering arrive with the
+text. A user can ask for eager download or refuse it on a metered link
+([ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)).
 
 ---
 
 ## 12. AI
 
-**Deferred to post-v1 by decision, not by accident** (§23). The one exception
-is the model a user may run for Focus (§2). The two constraints that
-bind whenever it does arrive are already fixed:
+**Deferred to post-v1 by decision** (§23), except the local model a user may
+run for Focus (§2). Two constraints bind whenever AI arrives:
 
-- **AI must never silently modify or send mail.** Read and search may be
-  exposed relatively freely; every externally visible action — send, forward,
-  delete, move, mark read — requires explicit human confirmation in the Postio
-  UI.
-- **Mail is attacker-controlled text.** An agent reading mail is exposed to
-  prompt injection: an attacker emails the user and the body contains
-  instructions. This is an actively exploited class of attack against
-  mail-reading agents, and it is the dominant design constraint rather than an
-  afterthought.
+- **AI never silently modifies or sends mail.** Every externally visible
+  action (send, forward, delete, move, mark read) needs explicit human
+  confirmation in the Postio UI.
+- **Mail is attacker-controlled text.** An agent reading it is exposed to
+  prompt injection, and that is the dominant design constraint.
 
-The intended capabilities — thread summary, action items and decisions, draft
-reply, semantic search, triage — and how both constraints become structural
-rather than procedural are
+Capabilities and how both constraints become structural are
 [ADR 0009](decisions/0009-ai-subsystem.md). Exposing the mailbox to external
 agents is [ADR 0010](decisions/0010-mcp-surface.md).
 
@@ -563,47 +376,30 @@ agents is [ADR 0010](decisions/0010-mcp-surface.md).
 
 ## 13. AI subsystem shape
 
-See [ADR 0009](decisions/0009-ai-subsystem.md). In short: a `postio-ai` crate
-behind a provider trait covering local and cloud models, with per-account and
-per-feature data-sharing permissions — and with no send path in its dependency
-closure, so "AI cannot send mail" is a fact CI checks rather than a rule
-somebody remembers. What is built so far is narrower: Focus's client for the
-user's own local model (§2, `ARCHITECTURE.md` §12).
+[ADR 0009](decisions/0009-ai-subsystem.md): a `postio-ai` crate behind a
+provider trait, per-account and per-feature data-sharing permissions, and no
+send path in its dependency closure, which CI checks. Built so far: Focus's
+client for the user's own local model (§2).
 
 ---
 
 ## 14. Synchronization
 
-Invisible most of the time. Incremental sync, automatic reconnection with
-exponential backoff, IMAP IDLE, QRESYNC/CONDSTORE where the server has them,
-eager body backfill and lazy attachment fetch, cancellation, and progress
-reporting.
+Invisible most of the time: incremental sync, reconnection with exponential
+backoff, IMAP IDLE, QRESYNC/CONDSTORE where available, eager body backfill,
+lazy attachment fetch, cancellation and progress.
 
-**Backfill runs to completion, not to a fixed initial pull.** Every
-selectable folder pulls every message's body, eventually, in the
-background — not just the newest few hundred. A folder can be excluded
-explicitly; nothing is excluded by default. [ADR
-0016](decisions/0016-full-mailbox-backfill-by-default.md) is the reasoning;
-`postio-sync::BackfillPolicy` is what throttles it responsibly (size cap,
-metered/active pauses) without capping *how much* eventually arrives.
-
-**Bodies are eager; attachments are lazy.** Backfill has two axes and they are
-governed separately. The *text axis* — headers, every `text/*` part, and inline
-images small enough to matter for rendering — runs to completion for every
-message, and is what §7's search and §15's offline promise are made of. The
-*payload axis* — attachment bytes — defaults to fetching on open, because it is
-around nine tenths of a mailbox by weight and contributes nothing to search but
-a filename; new mail's attachments are the exception and arrive with it.
-New mail jumps the backlog: an arrival's text, then its attachments, are
-fetched behind only what the person has opened. A message with its text local and its payloads not is the ordinary
-steady state, not a half-synced one.
-[ADR 0017](decisions/0017-backfill-cost-attachments-memory-disk-encryption.md)
-prices both axes against a real 81,744-message account and settles the memory,
-disk, compression and encryption consequences.
-
-**The UI never awaits the network.** Every mutating action is: store write →
-enqueue the remote operation → emit the event → repaint. The sync engine drains
-the queue later and somewhere else. `ARCHITECTURE.md` §1.
+- **Backfill runs to completion.** Every selectable folder pulls every
+  message's body in the background. A folder can be excluded explicitly;
+  nothing is by default ([ADR 0016](decisions/0016-full-mailbox-backfill-by-default.md)).
+  `postio-sync::BackfillPolicy` throttles it (size cap, metered and active
+  pauses) without capping how much eventually arrives.
+- **Bodies are eager, attachments lazy.** The text axis (headers, every
+  `text/*` part, small inline images) completes for every message and is what
+  §7 and §15 rest on. The payload axis defaults to fetch on open.
+- **New mail jumps the backlog:** its text, then its attachments, behind only
+  what the person has opened.
+- **The UI never awaits the network** (constitution I).
 
 ---
 
@@ -611,178 +407,139 @@ the queue later and somewhere else. `ARCHITECTURE.md` §1.
 
 Fully usable offline after the first sync: read, search, compose, reply,
 forward, archive, delete, move, label, mark read or unread. Operations enter
-the local queue and reconcile when the link returns.
-
-This is not a mode. It is the same code path as being online, which is why it
-works.
+the local queue and reconcile when the link returns. Offline is not a mode; it
+is the online code path.
 
 ---
 
 ## 16. Undo
 
-> *Archived 12 messages — Undo*
+> *Archived 12 messages. Undo*
 
-Destructive operations are undoable, and undo is **local and immediate** — it
-does not wait for the server, which catches up afterwards.
-
-Two properties make the promise honest: a burst of actions is **one unit**, so
-twelve keystrokes are one toast and one `mod+z`; and the stack **forgets**, because
-putting back something archived an hour ago is a surprise rather than a mercy.
-`ARCHITECTURE.md` §5.
+Destructive operations are undoable, and undo is local and immediate; the
+server catches up afterwards. A burst of actions is one unit (twelve keystrokes
+are one toast and one `mod+z`), and the stack forgets: restoring something
+archived an hour ago is a surprise.
 
 **Leaving a list offers to clear it.** After `M` unsubscribes, a notice says
-`Unsubscribed from` the list's `List-Id`, or for a sender with none their
-exact address (never the domain, which the activation log files it under),
-and, when mail from it is still here, offers one action on it: Archive, or
-Delete if `[focus] after_unsubscribe` says so. The mail is the list's, without
-the Flagged and without what is already in Trash, Junk, Sent or Drafts. The
-notice never takes the keyboard (a toast on the desktop, the status line in
-the terminal, the banner row on the Mac): ignoring it, or `Esc`, keeps
-everything. The action is one command, so one undo.
+`Unsubscribed from` the list's `List-Id`, or for a sender with none their exact
+address (never the domain). When mail from it remains, it offers one action:
+Archive, or Delete if `[focus] after_unsubscribe` says so. The mail excludes
+Flagged and what is in Trash, Junk, Sent or Drafts. The notice never takes the
+keyboard (toast on the desktop, status line in the terminal, banner row on the
+Mac); ignoring it or `Esc` keeps everything. It is one command, so one undo.
 
-**The one thing that is not undoable is emptying Junk and Trash on a clock.**
-It is off until the user turns it on (`[sync] empty_junk_after_days`,
-`empty_trash_after_days`, set in Sync & storage), it deletes for good both
-here and on the server, and it never touches a Flagged message. Everything
-else that removes mail goes to the Trash first.
+**The one thing not undoable is emptying Junk and Trash on a clock.** It is off
+until the user sets `[sync] empty_junk_after_days` / `empty_trash_after_days`,
+deletes for good here and on the server, and never touches a Flagged message.
+Everything else that removes mail goes to Trash first.
 
 ---
 
 ## 17. Notifications
 
-Desktop notifications for new mail and, later, for mail that needs a response.
-Configurable per account and per mailbox.
-
-**Never a read receipt.** A notification is Postio telling the user something;
-it must never become Postio telling the *sender* something. §21.
+Desktop notifications for new mail and, later, mail that needs a response,
+configurable per account and per mailbox. Never a read receipt: a notification
+is Postio telling the user something, never the sender (§21).
 
 ---
 
 ## 18. Performance is a functional requirement
 
-A budget, not something checked by hand at the end. What gates a pull request
-is a count rather than a stopwatch — the number of statements a list issues,
-the rows a page materialises, the per-row work a start does — because those
-are identical on a developer's machine and on a shared runner, where a
-millisecond budget is not defensible (#100). Wall-clock benches still run,
-nightly and reporting rather than gating.
+Budgets are gated as counts, not stopwatches (constitution V;
+[`PERFORMANCE.md`](PERFORMANCE.md)).
 
 | | Target |
 |---|---|
 | Startup to usable UI, populated database | **< 500 ms** |
 | Ordinary UI interaction | **< 16 ms** |
 | Local search | **< 100 ms** |
-| Transitions | **≤ 100 ms, or absent** |
+| Transitions | **<= 100 ms, or absent** |
 
-Pane switches use *no* transition, and `prefers-reduced-motion` is always
-honoured.
+Pane switches use no transition; `prefers-reduced-motion` is always honoured.
 
-**A mailbox is never loaded into memory.** The message list is windowed over
-the paged store, and "select all" is a predicate — `Everything { except }` — not a
-hundred thousand ids. This constraint shapes the store, the list widget and
-the selection model, and it is the single most-cited line in this document.
+**A mailbox is never loaded into memory.** The list is windowed over the paged
+store, and "select all" is a predicate (`Everything { except }`), not a hundred
+thousand ids. This shapes the store, the list widget and the selection model.
 
-Opening a synchronised message requires no network. Postio is one process, not
-a browser engine per window.
+Opening a synchronised message needs no network. Postio is one process, not a
+browser engine per window.
 
 ---
 
 ## 19. Visual design
 
-A beautiful native application, not a terminal-inspired one, and not something
-that looks like *"a GTK developer made an email client"* — a premium
-application that happens to be built with GTK.
+A beautiful native application, not terminal-inspired and not "a GTK developer
+made an email client". Generous typography, real spacing, subtle hierarchy,
+restrained colour, excellent dark and light mode, minimal chrome, very good
+message rendering.
 
-Generous typography, real spacing, subtle hierarchy, restrained colour,
-excellent dark *and* light mode, minimal chrome, very good message rendering.
+Spec 007 is the authority on visual detail
+([`contracts/focus-surface.md`](../specs/007-postio-focus/contracts/focus-surface.md),
+[`screens.md`](../specs/007-postio-focus/screens.md)).
 
-**Spec 007 is the authority on visual detail**: each screen in
-[`contracts/focus-surface.md`](../specs/007-postio-focus/contracts/focus-surface.md),
-held against the maintainer's reference images in
-[`screens.md`](../specs/007-postio-focus/screens.md), which records every
-difference and its reason. The chrome is the system's: Adwaita Sans, and
-Adwaita Mono for keys, addresses and counts (spec 007 C25), and libadwaita's
-own colours, so light, dark and the user's accent arrive from the desktop
-(C26). The accent is reserved for what needs the user — action markers, the
-focus ring, the has-action toggle — and a selected row is neutral. A message
-body is drawn in the app's colours, set in Barlow, or as the original on a
-sheet of paper when it paints its own page. Real Adwaita window chrome, so it
-reads as a GNOME application.
-
-Spacing and sizes are **generated from the design system, never retyped**
-(`ARCHITECTURE.md` §10).
+- The chrome is the system's: Adwaita Sans, Adwaita Mono for keys, addresses
+  and counts (C25), libadwaita's colours so light, dark and the accent come
+  from the desktop (C26). Real Adwaita window chrome.
+- The accent is reserved for what needs the user: action markers, the focus
+  ring, the has-action toggle. A selected row is neutral.
+- A message body is drawn in the app's colours, set in Barlow, or as the
+  original on a sheet of paper when it paints its own page.
+- Spacing and sizes are generated from the design system, never retyped
+  (`ARCHITECTURE.md` §10).
 
 ---
 
 ## 20. Accessibility is first-class
 
-Not a later pass. Keyboard navigation, screen readers, high contrast, reduced
-motion, scalable text, focus indicators, semantic controls.
-
-Two consequences that are easy to miss and are the ones that actually bite:
-colour is never the only carrier of meaning, and every command is reachable
-without the mouse *by construction*, because §8's registry is what generates
-the accessible actions.
+Not a later pass: keyboard navigation, screen readers, high contrast, reduced
+motion, scalable text, focus indicators, semantic controls. Colour is never the
+only carrier of meaning. Every command is reachable without the mouse by
+construction, because §8's registry generates the accessible actions.
 
 ---
 
 ## 21. Privacy and security
 
-Email is the most sensitive thing on most people's machines, and mail is
-attacker-controlled content that actively tries to phone home. The commitment
-is one sentence: **nothing leaves this machine that the user did not ask for.**
+Mail is attacker-controlled content that tries to phone home. **Nothing leaves
+this machine that the user did not ask for** (constitution VI). The mechanisms:
 
-- Remote images and tracking pixels are blocked until the user allows them,
-  **per sender**. Never a global default-on.
-- **Read receipts are never sent automatically.** `Disposition-Notification-To`
-  is tracking with a friendly name.
-- `List-Unsubscribe` One-Click fires only on deliberate activation — sending it
-  confirms to a spammer that the address is live.
-- No link prefetch, no favicon fetch, no speculative connections. The reader's
+- Remote images and tracking pixels are blocked until allowed **per sender**,
+  never a global default-on.
+- **Read receipts are never sent automatically**; `Disposition-Notification-To`
+  is tracking.
+- `List-Unsubscribe` One-Click fires only on deliberate activation, because
+  sending it confirms the address is live.
+- No link prefetch, favicon fetch or speculative connection. The reader's
   renderer cannot run script or reach the network (ADR 0042): it has no script
-  engine, and it draws only what it is handed — the message's own parts, from
-  the local blob store, and a remote image the user allowed, fetched by the
-  application. The conversation rail reads which message is on screen from
-  the renderer's geometry, not from script.
-- Replies and forwards carry nothing outward, and since
-  [ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md) they rest
-  on different mechanisms for it. A **forward** is still generated from
-  Postio's own types, where a script has no representation at all. A **reply**
-  carries the sender's markup as the reader sanitised it, so the gate is the
-  sanitiser rather than the closed type — the same policy the reader defends
-  its own user with, with remote images blocked regardless of what the reader
-  was allowed to show. Either way a forwarded phishing mail cannot make a
-  recipient run what its own user was protected from, and the corpus-wide
-  assertion in `postio-body` is what keeps that true: zero scripts, zero
-  remote-loading references, zero tracking pixels, and not one broken image
-  element, across every HTML message in the corpus.
+  engine and draws only the message's own parts from the local blob store plus
+  a remote image the user allowed, fetched by the application. The
+  conversation rail reads the visible message from the renderer's geometry.
+- **A forward** is generated from Postio's own types, where script has no
+  representation. **A reply** carries the sender's markup as the reader
+  sanitised it ([ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md)),
+  remote images blocked regardless. The corpus-wide assertion in `postio-body`
+  keeps this true: zero scripts, remote-loading references, tracking pixels or
+  broken image elements across every HTML message in the corpus.
 - **A sender who may not be who they say gets one quiet line in the reader's
-  header, and ordinary mail gets nothing** (#1928). It speaks for two things:
-  the account's provider stamped an `Authentication-Results` saying DMARC
-  failed (or SPF and DKIM both failed for the From domain), or the display
-  name is itself another address or domain than the one the mail came from.
-  Only the topmost `Authentication-Results` whose authserv-id is in the
-  provider's preset row (`authserv_ids`) is believed, because a sender writes
-  every header it sends; with none, nothing is known and nothing is shown.
-  There is no "verified" badge. Link and PGP/S/MIME warnings are still
-  unscheduled.
-- No telemetry, no crash reporting, no update ping.
-- **The local store holds the whole mailbox, and it is encrypted.** §14's
-  backfill means this machine ends up with a complete copy of the user's mail
-  rather than a recent slice, which is exactly why
-  [ADR 0014](decisions/0014-encryption-at-rest.md)'s at-rest encryption is a
-  requirement and not a nicety. A consequence worth stating plainly rather than
-  burying: a backup of `$XDG_DATA_HOME` is a backup of the entire mailbox, and
-  the key that opens it lives in the keyring, not beside it. Losing the keyring
-  entry costs a re-sync; it never costs mail.
+  header; ordinary mail gets nothing** (#1928). Triggers: the provider stamped
+  an `Authentication-Results` saying DMARC failed (or SPF and DKIM both failed
+  for the From domain), or the display name is itself another address or
+  domain. Only the topmost `Authentication-Results` whose authserv-id is in the
+  provider's preset row (`authserv_ids`) is believed, since a sender writes
+  every header it sends; with none, nothing is shown. There is no "verified"
+  badge.
+- No telemetry, crash reporting or update ping.
+- **The local store holds the whole mailbox and is encrypted**
+  ([ADR 0014](decisions/0014-encryption-at-rest.md)). A backup of
+  `$XDG_DATA_HOME` is a backup of the mailbox; the key lives in the keyring,
+  and losing it costs a re-sync, never mail.
 - Credentials in the OS keyring; TLS wherever the server offers it.
-- **Logs never carry message content** — no bodies, subjects or recipient
-  addresses, at any level. Ids, counts and outcomes.
+- Logs carry ids, counts and outcomes, never message content.
 
-When adding anything that could make a network request, the question is not
-"is this useful" but **"did the user ask for it"**. If the answer is no, it does
-not ship. `scripts/checks/check-no-silent-tracking.py` refuses the two mechanisms that
-are easiest to add by accident; `ARCHITECTURE.md` §11 is the enforcement story.
+For anything that could make a network request, ask "did the user ask for it";
+if not, it does not ship. `scripts/checks/check-no-silent-tracking.py` refuses
+the two easiest mechanisms to add by accident.
 
 Link warnings, PGP and S/MIME are unscheduled.
 
@@ -790,56 +547,56 @@ Link warnings, PGP and S/MIME are unscheduled.
 
 ## 22. Architecture
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md), which describes what is actually
-built and why, and [`decisions/`](decisions) for the long-form arguments. The
-original brief's sketch — one `postio-core` holding the domain model, search,
-commands and state — is not what the workspace became, and keeping a second
-drawing of it here would be a picture that is wrong.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) and [`decisions/`](decisions).
 
 ---
 
 ## 23. What v1 is, and what it is not
 
-**In:** multiple accounts and a unified inbox; IMAP + SMTP, JMAP, or the
-Gmail API, with a password, an app-specific password, or OAuth 2; inbox,
-folders, threads, labels; read/unread, archive, delete, flag, move, snooze;
-HTML and plaintext reading with attachments, quoted-message folding, remote
-images blocked per sender, and one-click unsubscribe on request; rich-text
-compose, reply, reply-all, forward, attachments, drafts, signatures and
-identities, scheduled send, an outbox that sends at most once; people who
-own several addresses, and groups, filled from the mail and completing
-recipients, with vCard import and export that keeps what it does not model
-(`specs/005-contacts`; Focus's Contacts surface is designed in
-`specs/011-focus-contacts`); local full-text search with operators, one command bar, and pinned saved searches;
-vim-style navigation and configurable shortcuts; an encrypted local store,
-background sync, offline reading, undo, desktop notifications. Flagging is
-`*`, from the key, the row menu or the command bar, and `g *` lists flagged
-mail; a row carries no flag mark (spec 007 C13). The desktop app is one dense
-inbox with action markers, digests, filtering with reasons and Obsidian
-capture, and a local model the user may bring for questions, to-dos and
-digest summaries (§2, §9). All of it in a terminal too, on the same store.
+**In:**
 
-**Out, deliberately:** Rules — the language is shared and the design is
-[ADR 0008](decisions/0008-filters-and-rules.md), but no rule fires yet. A
-Contacts surface in the apps that have not adopted it yet (the engine, the
-commands and vCard import and export are built; the Mac's screen is next),
-and CardDAV and provider contact sync. Microsoft Graph. PGP and S/MIME, phishing and link
-warnings. Windows. Images drawn inside the terminal (placeholders there
-for now). **And AI**, beyond Focus's optional model — a founding principle,
-deferred so that core mail, search and the keyboard land excellently first. Shipping AI over a
-mediocre mail client would produce a mediocre mail client with AI in it.
+- Multiple accounts and a unified inbox; IMAP + SMTP, JMAP or the Gmail API
+  with password, app-specific password or OAuth 2.
+- Inbox, folders, threads, labels; read/unread, archive, delete, flag, move,
+  snooze.
+- HTML and plaintext reading with attachments, quote folding, remote images
+  blocked per sender, one-click unsubscribe on request.
+- Rich-text compose, reply, reply-all, forward, attachments, drafts,
+  signatures, identities, scheduled send, an outbox that sends at most once.
+- People with several addresses, and groups, filled from mail and completing
+  recipients, with vCard import and export that keeps what it does not model
+  (`specs/005-contacts`; Focus's Contacts surface is `specs/011-focus-contacts`).
+- Local full-text search with operators, one command bar, pinned saved
+  searches; vim-style navigation and configurable shortcuts.
+- An encrypted local store, background sync, offline reading, undo, desktop
+  notifications.
+- Flagging is `*` (key, row menu or command bar), `g *` lists flagged mail, and
+  a row carries no flag mark (spec 007 C13).
+- A calendar: Agenda, invitations answered from the inbox, events made and
+  changed on this computer or in a CalDAV account (`specs/017-calendar`).
+- Focus: one dense inbox with action markers, digests, filtering with reasons,
+  Obsidian capture, and an optional local model (§2, §9). All of it in the
+  terminal too, on the same store.
 
-Each of these has an issue and an ADR; none of them is forgotten.
+**Out, deliberately:**
+
+- Rules: the language is shared and the design is
+  [ADR 0008](decisions/0008-filters-and-rules.md), but no rule fires yet.
+- A Contacts surface in apps that have not adopted it (the Mac's is next);
+  CardDAV and provider contact sync.
+- Microsoft Graph; PGP and S/MIME; phishing and link warnings; Windows;
+  images drawn in the terminal.
+- **AI**, beyond Focus's optional model: a founding principle, deferred so
+  that core mail, search and the keyboard land first.
+
+Each has an issue and an ADR.
 
 ---
 
 ## 24. After v1
 
-The [Postio Roadmap](https://github.com/users/dlapiduz/projects/2) is the list,
-grouped into epics with real sub-issue links. It is a plan rather than a queue,
-which is why roadmap issues are not labelled `ready`.
-
-A second copy of it here would be out of date within a week.
+The [Postio Roadmap](https://github.com/users/dlapiduz/projects/2) is the list.
+It is a plan, not a queue, so roadmap issues are not labelled `ready`.
 
 ---
 
@@ -849,20 +606,9 @@ A second copy of it here would be out of date within a week.
 /     invoices from Acme that I haven't responded to
 ```
 
-Postio finds them. `Enter` opens the message. `a` archives it.
+Postio finds them. `Enter` opens the message. `a` archives it. Or `Ctrl+K`,
+Summarise, then `e` opens the reply with a suggested draft, the user edits it,
+and `Ctrl+Enter` sends.
 
-Or `Ctrl+K → Summarise`:
-
-> Acme is waiting for approval of the $42,300 invoice. They sent the revised
-> invoice on 19 August. You have not responded.
-
-Then `e` opens the reply, a suggested draft appears, the user edits it, and
-`Ctrl+Enter` sends.
-
-**The whole of that without reaching for the mouse.** That is what makes Postio
-more than another Thunderbird alternative: an application designed around
-navigating and acting on a huge stream of information quickly, rather than
-around displaying a folder.
-
-Everything in this document either serves that workflow or is a constraint that
-keeps it honest.
+**All of it without reaching for the mouse.** Everything in this document
+either serves that workflow or is a constraint that keeps it honest.

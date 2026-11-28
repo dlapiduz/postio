@@ -1,17 +1,7 @@
-//! What the list view draws: the paged rows with an expanded thread's
-//! children spliced in under their row (spec 013 US1, research R7).
-//!
-//! The paged model ([`FocusList`]) never holds a child: putting a thread's
-//! messages into the paged query would shift every page's offsets. So the
-//! view reads this model over it, which is the rows with `children` more
-//! positions after the anchor, and forwards what the rows say -- a page
-//! landing, a row leaving -- in the positions the view knows. Every
-//! position the controller names, and the cursor's, is one of these
-//! ([`postio_ui::thread_list`]); the controller itself is handed the paged
-//! rows, whose positions are row positions.
-//!
-//! Nothing here animates: children appear and go in one change, so there is
-//! no transition for `gtk-enable-animations=false` to turn off.
+//! What the list view draws: the paged rows with an expanded thread's children spliced in under
+//! their row. The paged model never holds a child, since putting a thread's messages into the paged
+//! query would shift every page's offsets. Children appear and go in one change, with no
+//! transition.
 
 use std::cell::{Cell, RefCell};
 
@@ -31,11 +21,8 @@ mod imp {
     #[derive(Default)]
     pub struct SplicedList {
         pub rows: RefCell<Option<FocusList>>,
-        /// The open thread's place among the rows, while one is open.
         pub splice: Cell<Option<Splice>>,
         pub children: RefCell<Vec<RowObject>>,
-        /// The row object the children hang from: it draws its chevron
-        /// turned.
         pub anchor: RefCell<Option<RowObject>>,
     }
 
@@ -70,13 +57,11 @@ mod imp {
 }
 
 glib::wrapper! {
-    /// The rows and the open thread's children, as the list view draws them.
     pub struct SplicedList(ObjectSubclass<imp::SplicedList>)
         @implements gio::ListModel, gtk::SectionModel;
 }
 
 impl SplicedList {
-    /// The view's model over `rows`, which it follows.
     pub fn new(rows: &FocusList) -> Self {
         let list: Self = glib::Object::new();
         list.imp().rows.replace(Some(rows.clone()));
@@ -110,7 +95,6 @@ impl SplicedList {
             .expect("a spliced list is made over its rows")
     }
 
-    /// The open thread, once its row is among the landed rows.
     fn effective(&self) -> Option<Splice> {
         let splice = self.imp().splice.get()?;
         (splice.anchor < self.rows().n_items() && splice.children > 0).then_some(splice)
@@ -120,29 +104,24 @@ impl SplicedList {
         postio_ui::thread_list::len(self.imp().splice.get(), self.rows().n_items())
     }
 
-    /// What `position` holds: a row of the list, or a child.
     pub fn slot(&self, position: u32) -> Slot {
         postio_ui::thread_list::slot(self.effective(), position)
     }
 
-    /// Where the row at `row` is drawn.
     pub fn display_of(&self, row: u32) -> u32 {
         postio_ui::thread_list::display(self.effective(), Slot::Row(row))
     }
 
-    /// Where `message`'s row is drawn, once its page is here.
     pub fn position_of(&self, message: MessageId) -> Option<u32> {
         self.rows()
             .position_of(message)
             .map(|row| self.display_of(row))
     }
 
-    /// The open thread's place among the rows.
     pub fn open_thread(&self) -> Option<Splice> {
         self.effective()
     }
 
-    /// What `position` says when it is a child.
     pub fn child_at(&self, position: u32) -> Option<ChildRowView> {
         self.object_at(position)
             .and_downcast::<RowObject>()
@@ -161,8 +140,6 @@ impl SplicedList {
         }
     }
 
-    /// The section holding `position`: the paged rows' day, with the
-    /// children in their anchor's.
     fn section_at(&self, position: u32) -> (u32, u32) {
         let total = self.len();
         if position >= total {
@@ -183,7 +160,6 @@ impl SplicedList {
                 row
             }
         };
-        // `end` is one past the section's last row.
         let end = if end > splice.anchor {
             end.saturating_add(splice.children).min(total)
         } else {
@@ -192,7 +168,6 @@ impl SplicedList {
         (shift(start), end)
     }
 
-    /// The rows changed: say it in the view's positions.
     fn rows_changed(&self, position: u32, removed: u32, added: u32) {
         let Some(splice) = self.imp().splice.get() else {
             self.items_changed(position, removed, added);
@@ -202,10 +177,16 @@ impl SplicedList {
         let before = now + removed - added;
         let was = splice.anchor < before && splice.children > 0;
         let is = splice.anchor < now && splice.children > 0;
-        if was != is || (position <= splice.anchor && position + removed > splice.anchor) {
-            // The anchor's own row, or whether it is there at all, moved:
-            // the rest is told as one change over everything, until the
-            // controller says where the thread went.
+        let takes_anchor = position <= splice.anchor && position + removed > splice.anchor;
+        if was && takes_anchor && added == 0 {
+            // Its children go with the thread's row in one change, or the view loses its scroll.
+            self.imp().splice.set(None);
+            self.imp().children.borrow_mut().clear();
+            self.mark_anchor(None);
+            self.items_changed(position, removed + splice.children, 0);
+        } else if was != is || takes_anchor {
+            // The anchor's own row, or whether it is there at all, moved: the rest is told as one
+            // change over everything until the controller says where the thread went.
             let drawn_before = before + if was { splice.children } else { 0 };
             let drawn_now = now + if is { splice.children } else { 0 };
             self.items_changed(0, drawn_before, drawn_now);
@@ -213,11 +194,9 @@ impl SplicedList {
             self.items_changed(position + splice.children, removed, added);
         } else {
             if position + removed <= splice.anchor {
-                // Rows above the thread's (new mail at the top): its row
-                // moves, and its children go with it. Left where it was,
-                // the anchor would hang them from another row, and the
-                // view, told only of the rows above, would keep the old
-                // ones too -- drawn twice, then half left behind on a fold.
+                // Rows above the thread's (new mail at the top): its row moves, and its children go
+                // with it. Left where it was, the anchor would hang them from another row and the
+                // view would keep the old ones too.
                 let anchor = splice.anchor - removed + added;
                 self.imp().splice.set(Some(Splice { anchor, ..splice }));
                 if is && let Some(row) = self.rows().item(anchor).and_downcast::<RowObject>() {
@@ -228,15 +207,12 @@ impl SplicedList {
         }
     }
 
-    /// Show `children` under the row at `anchor`, in place of any thread
-    /// already open.
     pub fn splice(&self, anchor: u32, children: Vec<ChildRowView>) {
         let count = children.len() as u32;
         if let Some(open) = self.imp().splice.get()
             && open.anchor == anchor
             && open.children == count
         {
-            // The same rows, said again: the words change in place.
             let held = self.imp().children.borrow().clone();
             let last = children.len().saturating_sub(1);
             for (index, (object, view)) in held.iter().zip(children).enumerate() {
@@ -264,7 +240,6 @@ impl SplicedList {
         }
     }
 
-    /// Take the open thread's children away.
     pub fn unsplice(&self) {
         let Some(open) = self.imp().splice.take() else {
             return;
@@ -277,7 +252,6 @@ impl SplicedList {
         }
     }
 
-    /// The row the children hang from draws its chevron turned.
     fn mark_anchor(&self, anchor: Option<RowObject>) {
         let before = self.imp().anchor.replace(anchor.clone());
         if let Some(before) = before {

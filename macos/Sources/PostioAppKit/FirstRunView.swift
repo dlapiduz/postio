@@ -2,19 +2,9 @@ import PostioFFI
 import SwiftUI
 import PostioKit
 
-/// The first-run wizard, as canvas 09 draws it: the address, the password,
-/// what was found for the domain, and `Connect`.
-///
-/// The window *is* this on a fresh install, rather than an empty three-pane
-/// shell with a button in it: with no account there is nothing for the
-/// panes to show, and the one useful thing to do is this. `Settings ›
-/// Accounts › +` keeps the sheet, whose other routes -- a browser sign-in,
-/// a folder of mail on this Mac -- this links to.
 public struct FirstRunView: View {
     @Bindable private var model: FirstRunModel
-    /// The sheet's routes: browser sign-in and a local store.
     private let otherWays: () -> Void
-    /// The account is saved and the sync window chosen.
     private let finished: () -> Void
 
     private enum Field: Hashable {
@@ -43,9 +33,7 @@ public struct FirstRunView: View {
                 .padding(PostioTokens.space8)
             }
             .background(Color(nsColor: AppSurface.background))
-            // `--color-divider` is ink at 16%; the ink is whichever the
-            // appearance draws text in, so it is written that way rather
-            // than as the token's fixed dark ink.
+            // `--color-divider` is ink at 16%, in whichever ink the appearance draws text.
             .overlay(Rectangle().strokeBorder(Color.primary.opacity(0.16), lineWidth: 1))
             .frame(maxWidth: 640)
             .padding(PostioTokens.space8)
@@ -54,8 +42,8 @@ public struct FirstRunView: View {
         .background(Color(nsColor: AppSurface.sidebar))
         .onAppear { focus = .name }
         .onChange(of: focus) { left, _ in
-            // Leaving the field is the deliberate step that looks it up --
-            // never a keystroke, since each lookup goes to the network.
+            // Leaving the field is the deliberate step that looks it up: each lookup goes to the
+            // network, so never a keystroke.
             if left == .address { Task { await model.lookUp() } }
         }
         .onChange(of: model.phase) { _, now in
@@ -79,13 +67,8 @@ public struct FirstRunView: View {
         .padding(.vertical, PostioTokens.space6)
     }
 
-    // -- steps 1 and 2: who you are, and proving it ---------------------------
-
     private var account: some View {
         VStack(alignment: .leading, spacing: PostioTokens.space6) {
-            // First, as on the desktop (5639e0ff): the `From` header and the
-            // sidebar's label. Optional -- blank sends as the bare address --
-            // and Return moves on, since there is nothing to look up yet.
             labelled("Your name") {
                 TextField("", text: $model.name, prompt: Text("Ada Lovelace"))
                     .textContentType(.name)
@@ -154,8 +137,6 @@ public struct FirstRunView: View {
         .textFieldStyle(.roundedBorder)
     }
 
-    /// The panel under the password: what was found, a guess to check, or
-    /// the servers to type.
     @ViewBuilder
     private var settings: some View {
         if model.lookingUp {
@@ -202,7 +183,6 @@ public struct FirstRunView: View {
         }
     }
 
-    /// The servers, open for typing.
     private var manual: some View {
         Grid(alignment: .leading, horizontalSpacing: PostioTokens.space3, verticalSpacing: PostioTokens.space3) {
             server("IMAP", host: $model.imapHost, port: $model.imapPort, security: $model.imapSecurity, field: .imapHost)
@@ -242,8 +222,6 @@ public struct FirstRunView: View {
         }
     }
 
-    /// A provider that signs in through the browser: Postio never draws its
-    /// login form, so the way in is the sheet's browser route.
     private var browser: some View {
         panel {
             VStack(alignment: .leading, spacing: PostioTokens.space3) {
@@ -257,8 +235,6 @@ public struct FirstRunView: View {
             }
         }
     }
-
-    // -- step 3: how far back --------------------------------------------------
 
     private var syncWindow: some View {
         VStack(alignment: .leading, spacing: PostioTokens.space6) {
@@ -292,8 +268,6 @@ public struct FirstRunView: View {
         }
     }
 
-    // -- pieces ----------------------------------------------------------------
-
     private var domain: String {
         model.address.split(separator: "@").last.map(String.init) ?? model.address
     }
@@ -307,7 +281,6 @@ public struct FirstRunView: View {
         }
     }
 
-    /// The bracketed panel the canvas draws round what was found.
     private func panel<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         content()
             .padding(PostioTokens.space6)

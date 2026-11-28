@@ -1,20 +1,8 @@
 import PostioFFI
 import SwiftUI
 
-/// One card of the Files tab (specs/010-focus-search T130; design §3.8,
-/// screen 11): a 120-tall preview with the matching line marked in the
-/// find yellow, the type tile, the name with its matched words marked,
-/// "sender · date · size", the matching line from the contents ("Sheet
-/// ‘Q3’, row 3: …") and "in ‘<subject>’".
-///
-/// The preview is drawn, not rendered from the file: a sheet's grid, a
-/// page's lines, a slide, a picture's ground, with the line the
-/// controller says matched marked (`FileCardFfi.marked`). Nothing reads
-/// the file to draw a card; Space hands the file itself to the system's
-/// Quick Look.
-///
-/// Every word is the controller's; the ring is the focused card's, the
-/// accent's, as a row's is (FR-005).
+/// The preview is drawn, not rendered from the file: nothing reads the file to draw a card; Space
+/// hands the file itself to the system's Quick Look.
 public struct FileCardView: View {
     let card: FileCardFfi?
     let focused: Bool
@@ -25,7 +13,6 @@ public struct FileCardView: View {
         self.focused = focused
     }
 
-    /// The measures of §3.8.
     public enum Metrics {
         public static let height: CGFloat = 258
         public static let preview: CGFloat = 120
@@ -33,7 +20,6 @@ public struct FileCardView: View {
         public static let spacing: CGFloat = 8
         public static let radius: CGFloat = 10
         public static let tile = CGSize(width: 34, height: 42)
-        /// The lines a preview draws, and the first one's top.
         public static let lines = 6
         public static let firstLine: CGFloat = 20
         public static let lineStep: CGFloat = 16
@@ -85,8 +71,6 @@ public struct FileCardView: View {
         .accessibilityAddTraits(focused ? .isSelected : [])
     }
 
-    /// The preview: the file's shape, and the matching line in the find
-    /// yellow.
     private func preview(_ card: FileCardFfi) -> some View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 6)
@@ -114,8 +98,6 @@ public struct FileCardView: View {
             endPoint: .bottomTrailing)
     }
 
-    /// A sheet's rules and columns; a page's or a text's lines; a slide's
-    /// title and body.
     private func draw(_ preview: FilePreviewFfi, in context: inout GraphicsContext, size: CGSize) {
         let rule = Color(nsColor: .separatorColor)
         let ink = Color.secondary.opacity(0.28)
@@ -150,7 +132,6 @@ public struct FileCardView: View {
         }
     }
 
-    /// The type tile: "XLSX" at its foot, on its type's tint.
     private func tile(_ card: FileCardFfi) -> some View {
         RoundedRectangle(cornerRadius: 4)
             .fill(Self.tint(card.kind))
@@ -168,9 +149,6 @@ public struct FileCardView: View {
             .accessibilityHidden(true)
     }
 
-    /// A type's tint (design §3.8): green for sheets, red for PDFs, blue
-    /// for pictures, the window's grey for the rest. Layout, not a rule:
-    /// the kind is the controller's word.
     static func tint(_ kind: String) -> Color {
         switch kind {
         case "XLSX", "XLS", "CSV", "NUM", "ODS": return Color.green.opacity(0.16)
@@ -182,8 +160,6 @@ public struct FileCardView: View {
     }
 }
 
-/// The Files tab's header over the grid (§3.8): the title, and what is
-/// searched inside files.
 public struct FilesHeaderView: View {
     let header: FilesHeaderFfi
 

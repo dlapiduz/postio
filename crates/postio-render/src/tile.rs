@@ -1,22 +1,17 @@
-//! Tiles (research R8): the recorded display list rasterised a band at a
-//! time, so the widget holds only what is on screen and near it, however
-//! tall the message.
+//! The display list rasterised a band at a time, so the widget holds only what is on screen and
+//! near it.
 
 use anyrender::ImageRenderer as _;
 
 use crate::RenderedDocument;
 
-/// One band of a document, in device pixels at the snapshot's scale.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TileSpec {
-    /// The band's top, from the document's top.
     pub top: u32,
-    /// The band's height; the last one may run past the document's end.
     pub height: u32,
 }
 
 impl TileSpec {
-    /// The `index`th band of `height` pixels.
     pub fn nth(index: u32, height: u32) -> TileSpec {
         TileSpec {
             top: index * height,
@@ -25,14 +20,11 @@ impl TileSpec {
     }
 }
 
-/// The document's width in device pixels: every tile's width.
 pub fn tile_width(doc: &RenderedDocument) -> u32 {
     (doc.size.width * doc.scale).ceil().max(1.0) as u32
 }
 
-/// Rasterise `tile` of `doc` into `out`, premultiplied RGBA, row by row:
-/// `tile_width(doc) * tile.height * 4` bytes. Pure, and callable from any
-/// thread: the display list is plain data.
+/// Pure and callable from any thread: the display list is plain data.
 pub fn rasterize_tile(doc: &RenderedDocument, tile: TileSpec, out: &mut [u8]) {
     let width = tile_width(doc);
     let mut renderer = anyrender_vello_cpu::VelloCpuImageRenderer::new(width, tile.height);
@@ -83,8 +75,6 @@ mod tests {
         crate::render(&request, &fonts)
     }
 
-    /// Tiles stacked are the full raster, byte for byte: a seam would show
-    /// as a line across the message wherever two tiles meet.
     #[test]
     fn stacked_tiles_are_the_full_raster() {
         let doc = document();

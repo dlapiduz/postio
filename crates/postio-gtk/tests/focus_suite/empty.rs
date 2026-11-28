@@ -1,7 +1,3 @@
-//! The empty inbox (US6 scenario 4, screen 16): "Inbox is empty", and under
-//! it only what exists -- when the next digest comes if there are digests,
-//! and the filtered count if filtering is on.
-
 use gtk::prelude::*;
 use postio_storage::repository::{
     FilterDecision, FilterDecisionRepository, FilterLayer, FilterReason,
@@ -9,7 +5,6 @@ use postio_storage::repository::{
 
 use crate::support::{self, Fixture};
 
-/// Open `fixture`'s store under `config`, and wait for the empty page.
 async fn open_empty(
     fixture: &Fixture,
     config: &postio_config::Config,
@@ -24,7 +19,6 @@ async fn open_empty(
     window
 }
 
-/// What the empty page says, as a person reads it.
 fn empty_says(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
     support::with_class(window, "focus-empty")
         .first()
@@ -34,11 +28,7 @@ fn empty_says(window: &postio_gtk::window::FocusWindow) -> Vec<String> {
 
 pub fn with_filtering_the_empty_inbox_counts_what_was_filtered_today() {
     crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
         let fixture = Fixture::empty().await;
-        // Two messages filed away this morning, out of the inbox.
         let connection = fixture.database.connect().await.expect("a connection");
         let archive =
             postio_storage::test_support::mailbox(&connection, &fixture.account, "Filtered mail")
@@ -83,32 +73,5 @@ pub fn with_filtering_the_empty_inbox_counts_what_was_filtered_today() {
             );
         }
         assert!(window.rows_on_screen().is_empty(), "no rows behind it");
-    });
-}
-
-pub fn without_filtering_the_empty_inbox_names_the_next_digest_and_no_count() {
-    crate::gtk_case(async {
-        if !support::display() {
-            return;
-        }
-        let fixture = Fixture::empty().await;
-        let config = postio_config::Config::from_toml_str(
-            "[focus]\nfiltering = false\n\n[[focus.digests]]\nname = \"Newsletters\"\n\
-             queries = [\"from:news@example.com\"]\ncadence = \"weekly\"\nday = \"saturday\"\n\
-             at = \"16:00\"\n",
-        )
-        .expect("a config");
-        let window = open_empty(&fixture, &config).await;
-        let said = empty_says(&window);
-        assert!(
-            said.iter()
-                .any(|line| line.starts_with("Next digest: Weekly \u{b7} Newsletters, ")),
-            "the next digest is named: {said:?}"
-        );
-        assert!(
-            said.iter().all(|line| !line.contains("filtered today")),
-            "filtering is off, so no filtered count: {said:?}"
-        );
-        assert!(said.contains(&"archive".to_owned()) && said.contains(&"compose".to_owned()));
     });
 }

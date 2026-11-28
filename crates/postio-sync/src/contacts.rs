@@ -1,23 +1,7 @@
-//! Recording contacts as messages sync in.
-//!
-//! `ContactRepository::record_message` existed, was tested, and had no
-//! caller: nothing wrote the `contacts` table, so @ in the finder and the
-//! composer's recipient completion always listed nobody, however much mail
-//! the account held (`postio-66j`, one of the eight `postio-bl2` instances —
-//! a capability fully implemented one layer down and never called from the
-//! one above).
-//!
-//! [`record`] is what [`crate::initial::enumerate`] and
-//! `crate::resync::incremental` call for every message a sync pass
-//! genuinely inserts. "Genuinely inserts" matters: a `Coverage::Everything`
-//! re-enumeration re-fetches messages that are already known (its whole
-//! point is to refresh what an untrustworthy incremental pull might have
-//! missed), and recording a sighting for those again on every such pass
-//! would inflate `times_seen` without a new message ever having arrived.
-//! Both call sites already compute the set of UIDs known before the pass
-//! started, to decide what to fetch — this reuses that same set to decide
-//! what to record, so a message is counted exactly once, on the pass that
-//! first wrote it.
+//! Records contacts for each message a sync pass genuinely inserts, so @ and recipient completion
+//! have people to list.
+//! Called with the set of UIDs known before the pass, so a `Coverage::Everything` re-enumeration
+//! does not inflate `times_seen`.
 
 use postio_model::{Account, EmailAddress, Message};
 use postio_storage::Connection;
@@ -25,16 +9,9 @@ use postio_storage::repository::ContactRepository;
 
 use crate::drain::Result;
 
-/// Records a sighting of every correspondent on `message`, except addresses
-/// belonging to `account` itself.
-///
-/// A correspondent list where the account's own address is the top hit is
-/// noise: it turns up whenever the account is cc'd on its own thread, and as
-/// the sender of everything filed in Sent. The same addresses are what make a
-/// message the user's own, and so what marks its recipients as written to
-/// (specs/005-contacts R3) — which is why they are handed down rather than
-/// stripped here: stripping the sender first would leave nothing to tell a
-/// sent message from a received one.
+/// Records a sighting of every correspondent on `message` except the account's own addresses.
+/// Own addresses are handed down, not stripped first: they are what marks a message as the user's
+/// own (specs/005-contacts R3).
 pub(crate) async fn record(
     connection: &Connection,
     account: &Account,
@@ -43,13 +20,12 @@ pub(crate) async fn record(
     let own = own_addresses(account);
     let contacts = ContactRepository::new(connection);
     contacts.record_message(message, &own).await?;
-    // An answer to the user's mail from an address other than the one they
-    // wrote to is evidence the two are one person (specs/005-contacts R11).
+    // A reply from an address other than the one written to is evidence they are one person
+    // (specs/005-contacts R11).
     contacts.record_reply(message, &own).await?;
     Ok(())
 }
 
-/// Every address `account` sends as: its own and each identity's.
 fn own_addresses(account: &Account) -> Vec<EmailAddress> {
     std::iter::once(account.address.clone())
         .chain(
@@ -87,7 +63,6 @@ mod tests {
         message
     }
 
-    /// Every address the store now attributes to a person, normalised.
     async fn known(connection: &Connection) -> Vec<String> {
         ContactRepository::new(connection)
             .people(1_000)
@@ -169,9 +144,6 @@ mod tests {
 
     #[tokio::test]
     async fn mail_sent_from_an_identity_marks_its_recipients_written_to() {
-        // specs/005-contacts R3: "written to" is decided by the From header,
-        // whichever of the account's addresses sent it -- a message the user
-        // sent as an identity is as much theirs as one sent as the account.
         let database = test_support::memory().await;
         let connection = database.connect().await.expect("checkout");
         let (mut account, mailbox) = test_support::account_with_inbox(&connection).await;
@@ -201,7 +173,6 @@ mod tests {
         assert_eq!(bob.written, 1, "the user wrote to bob");
     }
 
-    /// The user writes to `to` alone, and `reply_from` answers it.
     async fn exchange(
         to: &str,
         reply_from: &str,

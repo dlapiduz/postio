@@ -1,7 +1,3 @@
-//! Contact groups: a named set of people, CRUD over `contact_groups` and
-//! `contact_group_members` (specs/005-contacts FR-040). Groups are shared
-//! across accounts, as people are.
-
 use chrono::{TimeZone, Utc};
 
 use postio_model::{ContactGroup, ContactId, EmailAddress};
@@ -113,7 +109,6 @@ async fn deleting_a_group_leaves_its_members_intact() {
     assert!(groups.get(group_id).await.expect("get").is_none());
     assert!(!groups.delete(group_id).await.expect("delete again"));
 
-    // Deleting a group is not deleting the people in it.
     assert!(
         ContactRepository::new(&connection)
             .get(ada)

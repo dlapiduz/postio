@@ -1,71 +1,15 @@
-//! Turning raw RFC 5322 bytes into the domain model.
-//!
-//! Everything downstream — reading, search indexing, threading, attachments —
-//! starts here, and the input is not under our control: real mail arrives with
-//! mislabelled charsets, unterminated encoded words, bare LF line endings and
-//! multiparts that were truncated in transit. So [`parse`] is **infallible**. It
-//! never returns an error and never panics; a message it cannot understand
-//! yields whatever could be recovered, and the fields it could not fill stay
-//! `None`. A mail client that refuses to show a broken message is worse than one
-//! that shows what arrived.
-//!
-//! That promise is enforced rather than merely stated. [`mail_parser`] can
-//! unwind on malformed input — #277 found an assertion in its multipart walk
-//! that a 144-byte message reaches — so [`try_parse`] runs it inside
-//! [`std::panic::catch_unwind`] and [`parse`] reports a contained failure as
-//! an empty message. These bytes arrive from a server during sync, chosen by
-//! whoever sent the mail, so the guarantee has to hold against hostile input
-//! and not only against untidy input.
-//!
-//! Use [`try_parse`] where the difference between "nothing parsed" and
-//! "nothing was there" is something a person will read: the reading pane says
-//! *this message has no body* for the second, and that is a lie about the
-//! first.
-//!
-//! **The containment is defence, not a known bug.** The assertion #277 found
-//! was in `mail-parser` 0.11 and is gone in 1.0 (the 144-byte reproducer now
-//! parses and recovers its parts), so no input in this repository makes
-//! `try_parse` report `Err` any more; `contain` is tested with a closure that
-//! panics instead. It stays because the parser is hostile-input code that a
-//! sender drives, and the next such bug should cost one message rather than
-//! the sync. The crash that *was* unconditional was ours — see
-//! [`part_paths`].
-//!
-//! # Why this lives in `postio-model`
-//!
-//! CLAUDE.md keeps this crate free of storage and protocol dependencies, and
-//! [`mail_parser`] is neither: it is a pure format parser with no I/O, no
-//! sockets and no state. Putting the mapping here is what lets `postio-account`
-//! (which must not depend on `postio-storage`) turn a `FETCH` response into a
-//! [`Message`] — see the architecture diagram in CLAUDE.md.
-//!
-//! # What it does not do
-//!
-//! Nothing here touches the blob store. [`ParsedPart::content`] hands back the
-//! decoded bytes and the caller decides where they go; the raw message itself is
-//! the caller's to keep, because it is the caller who knows whether this is a
-//! background backfill or a message being opened. [`parse_headers`] exists for
-//! exactly that split: the sync engine fetches headers newest-first and
-//! backfills bodies later, and parsing headers buffers no attachment payloads.
-//!
-//! ```
-//! use postio_model::{mime, AccountId, MailboxId};
-//! use chrono::Utc;
-//!
-//! let raw = b"From: Ada <ada@example.com>\r\nSubject: Hello\r\n\r\nBody text\r\n";
-//! let parsed = mime::parse(raw);
-//!
-//! assert_eq!(parsed.subject.as_deref(), Some("Hello"));
-//! let message = parsed.into_message(AccountId::new(1), MailboxId::new(1), Utc::now());
-//! assert_eq!(message.body.text.as_deref(), Some("Body text\r\n"));
-//! ```
+//! Turns raw RFC 5322 bytes into the domain model. `parse` is infallible: real mail has bad
+//! charsets, bare LF and truncated multiparts, and a client that
+//! refuses a broken message is worse than one that shows what arrived. `mail_parser` can unwind on
+//! hostile input (#277), so `try_parse` contains it with `catch_unwind`.
+//! Nothing here touches the blob store; `parse_headers` buffers no attachment payloads.
 
 use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use mail_parser::{
-    AddressList, Encoding, HeaderForm, Message as MpMessage, MessageParser, MessagePart, PartId,
-    PartKind, PartRole, TextList,
+    AddressList, Encoding, HeaderForm, Message as MpMessage, MessageParser, MessagePart, PartFlags,
+    PartId, PartKind, PartRole, TextList,
 };
 
 use crate::address::EmailAddress;
@@ -74,106 +18,56 @@ use crate::headers::Headers;
 use crate::ids::{AccountId, MailboxId, MessageId, RfcMessageId};
 use crate::message::{BodyState, Message, MessageBody};
 
-/// How many characters of body text a [`ParsedMessage::preview`] keeps.
-///
-/// Enough to fill the second line of a message-list row at the widths the
-/// design canvas uses, and short enough that storing one per message does not
-/// grow the database the list has to page through.
+/// Fills a message-list row's second line at the design canvas widths; short so storing one per
+/// message keeps the list's database small.
 pub const PREVIEW_CHARS: usize = 200;
 
-/// One MIME part that is not part of the body: an attachment or an inline part.
-///
-/// Carries the metadata the list and search need *and* the decoded bytes, which
-/// the caller is expected to move into the blob store and then drop.
+/// Carries the decoded bytes, which the caller moves into the blob store and drops.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedPart {
-    /// Metadata, ready to persist. Its `blob_id` is `None`: nothing has been
-    /// stored yet.
     pub attachment: Attachment,
-    /// The part's decoded bytes, with any transfer encoding already undone.
     pub content: Vec<u8>,
 }
 
-/// A message that has been parsed out of raw RFC 5322 bytes.
-///
-/// Everything here is owned, so it outlives the buffer it was parsed from.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ParsedMessage {
-    /// Every top-level header field, in wire order, unfolded, duplicates kept.
     pub headers: Headers,
-    /// `Message-ID`, when the sender sent a usable one.
     pub rfc_message_id: Option<RfcMessageId>,
-    /// `In-Reply-To`.
     pub in_reply_to: Option<RfcMessageId>,
-    /// `References`, oldest ancestor first, unusable entries dropped.
     pub references: Vec<RfcMessageId>,
-    /// The bracketed identifier out of `List-Id` (RFC 2919), when the
-    /// message carries one — the fact that lets the list be detected with
-    /// no configuration, rather than by matching an address by hand.
+    /// From `List-Id` (RFC 2919); detects lists with no configuration.
     pub list_id: Option<String>,
     // POSTIO-CONSENT: detection only, never sent — see `Message::read_receipt_requested`.
-    /// Whether `Disposition-Notification-To` or `Return-Receipt-To` is
-    /// present (#970) — Postio never sends one automatically, so this only
-    /// counts how often it was asked.
     pub read_receipt_requested: bool,
-    /// `From`, with any address group flattened.
     pub from: Vec<EmailAddress>,
-    /// `Sender`.
     pub sender: Option<EmailAddress>,
-    /// `Reply-To`.
     pub reply_to: Vec<EmailAddress>,
-    /// `To`.
     pub to: Vec<EmailAddress>,
-    /// `Cc`.
     pub cc: Vec<EmailAddress>,
-    /// `Bcc`.
     pub bcc: Vec<EmailAddress>,
-    /// `Subject`, with RFC 2047 encoded words decoded.
     pub subject: Option<String>,
-    /// The `Date` header, as claimed by the sender.
     pub date: Option<DateTime<Utc>>,
-    /// The body, decoded from its charset and transfer encoding.
     pub body: MessageBody,
-    /// Whether the `text/plain` part's own `Content-Type` declared
-    /// `format=flowed` (RFC 3676): its lines are soft-wrapped prose, not
-    /// breaks the sender typed on purpose. `false` for a message with no
-    /// text part at all, same as any other fact this parser cannot find.
-    ///
-    /// Recorded so a later reply or forward can tell `body.text` apart from
-    /// ordinary plain text and undo the wrapping instead of showing a
-    /// soft-wrapped sentence as three lines the sender never typed (#456).
-    /// `postio-model` cannot depend on `postio-body` (see that crate's
-    /// `outgoing` module docs), so the flag crosses the boundary as a
-    /// plain `bool` — the crate that does own `format=flowed` unwrapping
-    /// reads it from here.
+    /// Whether the `text/plain` part declared `format=flowed` (RFC 3676), so a later reply can undo
+    /// the wrapping (#456).
+    /// A plain `bool` because `postio-model` cannot depend on `postio-body`, which owns the
+    /// unwrapping.
     pub text_is_flowed: bool,
-    /// A flattened snippet of the body for the message list.
     pub preview: Option<String>,
-    /// Attachments and inline parts, with their bytes.
     pub parts: Vec<ParsedPart>,
-    /// Length of the raw message in bytes.
     pub size: u64,
-    /// [`BodyState::Full`] after [`parse`], [`BodyState::HeadersOnly`] after
-    /// [`parse_headers`].
     pub body_state: BodyState,
-    /// Whether any part declared an encoding the parser had to guess around.
-    ///
-    /// Not an error — the content is still there — but a signal worth logging
-    /// when a user reports mojibake.
+    /// Not an error, but worth logging when a user reports mojibake.
     pub encoding_problems: bool,
 }
 
 impl ParsedMessage {
-    /// The metadata of every attachment and inline part, without their bytes.
     pub fn attachments(&self) -> impl Iterator<Item = &Attachment> {
         self.parts.iter().map(|part| &part.attachment)
     }
 
-    /// Builds an unpersisted [`Message`] in `mailbox_id`.
-    ///
-    /// `received_at` is the server's delivery time (IMAP `INTERNALDATE`), which
-    /// is the list's sort key: the `Date` header is whatever the sender claimed
-    /// and is kept separately.
+    /// `received_at` is the server's delivery time (IMAP `INTERNALDATE`), the list's sort key; the
+    /// `Date` header is kept separately.
     pub fn into_message(
         self,
         account_id: AccountId,
@@ -207,9 +101,7 @@ impl ParsedMessage {
             })
             .collect();
         message.size = self.size;
-        // What the three promoted headers say is known from any header block
-        // (spec 007, research R8) -- but not from bytes that had none, which
-        // say nothing either way.
+        // Promoted headers are known from any header block, but not from bytes that had none.
         message.promoted = (!self.headers.is_empty())
             .then(|| crate::promoted::PromotedHeaders::from_headers(&self.headers));
         message.headers = self.headers;
@@ -219,16 +111,9 @@ impl ParsedMessage {
     }
 }
 
-/// Raw bytes the parser could not make a message of at all.
-///
-/// Not "a message with missing fields" — that is the ordinary case and
-/// [`ParsedMessage`] represents it with `None`s. This is the parser giving up
-/// entirely, which today means it panicked and [`try_parse`] caught it.
-///
-/// Carries nothing. What went wrong is a fact about a dependency's internals,
-/// not something a caller can act on differently, and the one thing a caller
-/// *does* need — "do not tell the user to wait for this" — is the whole
-/// message of the type.
+/// The parser gave up entirely (it panicked and `try_parse` caught it), unlike a message with
+/// missing fields, which `ParsedMessage` represents with `None`s. Carries nothing: callers only
+/// need to know not to tell the user to wait.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Unparseable;
 
@@ -240,91 +125,43 @@ impl std::fmt::Display for Unparseable {
 
 impl std::error::Error for Unparseable {}
 
-/// Which reading of a message [`parse`] produces — bumped whenever a change
-/// here makes it yield something different for bytes it already saw.
-///
-/// A body is fetched once and its raw bytes are not kept (ADR 0020), so a
-/// parser fix cannot reach a stored body by re-parsing it. The store stamps
-/// every body with the version that wrote it (`messages.body_parsed_with`),
-/// and the backfill fetches again the rows an older version got wrong: the
-/// ones that carried the decode caveat, an empty body from a failed decode
-/// among them. Bumping this is what makes that happen; not bumping it after
-/// a fix is how three empty messages stayed empty on a real account
-/// (2026-09-14).
-///
-/// 1: the lenient quoted-printable reading.
-///
-/// 2: `mail-parser` 1.0, which reads around a damaged transfer encoding
-/// (base64 outside its alphabet, `==` in quoted-printable, a final unpadded
-/// quantum) instead of handing the part back encoded. Rows that carried the
-/// decode caveat under 1 are the ones whose words change, so they are the ones
-/// fetched again.
-pub const PARSER_VERSION: u32 = 2;
+/// Bumped whenever a change makes `parse` yield something different for bytes it already saw. Raw
+/// bytes are not kept (ADR 0020), so the store stamps each body with its version
+/// (`messages.body_parsed_with`) and backfill fetches again the rows an older version got wrong. 1:
+/// lenient quoted-printable. 2: `mail-parser` 1.0, reading around damaged transfer encodings. 3: a
+/// delimiter line holds only whitespace after the boundary (Postio's mail-parser Fork, #899), and
+/// a guessed structure carries the caveat (#287).
+pub const PARSER_VERSION: u32 = 3;
 
-/// Parses raw RFC 5322 bytes, body and attachments included.
-///
-/// Infallible: see the [module docs](self). A message that cannot be parsed at
-/// all yields an empty [`ParsedMessage`] carrying only its `size`, which is
-/// the same shape as a message with nothing in it — use [`try_parse`] when the
-/// difference matters, as the reading pane's does.
+/// Infallible; a message that cannot be parsed yields an empty `ParsedMessage` with only its
+/// `size`, the same shape as a message with nothing in it. Use `try_parse` when the difference
+/// matters.
 pub fn parse(raw: &[u8]) -> ParsedMessage {
     try_parse(raw).unwrap_or_else(|_| empty(raw, false))
 }
 
-/// Parses only the header block, buffering no body and no attachment bytes.
-///
-/// This is what the initial sync uses: headers newest-first, bodies backfilled
-/// later. The result's [`ParsedMessage::body_state`] is
-/// [`BodyState::HeadersOnly`], so a [`Message`] built from it says so.
+/// Buffers no body or attachment bytes; `body_state` is `HeadersOnly`. Used by the initial sync
+/// (newest-first headers, bodies backfilled later).
 pub fn parse_headers(raw: &[u8]) -> ParsedMessage {
     try_parse_headers(raw).unwrap_or_else(|_| empty(raw, true))
 }
 
-/// As [`parse`], but says so when nothing could be parsed.
-///
-/// # Why this exists (#277)
-///
-/// The module has always documented [`parse`] as never panicking, and it did
-/// panic: `mail-parser` 0.11.8 aborted with "Invalid part ID, could not find
-/// multipart" on a malformed multipart (fixed upstream in 1.0), and the unwind
-/// came straight out of here. That is not a cosmetic contract violation — this runs on bytes the
-/// server handed us, during sync, before anyone has opened anything, so the
-/// input is chosen by whoever sent the mail and the crash lands on arrival.
-/// A message that kills the client on sight is re-delivered by every sync.
-///
-/// The containment is [`std::panic::catch_unwind`] rather than validation:
-/// the panic is inside a dependency's own state machine, and no shape of
-/// pre-check here could predict which inputs reach it. Validation would be
-/// guessing; catching is a fact.
-///
-/// Callers that only need a message use [`parse`]. Callers that must tell
-/// "nothing parsed" from "nothing was there" — the reading pane, which
-/// otherwise says "this message has no body" about a parser bug — use this.
+/// As `parse`, but says so when nothing could be parsed (#277): `mail-parser` 0.11.8 aborted on a
+/// malformed multipart, and this runs on bytes a sender chose, during sync, so a crash would be
+/// re-delivered by every sync. Caught with `catch_unwind`, not validated, since no pre-check can
+/// predict which inputs reach the dependency. The reading pane uses it to tell "nothing parsed"
+/// from "no body".
 pub fn try_parse(raw: &[u8]) -> Result<ParsedMessage, Unparseable> {
     contain(|| parse_inner(raw, false))
 }
 
-/// As [`parse_headers`], but says so when nothing could be parsed.
 pub fn try_parse_headers(raw: &[u8]) -> Result<ParsedMessage, Unparseable> {
     contain(|| parse_inner(raw, true))
 }
 
-/// Decodes RFC 2047 encoded words in a raw header value that never goes
-/// through [`parse`] — an IMAP `ENVELOPE`'s subject or a display name,
-/// which arrive as isolated field values well before any body reaches this
-/// module. [`parse`] already decodes these correctly wherever they sit
-/// inside a full header block; this gives the same decoding to a value
-/// with no header block around it.
-///
-/// Whatever `mail_parser` cannot make sense of — a truncated encoded word,
-/// bytes that are not valid in the charset they declare — comes back as
-/// whatever raw text survived, the same "show what arrived" promise
-/// [`parse`] keeps rather than an error. A completely unreadable result
-/// falls back to a lossy UTF-8 decode of the original bytes.
-///
-/// `mail_parser`'s decoder is hostile-input code (see [`try_parse`]'s own
-/// docs on `#277`), reached here on bytes an IMAP server chose, so this is
-/// wrapped in [`catch_unwind`](contain) too.
+/// Decodes RFC 2047 encoded words in an isolated header value (an IMAP `ENVELOPE` subject or
+/// display name). Unreadable content comes back as surviving raw text, falling back to a lossy
+/// UTF-8 decode. Contained like `try_parse`, as the decoder is hostile-input code (#277).
 pub fn decode_header_text(raw: &[u8]) -> String {
     if raw.is_empty() {
         return String::new();
@@ -342,22 +179,9 @@ pub fn decode_header_text(raw: &[u8]) -> String {
     }
 }
 
-/// A decoded header value as a reader may draw it: one line, every run of
-/// line breaks and control characters folded to a single space.
-///
-/// An encoded word encodes octets, and `=0D=0A` is two of them, so a
-/// decoded subject or display name can carry a line break that no
-/// unfolding removes. Drawn as it arrived, `Invoice attached=0D=0ABcc:
-/// mallory@…` put a forged `Bcc:` line under the subject in the reader
-/// (#1770), and an escape or a NUL is no better in a terminal. Every
-/// frontend sets these values in a label, so they are folded once, here,
-/// for all of them. A run is folded rather than each character so that
-/// `\r\n` and the space beside it read as the one gap they stand for.
-///
-/// What counts: C0 and C1 controls (`char::is_control`: CR, LF, TAB, ESC,
-/// NUL, NEL…) and Unicode's line and paragraph separators, which a label
-/// breaks on just the same. Whitespace that touches such a run joins it;
-/// ordinary spaces elsewhere are left alone.
+/// One line: runs of line breaks and control characters fold to a single space. An encoded word can
+/// decode to `=0D=0A`, which no unfolding removes, and a forged `Bcc:` line appeared under a
+/// subject (#1770). Whitespace touching a run joins it.
 pub fn one_line(text: &str) -> String {
     let breaks = |c: char| c.is_control() || c == '\u{2028}' || c == '\u{2029}';
     if !text.chars().any(breaks) {
@@ -367,13 +191,11 @@ pub fn one_line(text: &str) -> String {
     let mut in_run = false;
     for c in text.chars() {
         if breaks(c) {
-            // Whitespace written just before the run belongs to it.
             while out.ends_with(char::is_whitespace) {
                 out.pop();
             }
             in_run = true;
         } else if in_run && c.is_whitespace() {
-            // So does whitespace just after it.
         } else {
             if in_run && !out.is_empty() {
                 out.push(' ');
@@ -385,19 +207,10 @@ pub fn one_line(text: &str) -> String {
     out
 }
 
-/// One MIME parameter's value out of a list of undecoded `(name, value)`
-/// pairs — an IMAP `BODYSTRUCTURE`'s parameter or disposition list, which a
-/// server hands over exactly as the sender wrote them.
-///
-/// A non-ASCII filename rarely travels as a plain `filename=`: RFC 2231 puts
-/// it in `filename*=UTF-8''…`, split across `filename*0*`, `filename*1*`…
-/// when long, and many clients put an RFC 2047 encoded word inside a plain
-/// `name=` instead. Looking only for the literal `key` found none of those,
-/// and the part went nameless (#1686). `mail_parser` already decodes every
-/// one of these spellings inside a `Content-Type` header, so the pairs are
-/// put back into one and parsed — the same decoder [`parse`] uses, on the
-/// same hostile-input terms, contained the same way.
-///
+/// A non-ASCII filename rarely travels as plain `filename=`: RFC 2231 splits it (`filename*0*`) and
+/// many clients put an
+/// RFC 2047 word in `name=`. The pairs are put back into one `Content-Type` and parsed by
+/// `mail_parser`, contained like `parse` (#1686).
 /// `None` when no spelling of `key` is present.
 pub fn parameter_value(pairs: &[(String, String)], key: &str) -> Option<String> {
     let is_token = |name: &str| {
@@ -435,17 +248,10 @@ pub fn parameter_value(pairs: &[(String, String)], key: &str) -> Option<String> 
     parsed.ok().flatten().filter(|value| !value.is_empty())
 }
 
-/// The bracketed identifier out of a `List-Id` header value — RFC 2919's
-/// `"Display Name" <list-id>` — so a mailing list is recognized by its
-/// stable id and not by the display name a moderator can rename at will.
-/// Some senders omit the display name and send only the bracket, or omit
-/// the bracket too; either way whatever is left after trimming is the id.
-/// `None` once nothing is left to keep.
-///
-/// This is text-processing only — no `mail_parser` call, so no panic
-/// surface — and is shared with `postio-account`, whose `ENVELOPE` fetch reads
-/// `List-Id` as its own isolated header value the same way it reads the
-/// subject.
+/// The bracketed `List-Id` identifier (RFC 2919), so a list is recognized by its stable id, not a
+/// renameable display name;
+/// without brackets, what remains after trimming is the id. `None` once nothing is left. Text only,
+/// shared with `postio-account`'s `ENVELOPE` fetch.
 pub fn list_id_from_text(raw: &str) -> Option<String> {
     let raw = raw.trim();
     let id = first_angle_bracketed(raw).unwrap_or(raw);
@@ -453,12 +259,8 @@ pub fn list_id_from_text(raw: &str) -> Option<String> {
     (!id.is_empty()).then(|| id.to_owned())
 }
 
-/// The text inside the first `<...>` that is not part of a quoted string.
-///
-/// RFC 2919 §3 lets the phrase before the bracket be a quoted string, which
-/// may hold `<` and `>`; and a value that somehow carries two fields must
-/// yield the first identifier, not everything between the first `<` and the
-/// last `>`.
+/// RFC 2919 §3 allows a quoted phrase holding `<` and `>`; the first identifier wins, not
+/// everything up to the last `>`.
 fn first_angle_bracketed(raw: &str) -> Option<&str> {
     let mut quoted = false;
     let mut escaped = false;
@@ -483,18 +285,9 @@ fn first_angle_bracketed(raw: &str) -> Option<&str> {
     None
 }
 
-/// Run `parse` and turn an unwind into an [`Unparseable`].
-///
-/// `AssertUnwindSafe` is honest here rather than a shrug: the closure borrows
-/// only the input slice and returns an owned [`ParsedMessage`], so there is no
-/// state that a half-finished parse could leave visibly broken. `MessageParser`
-/// is constructed inside and dropped with the unwind.
-///
-/// The panic still reaches the process's panic hook on its way past, so a
-/// contained failure is visible on stderr rather than silent. That is
-/// deliberate — the message is the dependency's own text and names no mail —
-/// but it means a caller that expects this should log the outcome itself, at
-/// a level that says "handled".
+/// `AssertUnwindSafe` is sound: the closure borrows only the input and returns an owned value. The
+/// panic still reaches the hook, so a contained failure shows on stderr; a caller expecting it
+/// should log the outcome as "handled".
 fn contain<F>(parse: F) -> Result<ParsedMessage, Unparseable>
 where
     F: FnOnce() -> ParsedMessage,
@@ -502,12 +295,8 @@ where
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(parse)).map_err(|_| Unparseable)
 }
 
-/// What a caller gets when nothing could be parsed: the size, and nothing
-/// claimed that was not read.
-///
-/// `size` is still the truth — those bytes did arrive — and everything else
-/// stays at its default, which is the same "we do not know" the ordinary
-/// parser produces for a field it could not fill.
+/// `size` is still true (the bytes arrived); everything else is default, the same "we do not know"
+/// as an unfilled field.
 fn empty(raw: &[u8], headers_only: bool) -> ParsedMessage {
     ParsedMessage {
         size: raw.len() as u64,
@@ -531,35 +320,9 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
         ..ParsedMessage::default()
     };
 
-    // `mail_parser` can unwind, and this function promises it does not (#277).
-    //
-    // A malformed multipart reaches a `debug_assert!` in `mail-parser`'s part
-    // walk — "Invalid part ID, could not find multipart", `message.rs:485` in
-    // 0.11.8 — and before this guard the unwind went straight out of `parse`.
-    // These bytes come off the socket during sync, before anyone opens
-    // anything, so the input is chosen by whoever sent the mail. A parser
-    // documented infallible has to be infallible against that, and against
-    // whatever the next such bug in a dependency turns out to be.
-    //
-    // `AssertUnwindSafe` is honest here rather than a shrug: nothing crosses
-    // the boundary. The parser is constructed inside the closure, `raw` is a
-    // shared slice this function does not mutate, and on the unwind path
-    // every partial result is dropped and `message` is returned exactly as it
-    // was built above — a true `size`, an empty everything else, which is the
-    // "yields whatever could be recovered" the module docs promise.
-    //
-    // The containment used to be here, around the parser call alone. It moved
-    // out to `contain`, which wraps this whole function: catching here means
-    // `parse_inner` always returns a value, so `try_parse` can only ever say
-    // `Ok` and the reading pane loses the one signal that lets it say "this
-    // did not parse" rather than "this has no body". Wrapping the outside
-    // also covers the mapping below, not just the dependency.
-    //
-    // Still deliberately silent about the failure at this layer: logging it
-    // would mean a `tracing` dependency on the crate the whole workspace waits
-    // on to compile, which CLAUDE.md guards for the reason ADR 0004 Q1 gives.
-    // The callers that care log it — see `postio-sync`'s backfill and the
-    // reading pane.
+    // `mail_parser` can unwind, which this promises not to (#277). Containment is in `contain`,
+    // wrapping this whole function so `try_parse` can report `Err`. Silent here: logging would put
+    // `tracing` in the crate the workspace waits on (ADR 0004 Q1).
     let parser = MessageParser::default();
     let parsed = if headers_only {
         parser.parse_headers(raw)
@@ -567,9 +330,6 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
         parser.parse(raw)
     };
 
-    // `None` means not even a header block could be found — an empty buffer, or
-    // bytes that are not mail at all. Everything stays empty; the size is still
-    // true and the caller still gets a row it can show.
     let Some(source) = parsed else {
         return message;
     };
@@ -616,11 +376,9 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
     });
     let named_html_alternative = named_html_alternative(&source);
     message.body = MessageBody {
-        // RFC 2046 §5.1.1: a multipart whose boundary could not be used has
-        // no parts to have found a text body among, and is read as this
-        // entity's own content instead. `text_is_flowed` is correctly left
-        // `false` above -- the fallback part carries no `format` attribute
-        // of its own to answer that from.
+        // RFC 2046 §5.1.1: a multipart with an unusable boundary has no parts and is read as the
+        // entity's own content;
+        // `text_is_flowed` stays `false` since that part has no `format` attribute.
         text: text_part
             .and_then(|part| part.text())
             .map(std::borrow::Cow::into_owned)
@@ -633,9 +391,8 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
             .map(std::borrow::Cow::into_owned),
     };
 
-    // Falls back to the parser's HTML-to-text rendering when there is no
-    // text/plain part: an HTML-only message still needs a list snippet, even
-    // though a converted body is not good enough to *store* as the text body.
+    // The parser's HTML-to-text feeds the snippet only: an HTML-only message needs a preview, but
+    // converted text is not good enough to store.
     message.preview = message
         .body
         .text
@@ -649,13 +406,8 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
     message.parts = source
         .root()
         .parts()
-        // Everything offered as a file: the parser's attachments, and the
-        // inline media it also shows in the body (an image a `cid:` reference
-        // names), which the reader resolves through this list. A
-        // `multipart/*` part is a container, not a file: RFC 2046 §5.1.1's
-        // fallback above is what happens when one has to be read anyway, and
-        // it must not also show up here as a nameless, typeless attachment
-        // (#900).
+        // Parser attachments plus inline media (the reader resolves `cid:` through this list). A
+        // `multipart/*` part is a container, not a file (#900).
         .filter(|part| matches!(part.role(), PartRole::Attachment | PartRole::MediaBody))
         .filter(|part| !is_multipart_type(part))
         .filter(|part| {
@@ -665,23 +417,18 @@ fn parse_inner(raw: &[u8], headers_only: bool) -> ParsedMessage {
         })
         .map(|part| parsed_part(&part, &paths))
         .collect();
-    // Three ways a body can arrive as something other than what was sent, and
-    // the flag has to carry all of them — it is the only signal Postio has
-    // that the words on screen are not the words that were sent (#901).
-    message.encoding_problems =
-        transfer_encoding_problem(&source) || decoded_lossily(raw, &message.body);
+    // The only signal that the words on screen differ from the words sent, so it carries every way
+    // a body can arrive altered (#901, #287).
+    message.encoding_problems = transfer_encoding_problem(&source)
+        || decoded_lossily(raw, &message.body)
+        || structure_guessed(&source);
 
     message
 }
 
-/// A `text/html` alternative the parser filed as an attachment only because
-/// it carries a name, when the message has no other HTML body.
-///
-/// RFC 8621 `parseStructure` treats a named HTML alternative as an
-/// attachment and lets the plain text stand in as the HTML body; Postio
-/// shows the HTML the sender wrote instead (the maintainer's call), and does
-/// not offer it again as a file. A part the sender disposed as an
-/// `attachment` stays one.
+/// RFC 8621 `parseStructure` treats a named HTML alternative as an attachment and lets plain text
+/// stand as the HTML body; Postio shows the sender's HTML and does not offer it again as a file. A
+/// part disposed `attachment` stays one.
 fn named_html_alternative<'m>(source: &'m MpMessage<'m>) -> Option<MessagePart<'m>> {
     if source
         .html_body()
@@ -701,17 +448,20 @@ fn named_html_alternative<'m>(source: &'m MpMessage<'m>) -> Option<MessagePart<'
     })
 }
 
-/// Whether any part's transfer encoding is one this parser cannot undo, or
-/// was damaged: base64 outside its alphabet, a quoted-printable escape that
-/// encodes nothing.
-///
-/// RFC 2045 §6.4: an unknown encoding "must be treated as
-/// `application/octet-stream`" -- the parser does not know what the octets
-/// mean. Postio shows them verbatim as text, which beats an empty body and is
-/// still a guess, so it is flagged. `x-` tokens included deliberately: a
-/// private encoding is exactly the case §6.4 is written for.
-///
-/// Only the transfer layer: a charset mismatch is `decoded_lossily`'s.
+/// `mail-parser` 1.0 recovers from structures 0.11 could not walk and flags the part (#287).
+/// `FALLBACK_DELIMITER` and `LIMIT_REACHED` mean content was lost. `MISSING_DELIMITER` and
+/// `UNTERMINATED` lose nothing, so they are not flagged: a caveat on mail that reads in full
+/// teaches people to ignore it.
+fn structure_guessed(source: &MpMessage<'_>) -> bool {
+    source.parts().any(|part| {
+        part.flags()
+            .intersects(PartFlags::FALLBACK_DELIMITER | PartFlags::LIMIT_REACHED)
+    })
+}
+
+/// RFC 2045 §6.4: an unknown encoding (private `x-` tokens included) is `application/octet-stream`;
+/// Postio shows the octets as text, which beats an empty body but is a guess, so it is flagged.
+/// Transfer layer only: a charset mismatch is `decoded_lossily`'s.
 fn transfer_encoding_problem(source: &MpMessage<'_>) -> bool {
     source.parts().any(|part| {
         if part.is_multipart() || part.is_message() {
@@ -722,24 +472,10 @@ fn transfer_encoding_problem(source: &MpMessage<'_>) -> bool {
     })
 }
 
-/// Whether decoding the charset lost octets.
-///
-/// The mojibake a user actually reports, and the direction of it that cannot
-/// be undone: the octets are one charset, the header names another, and what
-/// survives the decode is U+FFFD. Once that is in the stored body it is in
-/// the search index and in every reply that quotes it — no later pass can
-/// recover the bytes, which is why this is worth saying at the time.
-///
-/// `is_encoding_problem` cannot answer it. That flag is about the *transfer*
-/// encoding — base64 outside its alphabet, a truncated part — and it is
-/// false in both directions of a charset mismatch, measured on #901.
-///
-/// The raw bytes are the control. A sender may legitimately send U+FFFD, and
-/// flagging every message containing one would make the caveat meaningless
-/// on the mail that carries it on purpose; if the replacement character is in
-/// the bytes that arrived, it is the sender's. A message carrying both a sent
-/// U+FFFD and a lossy part reads as clean, which is the safe direction to be
-/// wrong in — it never cries wolf.
+/// Whether charset decoding lost octets (U+FFFD), which is unrecoverable once in the stored body,
+/// index and quoted replies. `is_encoding_problem` is about the transfer encoding and is false
+/// either way on a charset mismatch (#901). The raw bytes are the control: a U+FFFD the sender sent
+/// is theirs, so a message with both reads clean, the safe direction to be wrong in.
 fn decoded_lossily(raw: &[u8], body: &crate::MessageBody) -> bool {
     const REPLACEMENT_UTF8: &[u8] = "\u{fffd}".as_bytes();
     let decoded_has_it = [body.text.as_deref(), body.html.as_deref()]
@@ -752,11 +488,7 @@ fn decoded_lossily(raw: &[u8], body: &crate::MessageBody) -> bool {
             .any(|window| window == REPLACEMENT_UTF8)
 }
 
-/// Every top-level header, unfolded, in wire order.
-///
-/// The raw text is kept rather than the parser's interpretation: this block is
-/// what the reader shows under "view source" and what a later Postio reparses
-/// when it learns to understand a header this one ignores.
+/// Raw text is kept, not the parser's interpretation: it backs "view source" and a later reparse.
 fn collect_headers(source: &MpMessage<'_>) -> Headers {
     source
         .headers()
@@ -770,11 +502,7 @@ fn collect_headers(source: &MpMessage<'_>) -> Headers {
         .collect()
 }
 
-/// Joins a folded header value back into one line.
-///
-/// RFC 5322 folding is a CRLF followed by whitespace, and the whitespace is
-/// part of the value; collapsing each fold to a single space is what every
-/// display of a `Received` chain or a long `Subject` wants.
+/// Each fold (CRLF plus whitespace) collapses to a single space (RFC 5322).
 fn unfold(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut in_fold = false;
@@ -794,39 +522,14 @@ fn unfold(value: &str) -> String {
     out.trim().to_owned()
 }
 
-/// The decoded bytes of one MIME entity — a header block, a blank line, and a
-/// body — with any transfer encoding undone.
-///
-/// # What this is for
-///
-/// ADR 0017's payload axis. `BODY[2.1]` returns a part's *encoded* bytes and
-/// none of its headers, so nothing in the response says whether they are
-/// base64. `BODYSTRUCTURE` reported the type and the encoding at header-sync
-/// time and they are kept on the row
-/// ([`Attachment::part_headers`](crate::Attachment::part_headers)), so
-/// prepending them rebuilds an entity this can decode — and an attachment's
-/// bytes are content-addressed on the *decoded* form, which is what makes two
-/// messages carrying the same file share one blob.
-///
-/// [`parse`] is the wrong tool for this: it answers about a *message* — its
-/// text bodies, its attachments, its headers — and a lone payload part is
-/// none of those. This answers the one question a payload fetch has.
-///
-/// `None` when the bytes are not an entity at all, or carry no body. Same
-/// contract as [`try_parse`]: hostile input yields an answer rather than a
-/// panic, and never a fragment the caller could mistake for a file.
+/// For the payload axis (ADR 0017): `BODY[2.1]` returns encoded bytes with no headers, so the
+/// `BODYSTRUCTURE` headers kept on the row are prepended to rebuild an entity. Attachments are
+/// content-addressed on the decoded form, so identical files share a blob. `None` when the bytes
+/// are not an entity or carry no body. Contained like `try_parse`.
 pub fn decode_entity(raw: &[u8]) -> Option<Vec<u8>> {
-    // Contained for the reason [`parse`] is contained (#277): these bytes came
-    // off a socket and were chosen by whoever sent the mail.
-    //
-    // `AssertUnwindSafe` is honest here for the same reason too — the parser
-    // is built inside the closure, `raw` is a shared slice nothing mutates,
-    // and on the unwind path every partial result is dropped.
+    // Contained for the reason `parse` is (#277): these bytes were chosen by whoever sent the mail.
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let parsed = MessageParser::default().parse(raw)?;
-        // Part zero is the entity's root. A payload is a leaf by
-        // construction: `BODYSTRUCTURE` named a section, and a section is one
-        // part.
         let root = parsed.root_part();
         if root.is_multipart() {
             return None;
@@ -838,12 +541,8 @@ pub fn decode_entity(raw: &[u8]) -> Option<Vec<u8>> {
     .flatten()
 }
 
-/// Normalizes one `Message-ID`, rejecting the spellings that are not one.
-///
-/// The corpus has a `References` header carrying an empty `<>`, an unterminated
-/// angle-addr and a bare token; none of those identify a message, and letting
-/// them through would give the threading pass edges that can only ever match
-/// other garbage.
+/// Rejects what is not a `Message-ID` (empty `<>`, unterminated angle-addr, bare token): threading
+/// edges built on them only match other garbage.
 fn message_id(raw: &str) -> Option<RfcMessageId> {
     let candidate = RfcMessageId::new(raw);
     let inner = candidate.without_brackets();
@@ -860,12 +559,8 @@ fn message_ids(value: Option<TextList<'_>>) -> Vec<RfcMessageId> {
         .unwrap_or_default()
 }
 
-/// Flattens an address header into the model's list of addresses.
-///
-/// Groups (`Team: a@example.com, b@example.com;`) are flattened to their
-/// members: Postio shows and replies to people, and the group name is still in
-/// the raw header block for anyone who wants it. An entry with a display name
-/// but no addr-spec is dropped — there is nothing there to send to.
+/// Groups are flattened to their members (the group name stays in the raw headers); an entry with a
+/// display name but no addr-spec is dropped.
 fn addresses(value: Option<AddressList<'_>>) -> Vec<EmailAddress> {
     let Some(value) = value else {
         return Vec::new();
@@ -887,25 +582,10 @@ fn addresses(value: Option<AddressList<'_>>) -> Vec<EmailAddress> {
         .collect()
 }
 
-/// Drops anything that reads as an HTML tag, leaving everything else.
-///
-/// The preview is built from the sender's `text/plain` part, and some senders
-/// put markup there -- a real list row read
-///
-/// ```text
-/// Eventbrite <hr style="height: 1;border: none;border-top: 1px ...
-/// ```
-///
-/// **Not a general sanitizer, and not allowed to be one.** `postio-model` may
-/// not depend on `ammonia` or `html5ever` (`check-crate-boundaries.py`,
-/// ADR 0004): the whole workspace waits on this crate to compile. Nothing
-/// here is a security control either -- the preview is drawn as a GTK label,
-/// never as markup. It is a legibility fix.
-///
-/// A tag is `<`, an optional `/`, an ASCII letter, then name characters, then
-/// whitespace or `/` or `>`. That deliberately spares `<https://example.com>`
-/// and `<ada@example.com>`, which are ordinary plain text and appear in
-/// previews constantly: after `https` comes a colon, which ends no tag name.
+/// Drops anything that reads as an HTML tag; some senders put markup in `text/plain`. Not a
+/// sanitizer: `postio-model` may not depend on `ammonia` or `html5ever` (ADR 0004), and the preview
+/// is drawn as a label. A tag is `<`, optional `/`, an ASCII letter, name characters, then
+/// whitespace, `/` or `>`, which spares `<https://example.com>` and `<ada@example.com>`.
 fn without_tags(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.contains('<') {
         return std::borrow::Cow::Borrowed(text);
@@ -928,8 +608,6 @@ fn without_tags(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
-/// How many bytes the tag starting at the front of `rest` occupies, if it is
-/// one.
 fn tag_ends_at(rest: &str) -> Option<usize> {
     let bytes = rest.as_bytes();
     let mut at = 1;
@@ -954,24 +632,9 @@ fn tag_ends_at(rest: &str) -> Option<usize> {
     }
 }
 
-/// Unwraps markdown links, so a snippet is words rather than syntax.
-///
-/// A great many bulk senders write their `text/plain` part by running the
-/// HTML through a converter, and markdown is what those converters emit. The
-/// list showed the result verbatim:
-///
-/// ```text
-/// [ ](https://app.example.test/parent/home) 9/16/26 - 9/17/26 Overdue...
-/// ```
-///
-/// A label and a URL where four words of the message should be. `[label](url)`
-/// becomes `label`, and `[ ](url)` -- the wrapped logo at the top of every one
-/// of these -- becomes nothing, which is what it was worth.
-///
-/// Only the link form, and only in the snippet. A preview is a handful of
-/// words to recognise a message by; the body has its own rendering and its own
-/// reasons. Anything that is not a well-formed link is left exactly as typed,
-/// so prose containing a bracket survives it.
+/// Unwraps markdown links, so a snippet is words rather than syntax: bulk senders run HTML through
+/// a converter. `[label](url)` becomes `label` and `[ ](url)` becomes nothing. Only the link form,
+/// only in the snippet; anything not a well-formed link is left as typed.
 fn without_markdown_links(text: &str) -> std::borrow::Cow<'_, str> {
     if !text.contains("](") {
         return std::borrow::Cow::Borrowed(text);
@@ -997,8 +660,6 @@ fn without_markdown_links(text: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(out)
 }
 
-/// Flattens body text into a single-line snippet of at most [`PREVIEW_CHARS`].
-/// A message's own line (spec 013) is cut the same way.
 pub fn preview(text: &str) -> Option<String> {
     let text = without_tags(text);
     let text = without_markdown_links(text.as_ref());
@@ -1020,7 +681,6 @@ pub fn preview(text: &str) -> Option<String> {
         return None;
     }
     if truncated {
-        // Trim back far enough that the ellipsis still fits the budget.
         while out.chars().count() + 1 > PREVIEW_CHARS {
             out.pop();
         }
@@ -1029,28 +689,16 @@ pub fn preview(text: &str) -> Option<String> {
     Some(out)
 }
 
-/// Whether `part`'s own `Content-Type` is `multipart/*`.
 fn is_multipart_type(part: &MessagePart<'_>) -> bool {
     part.content_type()
         .is_some_and(|content_type| content_type.ctype().eq_ignore_ascii_case("multipart"))
 }
 
-/// RFC 2046 §5.1.1's fallback: a multipart entity whose boundary parameter is
-/// missing, empty, or unrecognisable "must be treated as text/plain".
-///
-/// `mail_parser` cannot split such an entity into children — there is no
-/// boundary left to split on — so it leaves the whole thing as one part typed
-/// `multipart/*`, holding the entity's own content as [`PartKind::Text`] or
-/// [`PartKind::Binary`] rather than [`PartKind::Multipart`]'s list of
-/// children. That shape can only be the message's own root: an ordinary
-/// multipart's root part is always `Multipart`, holding its children —
-/// so the root part is the one part this can ever be true of.
-///
-/// No charset decoding to do here beyond what `mail_parser` already gives:
-/// RFC 2046 defines no `charset` parameter for a multipart type — it belongs
-/// to `text/*` — so a [`PartKind::Binary`] root decodes as UTF-8 with
-/// replacement, the same default `mail_parser` itself falls back to for a
-/// `text/plain` part with none declared.
+/// RFC 2046 §5.1.1: a multipart with a missing, empty or unrecognisable boundary "must be treated
+/// as text/plain".
+/// `mail_parser` leaves it as one `multipart/*` part holding the entity's own content, which can
+/// only be the root.
+/// RFC 2046 defines no charset for multipart, so a `Binary` root decodes as UTF-8 with replacement.
 fn multipart_boundary_fallback(source: &MpMessage<'_>) -> Option<String> {
     let root = source.root_part();
     if !is_multipart_type(&root) {
@@ -1065,38 +713,13 @@ fn multipart_boundary_fallback(source: &MpMessage<'_>) -> Option<String> {
     }
 }
 
-/// Maps every leaf part to its MIME part path (`2.1`), the way IMAP numbers
-/// body sections.
-///
-/// This is what a lazy fetch of one attachment asks the server for, so it has
-/// to be the server's numbering and not the parser's flat part index: children
-/// of a multipart are numbered from 1, and a nested multipart extends the path
-/// with a dot.
-/// # Why this walks with an explicit stack (#277)
-///
-/// It recursed, once per level of nesting, over a tree built entirely from the
-/// message. Nesting is free for a sender — `multipart/mixed` inside
-/// `multipart/mixed`, as deep as they care to type — so a crafted message
-/// overflowed the stack here.
-///
-/// That was the serious half of #277, and the half with no mitigations. The
-/// `mail_parser` unwind this module contains is a `debug_assert!` and so is
-/// absent from a release build; this was unconditional. And a stack overflow
-/// is a `SIGSEGV` rather than an unwind, so the [`catch_unwind`](try_parse)
-/// that makes [`parse`] infallible cannot touch it, and no caller can.
-///
-/// An explicit worklist rather than a depth limit, because a limit is a number
-/// somebody has to be right about — too low and a legitimately baroque
-/// forwarded thread loses its attachments, too high and the crash is still
-/// reachable. Iteration has no such number. The heap it uses is bounded by a
-/// message that is already in memory.
-///
-/// Found by the `parse_message` fuzz target from #147, which could only reach
-/// it once the unwind stopped firing first on the same inputs.
+/// Maps every leaf part to its IMAP body-section path (`2.1`), which a lazy fetch of one attachment
+/// asks the server for: children number from 1 and nesting extends the path with a dot. Walks an
+/// explicit stack: recursion overflowed on crafted deep nesting, a `SIGSEGV` that `catch_unwind`
+/// cannot catch, and a depth limit would be a number someone must get right (#277).
 fn part_paths(source: &MpMessage<'_>) -> HashMap<PartId, String> {
     let mut paths = HashMap::new();
-    // (part, the path of that part). The root has no path of its own: its
-    // children are numbered from 1, which is what IMAP calls them.
+    // The root has no path of its own: its children are numbered from 1, as IMAP does.
     let mut pending: Vec<(MessagePart<'_>, Option<String>)> = vec![(source.root_part(), None)];
 
     while let Some((part, prefix)) = pending.pop() {
@@ -1125,10 +748,8 @@ fn parsed_part(part: &MessagePart<'_>, paths: &HashMap<PartId, String>) -> Parse
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .map(ToOwned::to_owned);
-    // Stored bare, so it compares directly against the `cid:` URL in an HTML
-    // body rather than after stripping brackets at every use. The IMAP header
-    // sync reaches the same normaliser, which is what #751 needed: two ingest
-    // paths, one answer.
+    // Stored bare so it compares directly against the `cid:` URL in an HTML body; the IMAP header
+    // sync reaches the same normaliser (#751).
     attachment.set_content_id(part.content_id());
     attachment.disposition = disposition(part);
     attachment.part_id = paths.get(&part.id()).cloned();
@@ -1156,12 +777,9 @@ fn mime_type(part: &MessagePart<'_>) -> String {
     }
 }
 
-/// How the sender said the part should be presented.
-///
-/// With no `Content-Disposition` at all, a part that carries a `Content-ID` is
-/// almost always an image the HTML refers to, so it is treated as inline;
-/// anything else is an attachment, which is the conservative choice because it
-/// stays visible in the attachment list either way.
+/// With no `Content-Disposition`, a part with a `Content-ID` is almost always an image the HTML
+/// refers to, so inline;
+/// anything else is an attachment, which stays visible in the list either way.
 fn disposition(part: &MessagePart<'_>) -> Disposition {
     match part.content_disposition() {
         Some(content_disposition) => {
@@ -1184,15 +802,12 @@ fn disposition(part: &MessagePart<'_>) -> Disposition {
 mod containment {
     use super::*;
 
-    /// A panic inside the parse is reported, not propagated: the seam that
-    /// keeps `parse` infallible when a future `mail-parser` unwinds.
     #[test]
     fn a_panic_inside_the_parse_is_reported_as_unparseable() {
         let outcome = contain(|| panic!("a dependency bug"));
         assert_eq!(outcome, Err(Unparseable));
     }
 
-    /// And success passes through whole -- the control for the test above.
     #[test]
     fn a_parse_that_succeeds_comes_back_whole() {
         let outcome = contain(|| ParsedMessage {
@@ -1207,9 +822,6 @@ mod containment {
 mod preview_is_not_markup {
     use super::*;
 
-    /// A tag in the sender's text part does not reach the list (#1436).
-    ///
-    /// Both of these are real rows, from a real inbox.
     #[test]
     fn a_tag_in_the_text_part_never_reaches_the_list() {
         let leaked = "<hr style=\"height: 1;border: none;border-top: 1px solid #ccc\">\
@@ -1225,11 +837,8 @@ mod preview_is_not_markup {
         );
     }
 
-    /// The control, and the reason this is not a blunt `<`..`>` strip.
-    ///
-    /// A bracketed URL or address is ordinary plain text and appears in
-    /// previews constantly. Stripping it would lose the only content some
-    /// rows have.
+    /// The control: a bracketed URL or address is ordinary plain text and may be a row's only
+    /// content.
     #[test]
     fn a_bracketed_url_or_address_is_not_a_tag() {
         let cloudflare = "You can also view this email as a webpage \
@@ -1248,32 +857,19 @@ mod preview_is_not_markup {
         );
     }
 
-    // The first cargo-mutants baseline (#510) left every mutation of
-    // `tag_ends_at`'s arithmetic and every `&&` in `message_id` alive: no
-    // test told the difference (#1470). These do. Each case is chosen so
-    // that exactly one of the surviving mutants gives a different answer.
-
     #[test]
     fn without_tags_drops_a_closing_tag_and_only_a_tag() {
-        // `bytes.get(at) == Some(&b'/')`: with `!=`, a closing tag's slash
-        // is not stepped over and `</b>` survives as text.
         assert_eq!(without_tags("a</b>c"), "ac");
-        // `at += 1` after the slash: `*=` leaves `at` at 1 and `-=` at 0, so
-        // the name check reads the slash or the `<` and refuses the tag.
         assert_eq!(without_tags("<i>x</i>y"), "xy");
-        // A `<` that starts no tag is text: a digit, a space, the end.
         assert_eq!(without_tags("3 < 4 and <3"), "3 < 4 and <3");
         assert_eq!(without_tags("a <"), "a <");
     }
 
     #[test]
     fn without_tags_ends_an_attributed_tag_at_its_own_close() {
-        // `at + close + 1`: with `*`, the span is wrong by a factor and
-        // either eats text after the tag or leaves part of the tag in.
         assert_eq!(without_tags("<p class=\"x\">hi</p>"), "hi");
         assert_eq!(without_tags("<br/>then"), "then");
         assert_eq!(without_tags("<a href=\"u\">t</a> u"), "t u");
-        // An attributed tag that never closes is text, not a swallowed rest.
         assert_eq!(without_tags("<p class=\"x\" oops"), "<p class=\"x\" oops");
     }
 }
@@ -1282,9 +878,6 @@ mod preview_is_not_markup {
 mod message_ids {
     use super::*;
 
-    /// Each of the three `&&` in `message_id`, loosened to `||`, lets exactly
-    /// one of these through (#1470). A `Message-ID` is what threading keys
-    /// on, so what is accepted as one is load-bearing well beyond parsing.
     #[test]
     fn a_message_id_needs_every_one_of_its_four_conditions() {
         assert!(message_id("<a@example.com>").is_some());
@@ -1292,8 +885,6 @@ mod message_ids {
         assert!(message_id("<no-at-sign>").is_none(), "no @");
         assert!(message_id("<a b@example.com>").is_none(), "whitespace");
         assert!(message_id("<a@<b>>").is_none(), "a bracket inside");
-        // And a bare token with an @ but no brackets is still one: the
-        // brackets are the wrapper, not the identity.
         assert!(message_id("a@example.com").is_some());
     }
 }
@@ -1302,12 +893,6 @@ mod message_ids {
 mod a_snippet_is_words_not_syntax {
     use super::without_markdown_links;
 
-    /// The shape measured against a real account.
-    ///
-    /// A school's daily summary, whose `text/plain` part is its HTML run
-    /// through a markdown converter. The list row showed the wrapped logo's
-    /// empty link and the URL behind it, where the first words of the message
-    /// belonged.
     #[test]
     fn a_converters_links_leave_only_their_labels() {
         assert_eq!(
@@ -1327,10 +912,6 @@ mod a_snippet_is_words_not_syntax {
         );
     }
 
-    /// And the snippet a person actually sees has neither syntax nor URL.
-    ///
-    /// The end of the chain: `preview` collapses whitespace after this runs,
-    /// so the empty label leaves nothing behind either.
     #[test]
     fn the_snippet_reads_as_the_message_starts() {
         let snippet = super::preview(
@@ -1342,11 +923,6 @@ mod a_snippet_is_words_not_syntax {
         assert!(!snippet.contains("]("), "and no syntax: {snippet}");
     }
 
-    /// Prose survives unchanged, brackets and all.
-    ///
-    /// The snippet is the only place this runs, so a false positive costs a
-    /// message the words it is recognised by. Nothing that is not a
-    /// well-formed link may be touched.
     #[test]
     fn prose_is_left_exactly_as_typed() {
         for prose in [
@@ -1361,8 +937,6 @@ mod a_snippet_is_words_not_syntax {
     }
 }
 
-/// `parameter_value` reads every spelling a server hands over of a
-/// `BODYSTRUCTURE` parameter (#1686).
 #[cfg(test)]
 mod parameter_value_tests {
     use super::parameter_value;

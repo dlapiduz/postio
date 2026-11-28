@@ -1,10 +1,3 @@
-//! A section a pane rewrites is set off from the one before it.
-//!
-//! Every structured pane writes its table by removing it and splicing a fresh
-//! one in at the end. The fresh table came out of `toml` with no blank line
-//! above it, so `[compose]`'s last key ran straight into `[sync]` -- in the
-//! file, in `$EDITOR`, and in the Config file pane of both apps.
-
 use std::collections::BTreeMap;
 
 use postio_config::{
@@ -12,8 +5,6 @@ use postio_config::{
     patch_sync, patch_ui,
 };
 
-/// Each header line after the first, with the line above it, where that
-/// line is not blank.
 fn crowded_headers(text: &str) -> Vec<String> {
     let lines: Vec<&str> = text.lines().collect();
     lines

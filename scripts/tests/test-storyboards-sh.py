@@ -30,10 +30,16 @@ from __future__ import annotations
 
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+
+import patience  # noqa: E402  -- enabled by the sys.path line above
 
 HERE = Path(__file__).resolve().parent.parent
 SCRIPT = HERE / "storyboards.sh"
@@ -59,8 +65,6 @@ case "$1" in
 esac
 """
 
-# Records its arguments; exits with $RUNNER_EXIT; writes a run.json per
-# storyboard so `page` has something to read.
 FAKE_RUNNER = """#!/usr/bin/env bash
 echo "runner $*" >> "$FAKE_LOG"
 echo "display ${POSTIO_TEST_DISPLAY:-}" >> "$FAKE_LOG"
@@ -80,9 +84,9 @@ def setup(tmp: Path) -> dict[str, str]:
     repo = tmp / "repo"
     (repo / "scripts").mkdir(parents=True)
     shutil.copy(SCRIPT, repo / "scripts" / "storyboards.sh")
-    # The script runs the headless wrapper; a pass-through stands in.
     wrap = repo / "scripts" / "test-headless.sh"
-    wrap.write_text('#!/usr/bin/env bash\nexec "$@"\n')
+    wrap.write_text('#!/usr/bin/env bash\necho "headless $1" >> "$FAKE_LOG"\n'
+                    '[ "$1" = --own ] && shift\nexec "$@"\n')
     wrap.chmod(0o755)
     catalogue = repo / "storyboards"
     for path in (
@@ -123,6 +127,7 @@ def setup(tmp: Path) -> dict[str, str]:
         FAKE_TOOL=str(tool),
     )
     env.pop("CARGO_TARGET_DIR", None)
+    env.pop("CI", None)
     return {"repo": str(repo), "log": str(log), **{"env": env}}  # type: ignore[dict-item]
 
 
@@ -137,6 +142,14 @@ def run(ctx: dict, *args: str, **extra_env: str) -> subprocess.CompletedProcess:
         capture_output=True,
         text=True,
     )
+
+
+def alive(pid: int) -> bool:
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):  # ProcessLookupError when it exits mid-read
+        return False
+    return state != "Z"
 
 
 def log_lines(ctx: dict) -> list[str]:
@@ -177,7 +190,7 @@ def main() -> int:
         expect("only", "--out" in call and "Design/review/feature-storyboards/runs" in call, call)
 
         print("case: a plain run never plays calibration storyboards or gap lists")
-        run(ctx, "run", "--jobs", "1")
+        run(ctx, "run", "--all", "--jobs", "1")
         call = next((l for l in log_lines(ctx) if l.startswith("runner run")), "")
         expect("calibration", "escape-leaves-search.toml" in call, call)
         expect("calibration", "calibration/" not in call and "gaps/" not in call, call)
@@ -190,11 +203,11 @@ def main() -> int:
 
         print("case: exit codes pass through as 0, 1, 2")
         for code in ("1", "2"):
-            result = run(ctx, "run", RUNNER_EXIT=code)
+            result = run(ctx, "run", "--all", RUNNER_EXIT=code)
             expect("exit", result.returncode == int(code), f"runner {code} -> {result.returncode}")
 
         print("case: --jobs splits the storyboards across runners on their own displays")
-        result = run(ctx, "run", "--jobs", "2", RUNNER_SLEEP="0.5")
+        result = run(ctx, "run", "--all", "--jobs", "2", RUNNER_SLEEP="0.5")
         lines = log_lines(ctx)
         calls = [l for l in lines if l.startswith("runner run")]
         expect("jobs", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
@@ -212,13 +225,58 @@ def main() -> int:
         expect("jobs", len(displays) == 2, f"a compositor each: {displays}")
         order = [l.split()[0] for l in lines if l.split()[0] in ("start", "end")]
         expect("jobs", order[:2] == ["start", "start"], f"the runners overlap: {order}")
-        result = run(ctx, "run", "--jobs", "2", RUNNER_EXIT="1")
+        result = run(ctx, "run", "--all", "--jobs", "2", RUNNER_EXIT="1")
         expect("jobs", result.returncode == 1, f"the worst shard's exit, got {result.returncode}")
+
+        expect("jobs", all(l == "headless --own" for l in lines if l.startswith("headless")),
+               f"each runner's compositor ends with it: {[l for l in lines if l.startswith('headless')]}")
+
+        for signame, code in (("SIGTERM", 143), ("SIGINT", 130)):
+            print(f"case: a storyboards.sh stopped by {signame} takes its runners with it")
+            Path(ctx["log"]).write_text("")
+            env = dict(ctx["env"], RUNNER_SLEEP="60")
+            child = subprocess.Popen(["bash", "scripts/storyboards.sh", "run", "--all", "--jobs", "2"],
+                                     cwd=ctx["repo"], env=env,
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            started: list[int] = []
+            end = time.monotonic() + 20 * patience.patience()
+            while time.monotonic() < end and len(started) < 2:
+                started = [int(l.split()[1]) for l in log_lines(ctx) if l.startswith("start ")]
+                time.sleep(0.05)
+            expect("stopped", len(started) == 2, f"two runners started: {started}")
+            child.send_signal(getattr(signal, signame))
+            try:
+                status = child.wait(timeout=10 * patience.patience())
+            except subprocess.TimeoutExpired:
+                child.kill()
+                status = None
+            expect("stopped", status == code, f"exit {status}, wanted {code}")
+            end = time.monotonic() + 10 * patience.patience()
+            while time.monotonic() < end and any(alive(pid) for pid in started):
+                time.sleep(0.05)
+            left = [pid for pid in started if alive(pid)]
+            expect("stopped", not left, f"runners outlived storyboards.sh: {left}")
+            for pid in left:
+                os.kill(pid, signal.SIGKILL)
 
         print("case: an --only that matches nothing says so and fails")
         result = run(ctx, "run", "--only", "nowhere/*")
         expect("nothing", result.returncode == 2, f"exit {result.returncode}")
         expect("nothing", "no storyboard" in result.stderr, result.stderr.strip())
+
+        print("case: a bare run on a workstation refuses before building, naming the narrower runs")
+        result = run(ctx, "run")
+        builds = [l for l in log_lines(ctx) if l.startswith("cargo build")]
+        expect("bare", result.returncode == 2 and not builds,
+               f"refused before building: exit {result.returncode}, builds {builds}")
+        expect("bare", all(flag in result.stderr for flag in ("--changed", "--only", "--all")),
+               result.stderr.strip())
+
+        print("case: on CI a bare run plays the whole catalogue")
+        result = run(ctx, "run", "--jobs", "1", CI="true")
+        call = next((l for l in log_lines(ctx) if l.startswith("runner run")), "")
+        expect("bare-ci", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
+        expect("bare-ci", "escape-leaves-search.toml" in call and "archive-walks-down.toml" in call, call)
 
         print("case: lint hands the catalogue to postio-storyboard")
         result = run(ctx, "lint")
@@ -294,8 +352,6 @@ def main() -> int:
         result = run(ctx, "base", STORYBOARDS_CACHE=str(cache))
         lines = log_lines(ctx)
         expect("base", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
-        # Not under the implementing tree: Cargo merges every ancestor's
-        # .cargo/config.toml, so a nested base repeats the rustflags (#1818).
         tree = repo.parent / ".storyboard-base" / repo.name
         expect("base-config", repo not in tree.parents,
                f"no ancestor of the base tree is the implementing tree: {tree}")
@@ -315,6 +371,27 @@ def main() -> int:
         again = log_lines(ctx)
         expect("base-cache", not any(l.startswith("runner run") for l in again),
                f"a second call with nothing changed plays nothing: {again}")
+
+        print("case: --changed plays only the storyboards the branch changed, untracked ones too")
+        fresh = repo / "storyboards" / "search" / "fresh-board.toml"
+        fresh.write_text('source = { kind = "flow", ref = "x" }\n')
+        (repo / "storyboards" / "calibration" / "archive-returns-to-top.toml").write_text(
+            'source = { kind = "flow", ref = "touched" }\n')
+        result = run(ctx, "run", "--changed", "--jobs", "1")
+        call = next((l for l in log_lines(ctx) if l.startswith("runner run")), "")
+        expect("changed", result.returncode == 0, f"exit {result.returncode}: {result.stderr.strip()}")
+        expect("changed", "list/archive-walks-down.toml" in call and "search/fresh-board.toml" in call, call)
+        expect("changed", "launch-keyboard-on-first-row" not in call and "escape-leaves-search" not in call
+               and "calibration/" not in call, f"nothing the branch left alone: {call}")
+        fresh.unlink()
+        subprocess.run(["git", "-C", str(repo), "checkout", "-q", "--", "storyboards/calibration"], check=True)
+
+        print("case: --changed on a branch that changed no storyboard says so and fails")
+        subprocess.run(["git", "-C", str(repo), "update-ref", "refs/remotes/origin/main", "HEAD"], check=True)
+        result = run(ctx, "run", "--changed")
+        builds = [l for l in log_lines(ctx) if l.startswith("cargo build")]
+        expect("changed-none", result.returncode == 2 and not builds, f"exit {result.returncode}, builds {builds}")
+        expect("changed-none", "changes no storyboard" in result.stderr, result.stderr.strip())
 
         print("case: a base with no runner is reported, not failed")
         (repo / "crates" / "postio-gtk" / "examples" / "storyboard.rs").unlink()

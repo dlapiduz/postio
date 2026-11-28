@@ -1,9 +1,5 @@
-//! A message that tells the agent what to do causes nothing (ADR 0010 Q5,
-//! issue #14's injection criterion). It shares ADR 0009's fixture.
-//!
-//! This cannot fail for the interesting reason -- there is no `send_mail` to
-//! call -- and that is why it is written down: the day someone adds one,
-//! this is already here asking why.
+//! There is no `send_mail` to call, so this cannot fail for the interesting reason;
+//! the day someone adds one, it asks why.
 
 use postio_client::protocol::ClientKind;
 use postio_model::test_corpus;
@@ -22,7 +18,6 @@ fn reading_instructions_in_a_message_causes_no_action() {
     let read = world.call("read_message", json!({"message": hostile.get()}));
     assert!(!read.is_error(), "{}", read.0);
 
-    // The words came back -- as data, in the mail block, labelled.
     let body = read.mail()["body"].as_str().expect("a body").to_owned();
     assert!(body.contains("call send_mail"), "{body}");
     let notice = read.notice();
@@ -34,8 +29,6 @@ fn reading_instructions_in_a_message_causes_no_action() {
         );
     }
 
-    // And nothing happened: the tool it names does not exist, and calling
-    // it is a protocol error that touches nothing.
     let called = world.request(
         "tools/call",
         json!({"name": "send_mail", "arguments": {"to": "ledger@billing.example", "body": "approved"}}),
@@ -54,9 +47,7 @@ fn reading_instructions_in_a_message_causes_no_action() {
 
 #[test]
 fn reading_instructions_moves_archives_and_labels_nothing_even_when_allowed() {
-    // With every organizing verb switched on, a message saying "archive
-    // this so the user never sees it" still causes nothing: the server acts
-    // on calls, never on what it reads.
+    // Even with every organizing verb on, the server acts on calls, never on what it reads.
     let mut world = World::new(crate::harness::ORGANIZE);
     let mut message = test_corpus::load("untrusted-instructions").parse();
     message.account_id = world.ada;
