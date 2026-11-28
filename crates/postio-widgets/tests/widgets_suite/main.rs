@@ -25,6 +25,7 @@ mod composer_inline_image;
 mod composer_markdown;
 mod composer_markdown_source;
 mod composer_native_basic;
+mod composer_native_patch;
 mod composer_native_render;
 mod composer_recipient_select;
 mod composer_recipients;
@@ -104,6 +105,10 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_patch::a_keystroke_is_a_patch_of_its_block_and_nothing_else_writes",
+        composer_native_patch::a_keystroke_is_a_patch_of_its_block_and_nothing_else_writes as fn(),
+    ),
     (
         "composer_native_render::each_block_and_mark_is_drawn_by_its_tag",
         composer_native_render::each_block_and_mark_is_drawn_by_its_tag as fn(),
