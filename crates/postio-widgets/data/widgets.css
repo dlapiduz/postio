@@ -1079,3 +1079,8 @@ button.postio-source-tab.postio-source-tab-on {
 .postio-source-title {
   font-weight: bold;
 }
+
+/* A colour, not dim-label: opacity compounds when a quiet row holds a mono line. */
+.postio-source-quiet {
+  color: var(--postio-ink-secondary);
+}

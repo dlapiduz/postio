@@ -427,7 +427,7 @@ fn section_widget(section: &Section, keymap: &Keymap, command: &Rc<dyn Fn(Comman
         if let Some(mono) = &line.mono {
             let code = plain(mono);
             code.add_css_class("monospace");
-            code.add_css_class("dim-label");
+            code.add_css_class("postio-source-quiet");
             row.append(&code);
         }
         if let Some((id, title)) = &line.action {
@@ -444,7 +444,7 @@ fn section_widget(section: &Section, keymap: &Keymap, command: &Rc<dyn Fn(Comman
             row.append(&action);
         }
         if section.quiet {
-            row.add_css_class("dim-label");
+            row.add_css_class("postio-source-quiet");
         }
         block.append(&row);
     }
