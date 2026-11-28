@@ -187,7 +187,8 @@ pub fn eml_name(subject: &str) -> String {
 }
 
 pub const FIXED_LINE: &str = "These checks are about the sending domain and the message's integrity. They don't tell you the person is who you think.";
-pub const NOT_CHECKED_HERE: &str = "DKIM, SPF and DMARC were not checked on this computer. Your provider checked them when the mail arrived.";
+pub const NOT_CHECKED_HERE: &str = "DKIM, SPF and DMARC were not checked on this computer.";
+const PROVIDER_CHECKED_THEM: &str = "Your provider checked them when the mail arrived.";
 
 pub fn view(mut input: SourceInput<'_>) -> SourceView {
     let raw = input.raw.take();
@@ -441,7 +442,7 @@ fn verification(
         if let Some(signature) = &input.signature {
             sections.push(signature_section(signature));
         }
-        sections.push(local(input));
+        sections.push(local(input, true));
         sections.push(limits);
         return VerificationView { sections };
     };
@@ -464,7 +465,10 @@ fn verification(
             ..Section::default()
         });
     }
-    sections.push(local(input));
+    sections.push(local(
+        input,
+        input.provider.is_some() && report.provider.is_some(),
+    ));
     sections.push(limits);
     VerificationView { sections }
 }
@@ -785,7 +789,7 @@ fn signature_section(signature: &SignatureInput) -> Section {
     }
 }
 
-fn local(input: &SourceInput<'_>) -> Section {
+fn local(input: &SourceInput<'_>, provider_checked: bool) -> Section {
     let name = match (authenticity::impersonation(input.from), input.from.first()) {
         (Some(claimed), Some(sender)) => format!(
             "The name says {claimed}, but it was sent from {}.",
@@ -803,7 +807,11 @@ fn local(input: &SourceInput<'_>) -> Section {
                     .as_ref()
                     .map(|_| Line::text("The signature was checked on this computer.")),
             )
-            .chain([Line::text(NOT_CHECKED_HERE)])
+            .chain([Line::text(if provider_checked {
+                format!("{NOT_CHECKED_HERE} {PROVIDER_CHECKED_THEM}")
+            } else {
+                NOT_CHECKED_HERE.to_owned()
+            })])
             .collect(),
         ..Section::default()
     }

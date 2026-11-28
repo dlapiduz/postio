@@ -166,6 +166,11 @@ fn no_trusted_provider_header_says_so_and_doubts_every_header() {
         Some("Postio can't tell which of these your provider wrote, so it believes none of them."),
         "with no trusted header, no header is known to predate the provider"
     );
+    assert_eq!(
+        texts(section(&view, LOCAL)).last().copied(),
+        Some("DKIM, SPF and DMARC were not checked on this computer."),
+        "with no result to trust, the tab does not say the provider checked them"
+    );
 }
 
 #[test]
