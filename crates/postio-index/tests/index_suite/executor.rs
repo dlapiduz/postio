@@ -62,6 +62,7 @@ async fn a_composed_operator_and_free_text_query_narrows_correctly() {
 
     let query = parse("report from:ada", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -119,6 +120,7 @@ async fn list_names_a_mailing_list_by_its_list_id_not_by_a_recipient_address() {
 
     let query = parse("list:harbour-dev", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -161,6 +163,7 @@ async fn found_by(
 ) -> Vec<postio_model::MessageId> {
     let query = parse(text, at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account),
         query: &query,
         scope: Scope::AllMail,
@@ -232,6 +235,7 @@ async fn negated_only_free_text_excludes_without_a_positive_match_expression() {
 
     let query = parse("-watches", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -267,6 +271,7 @@ async fn total_hits_counts_every_match_regardless_of_the_page_limit() {
 
     let query = parse("standup", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -294,6 +299,7 @@ async fn a_structured_only_query_orders_newest_first_and_carries_no_snippet() {
 
     let query = parse("from:ada", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -386,6 +392,7 @@ async fn search_never_crosses_accounts() {
 
     let query = parse("shared", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account_a.id),
         query: &query,
         scope: Scope::AllMail,
@@ -426,6 +433,7 @@ async fn a_matching_query_leaves_the_snippet_for_a_layer_that_can_read_bodies() 
 
     let query = parse("rebuild", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -474,6 +482,7 @@ async fn filename_and_has_attachment_operators_filter_correctly() {
 
     let query = parse("has:attach filename:timings", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -532,6 +541,7 @@ async fn a_scope_narrows_the_search_without_touching_the_query() {
     let query = parse("quarterly", at(12).date_naive());
     let counts = async |scope| {
         let request = SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope,
@@ -565,6 +575,7 @@ async fn the_scope_column_counts_what_switching_would_find() {
 
     let query = parse("quarterly", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::Inbox,
@@ -605,6 +616,7 @@ async fn refinements_are_measured_against_the_result_set_and_not_the_mailbox() {
 
     let query = parse("quarterly", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -645,6 +657,7 @@ async fn a_folder_the_matches_are_in_is_offered_as_a_token_that_parses_back() {
 
     let query = parse("quarterly", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -664,6 +677,7 @@ async fn a_folder_the_matches_are_in_is_offered_as_a_token_that_parses_back() {
     let refined = postio_search::facets::append(query.input(), &folder.token);
     let refined = parse(&refined, at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &refined,
         scope: Scope::AllMail,
@@ -698,6 +712,7 @@ async fn the_size_refinement_is_spelled_the_way_the_parser_reads_it() {
 
     let query = parse("quarterly", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -720,6 +735,7 @@ async fn the_size_refinement_is_spelled_the_way_the_parser_reads_it() {
         at(12).date_naive(),
     );
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &refined,
         scope: Scope::AllMail,
@@ -746,6 +762,7 @@ async fn a_query_that_matches_nothing_offers_nothing_rather_than_dead_ends() {
 
     let query = parse("nothingmatchesthis", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -782,6 +799,7 @@ async fn found(
 ) -> Vec<postio_model::MessageId> {
     let query = parse(text, at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account),
         query: &query,
         scope: Scope::AllMail,
@@ -1085,6 +1103,7 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
     let ranked = search(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope: Scope::AllMail,
@@ -1110,6 +1129,7 @@ async fn newest_order_answers_in_date_order_however_the_ranking_disagrees() {
     let newest = search(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope: Scope::AllMail,
@@ -1158,6 +1178,7 @@ async fn search_for(
 ) -> postio_search::SearchResults {
     let parsed = parse(query, at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: postio_model::AccountScope::Account(account.id),
         query: &parsed,
         scope: Scope::AllMail,
@@ -1261,6 +1282,7 @@ async fn the_caveat_is_about_the_scope_that_was_searched() {
 
     let parsed = parse("quarterly", at(12).date_naive());
     let inbox_only = SearchRequest {
+        mailboxes: None,
         account: postio_model::AccountScope::Account(account.id),
         query: &parsed,
         scope: Scope::Inbox,
@@ -1327,6 +1349,7 @@ async fn sender_affinity_from_contacts_reaches_the_ranking() {
 
     let query = parse("report", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -1680,6 +1703,7 @@ async fn all_mail_leaves_out_drafts_junk_and_trash_unless_in_names_one() {
     let hits = async |text: &str| {
         let query = parse(text, at(12).date_naive());
         let request = SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope: Scope::AllMail,
@@ -1703,6 +1727,7 @@ async fn all_mail_leaves_out_drafts_junk_and_trash_unless_in_names_one() {
 
     let query = parse("quarterly", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,
@@ -1758,6 +1783,7 @@ async fn whether_the_corpus_is_complete_is_read_off_the_folders_not_the_messages
     let (account, _) = test_support::account_with_inbox(&connection).await;
     let parsed = parse("quarterly", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: postio_model::AccountScope::Account(account.id),
         query: &parsed,
         scope: Scope::AllMail,
@@ -1839,6 +1865,7 @@ async fn a_message_moved_today_is_as_old_as_its_own_date() {
     let ranked = search(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope: Scope::AllMail,
@@ -1897,6 +1924,7 @@ async fn a_senders_mail_found_by_its_name_comes_newest_first() {
     let ranked = search(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope: Scope::AllMail,
@@ -1956,6 +1984,7 @@ async fn a_subject_that_says_part_of_the_query_beats_a_passing_mention() {
     let ranked = search(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope: Scope::AllMail,
@@ -2046,6 +2075,7 @@ async fn searched(
     search(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope: Scope::AllMail,
@@ -2573,6 +2603,7 @@ async fn gtk_search_path_is_pinned() {
     for expected in &PINNED_ANSWERS {
         let query = parse(expected.query, now.date_naive());
         let request = SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope: expected.scope,

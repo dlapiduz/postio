@@ -47,6 +47,7 @@ pub async fn facets(
     postio_index::executor::facets(
         &reader,
         &postio_index::SearchRequest {
+            mailboxes: None,
             account,
             query,
             scope,

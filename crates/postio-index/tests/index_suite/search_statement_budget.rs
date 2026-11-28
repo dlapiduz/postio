@@ -49,6 +49,7 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
     install(&connection);
     let run = async |query, limit| {
         let request = SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query,
             scope: Scope::AllMail,
@@ -88,6 +89,7 @@ async fn a_search_costs_the_same_queries_however_much_it_matches() {
 
     let with_one_more = counted_async(async || {
         let request = SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &broad_query,
             scope: Scope::AllMail,
@@ -182,6 +184,7 @@ async fn the_facets_walk_the_match_once_per_scope() {
     }
     let query = parse("quarterly", today().await);
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,

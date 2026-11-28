@@ -69,6 +69,7 @@ async fn hits(database: &Store, account: AccountId, query: &str) -> Vec<MessageI
     search(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account),
             query: &parsed,
             scope: Scope::AllMail,

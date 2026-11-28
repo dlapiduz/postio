@@ -73,6 +73,7 @@ async fn world() -> World {
 async fn run(connection: &Connection, query: &str) -> Vec<MessageId> {
     let parsed = parse(query, at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Unified,
         query: &parsed,
         scope: Scope::AllMail,
@@ -164,6 +165,7 @@ async fn a_hit_from_a_named_person_carries_the_users_name() {
     let hits = search(
         &world.connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Unified,
             query: &parsed,
             scope: Scope::AllMail,

@@ -1199,6 +1199,27 @@ impl Inner {
                 Resp::Attached(stored)
             }
             Req::Search(search) => Resp::Found(self.search(search).await),
+            Req::SearchPage {
+                account,
+                query,
+                mailboxes,
+                newest_first,
+                offset,
+                limit,
+            } => Resp::SearchPage(
+                self.search_page(account, &query, &mailboxes, newest_first, offset, limit)
+                    .await,
+            ),
+            Req::MailStats {
+                account,
+                query,
+                mailboxes,
+                group_by,
+                groups,
+            } => Resp::Stats(
+                self.mail_stats(account, &query, &mailboxes, group_by, groups)
+                    .await,
+            ),
             Req::SearchHits {
                 account,
                 query,
@@ -2232,6 +2253,67 @@ impl Inner {
                 refresh_token_lifetime_days: oauth.refresh_token_lifetime_days,
             });
         (jmap, oauth)
+    }
+
+    async fn search_page(
+        &self,
+        account: postio_model::AccountScope,
+        query: &str,
+        mailboxes: &[postio_model::MailboxId],
+        newest_first: bool,
+        offset: u32,
+        limit: u32,
+    ) -> Option<postio_search::results::SearchPage> {
+        let parsed = postio_search::parse(query, chrono::Local::now().date_naive());
+        let order = if newest_first {
+            postio_search::ResultOrder::Newest
+        } else {
+            postio_search::ResultOrder::Relevance
+        };
+        let connection = self
+            .wiring
+            .database
+            .read()
+            .await
+            .map_err(|error| tracing::warn!(%error, "could not open the store to search"))
+            .ok()?;
+        postio_session::search::page(
+            &connection,
+            account,
+            &parsed,
+            mailboxes,
+            order,
+            offset,
+            limit,
+        )
+        .await
+    }
+
+    async fn mail_stats(
+        &self,
+        account: postio_model::AccountScope,
+        query: &str,
+        mailboxes: &[postio_model::MailboxId],
+        group_by: postio_search::results::GroupBy,
+        groups: u32,
+    ) -> Option<postio_search::results::MailStats> {
+        let connection = self
+            .wiring
+            .database
+            .read()
+            .await
+            .map_err(|error| tracing::warn!(%error, "could not open the store to count"))
+            .ok()?;
+        postio_session::search::stats(
+            &connection,
+            account,
+            query,
+            mailboxes,
+            group_by,
+            groups as usize,
+            chrono::Local::now().date_naive(),
+        )
+        .await
     }
 
     /// Scope is every folder but drafts, junk and trash unless the query names one; no excerpts, a

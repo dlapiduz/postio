@@ -91,6 +91,7 @@ async fn run(
     search(
         connection,
         &SearchRequest {
+            mailboxes: None,
             // The caller's own scope, passed through; it was once hardcoded to `Account` (#961).
             account,
             query,
@@ -118,6 +119,7 @@ pub async fn facets(
     postio_index::executor::facets(
         connection,
         &SearchRequest {
+            mailboxes: None,
             account,
             query,
             scope,
@@ -914,4 +916,163 @@ pub async fn relaxations(
         .collect();
     counted.sort_by_key(|(_, count)| std::cmp::Reverse(count.conversations));
     Some(counted)
+}
+
+pub async fn page(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    mailboxes: &[MailboxId],
+    order: ResultOrder,
+    offset: u32,
+    limit: u32,
+) -> Option<postio_search::results::SearchPage> {
+    let cap = postio_search::results::TOTAL_HITS_CAP as u32;
+    let offset = if order == ResultOrder::Newest {
+        offset.min(cap)
+    } else {
+        0
+    };
+    let results = limited(
+        connection,
+        account,
+        query,
+        mailboxes,
+        order,
+        (offset + limit).min(cap),
+    )
+    .await?;
+    let ids: Vec<MessageId> = results
+        .hits
+        .iter()
+        .skip(offset as usize)
+        .map(|hit| hit.message_id)
+        .collect();
+    let reached = offset + ids.len() as u32;
+    Some(postio_search::results::SearchPage {
+        next: (order == ResultOrder::Newest
+            && (reached as u64) < results.total_hits
+            && reached < cap)
+            .then_some(reached),
+        ids,
+        total: results.total_hits,
+        total_capped: results.total_hits_capped,
+    })
+}
+
+pub async fn stats(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &str,
+    mailboxes: &[MailboxId],
+    group_by: postio_search::results::GroupBy,
+    groups: usize,
+    today: chrono::NaiveDate,
+) -> Option<postio_search::results::MailStats> {
+    use postio_search::results::{GroupBy, MailStats, STATS_CAP, StatsGroup};
+    use std::collections::{HashMap, HashSet};
+
+    let base = limited(
+        connection,
+        account,
+        &postio_search::parse(query, today),
+        mailboxes,
+        ResultOrder::Newest,
+        STATS_CAP,
+    )
+    .await?;
+    let mut sets: Vec<HashSet<MessageId>> = Vec::with_capacity(4);
+    for state in ["is:unread", "is:flagged", "is:automated", "is:replied"] {
+        let narrowed = postio_search::parse(&format!("{query} {state}"), today);
+        let found = limited(
+            connection,
+            account,
+            &narrowed,
+            mailboxes,
+            ResultOrder::Newest,
+            STATS_CAP,
+        )
+        .await?;
+        sets.push(found.hits.iter().map(|hit| hit.message_id).collect());
+    }
+    let own: HashSet<String> = postio_storage::repository::IdentityRepository::new(connection)
+        .own_addresses()
+        .await
+        .map_err(|error| tracing::warn!(%error, "could not read the person's own addresses"))
+        .ok()?
+        .into_iter()
+        .map(|address| address.address.to_ascii_lowercase())
+        .collect();
+
+    let mut by_key: HashMap<String, StatsGroup> = HashMap::new();
+    for hit in &base.hits {
+        let address = hit
+            .from
+            .as_ref()
+            .map(|from| from.address.to_ascii_lowercase())
+            .unwrap_or_default();
+        let key = match group_by {
+            GroupBy::Sender if own.contains(&address) => continue,
+            GroupBy::Domain if own.contains(&address) => continue,
+            GroupBy::Sender => address,
+            GroupBy::Domain => address
+                .rsplit_once('@')
+                .map(|(_, domain)| domain.to_owned())
+                .unwrap_or(address),
+            GroupBy::Month => hit.received_at.format("%Y-%m").to_string(),
+        };
+        let group = by_key.entry(key.clone()).or_insert_with(|| StatsGroup {
+            key,
+            count: 0,
+            first: hit.received_at,
+            last: hit.received_at,
+            unread: 0,
+            flagged: 0,
+            automated: 0,
+            replied: 0,
+        });
+        group.count += 1;
+        group.first = group.first.min(hit.received_at);
+        group.last = group.last.max(hit.received_at);
+        let has = |set: usize| u32::from(sets[set].contains(&hit.message_id));
+        group.unread += has(0);
+        group.flagged += has(1);
+        group.automated += has(2);
+        group.replied += has(3);
+    }
+    let mut groups_found: Vec<StatsGroup> = by_key.into_values().collect();
+    groups_found.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.key.cmp(&b.key)));
+    groups_found.truncate(groups);
+    let counted = base.hits.len() as u32;
+    Some(MailStats {
+        groups: groups_found,
+        total: base.total_hits,
+        counted,
+        capped: base.total_hits_capped || u64::from(counted) < base.total_hits,
+    })
+}
+
+async fn limited(
+    connection: &Checkout,
+    account: AccountScope,
+    query: &ParsedQuery,
+    mailboxes: &[MailboxId],
+    order: ResultOrder,
+    limit: u32,
+) -> Option<SearchResults> {
+    search(
+        connection,
+        &SearchRequest {
+            account,
+            query,
+            scope: Scope::AllMail,
+            mailboxes: Some(mailboxes),
+            limit,
+            order,
+        },
+        postio_ui::clock::now().with_timezone(&Utc),
+    )
+    .await
+    .map_err(|error| tracing::warn!(%error, "the search did not run"))
+    .ok()
 }

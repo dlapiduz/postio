@@ -16,6 +16,7 @@ mod event_search;
 mod exact_copies;
 mod executor;
 mod facets_one_pass;
+mod folder_limit;
 mod group_filter;
 mod header_index;
 mod header_index_size;

@@ -20,6 +20,7 @@ async fn hits(connection: &Connection, account: postio_model::AccountId, query: 
     postio_index::search(
         connection,
         &postio_index::SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account),
             query: &parsed,
             scope: Scope::AllMail,

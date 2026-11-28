@@ -168,6 +168,7 @@ async fn one_search(query: &str) -> Duration {
     let connection = corpus.database.connect().await.expect("checkout");
     let parsed = parse(query, now().date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(corpus.account_id),
         query: &parsed,
         scope: Scope::AllMail,

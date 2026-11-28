@@ -47,6 +47,7 @@ pub struct ConversationRequest<'a> {
 impl ConversationRequest<'_> {
     fn as_search(&self) -> SearchRequest<'_> {
         SearchRequest {
+            mailboxes: None,
             account: self.account,
             query: self.query,
             scope: Scope::AllMail,

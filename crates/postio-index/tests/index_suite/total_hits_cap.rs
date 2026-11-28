@@ -35,6 +35,7 @@ async fn total_hits_stops_counting_at_the_cap() {
 
     let query = parse("bulk", at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Account(account.id),
         query: &query,
         scope: Scope::AllMail,

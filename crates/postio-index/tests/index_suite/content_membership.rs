@@ -42,6 +42,7 @@ async fn one_content_hit_uses_a_qualifying_mailbox_occurrence() {
             let results = search(
                 &connection,
                 &SearchRequest {
+                    mailboxes: None,
                     account: AccountScope::Account(account.id),
                     query: &query,
                     scope,
@@ -68,6 +69,7 @@ async fn one_content_hit_uses_a_qualifying_mailbox_occurrence() {
     let counts = facets(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope: Scope::AllMail,
@@ -103,6 +105,7 @@ async fn one_content_hit_uses_a_qualifying_mailbox_occurrence() {
     let results = search(
         &connection,
         &SearchRequest {
+            mailboxes: None,
             account: AccountScope::Account(account.id),
             query: &query,
             scope: Scope::AllMail,
@@ -175,6 +178,7 @@ async fn body_and_header_indexes_are_owned_once_and_repair_invalidates_them() {
         let results = search(
             &connection,
             &SearchRequest {
+                mailboxes: None,
                 account: AccountScope::Account(account.id),
                 query: &query,
                 scope: Scope::AllMail,

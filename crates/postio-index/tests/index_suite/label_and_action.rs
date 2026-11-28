@@ -155,6 +155,7 @@ async fn world() -> World {
 async fn run(connection: &Connection, query: &str) -> BTreeSet<MessageId> {
     let parsed = parse(query, at(12).date_naive());
     let request = SearchRequest {
+        mailboxes: None,
         account: AccountScope::Unified,
         query: &parsed,
         scope: Scope::AllMail,

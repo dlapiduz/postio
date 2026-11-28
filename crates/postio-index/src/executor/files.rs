@@ -23,6 +23,7 @@ pub struct FileMatch {
 
 fn folded_match(query: &ParsedQuery) -> Option<turso::Value> {
     Plan::build(&SearchRequest {
+        mailboxes: None,
         account: AccountScope::Unified,
         query,
         scope: Scope::AllMail,

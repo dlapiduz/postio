@@ -273,3 +273,40 @@ mod tests {
         assert_eq!(ResultOrder::Newest.label(), "Newest");
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchPage {
+    pub ids: Vec<MessageId>,
+    pub total: u64,
+    pub total_capped: bool,
+    pub next: Option<u32>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GroupBy {
+    Sender,
+    Domain,
+    Month,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatsGroup {
+    pub key: String,
+    pub count: u32,
+    pub first: DateTime<Utc>,
+    pub last: DateTime<Utc>,
+    pub unread: u32,
+    pub flagged: u32,
+    pub automated: u32,
+    pub replied: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailStats {
+    pub groups: Vec<StatsGroup>,
+    pub total: u64,
+    pub counted: u32,
+    pub capped: bool,
+}
+
+pub const STATS_CAP: u32 = 5_000;
