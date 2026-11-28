@@ -25,6 +25,7 @@ mod composer_inline_image;
 mod composer_markdown;
 mod composer_markdown_source;
 mod composer_native_basic;
+mod composer_native_input;
 mod composer_native_patch;
 mod composer_native_render;
 mod composer_recipient_select;
@@ -105,6 +106,30 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_input::typed_text_goes_through_the_engine_not_the_buffer",
+        composer_native_input::typed_text_goes_through_the_engine_not_the_buffer as fn(),
+    ),
+    (
+        "composer_native_input::enter_and_shift_enter_split_and_break",
+        composer_native_input::enter_and_shift_enter_split_and_break as fn(),
+    ),
+    (
+        "composer_native_input::backspace_and_delete_take_characters_words_and_join_blocks",
+        composer_native_input::backspace_and_delete_take_characters_words_and_join_blocks as fn(),
+    ),
+    (
+        "composer_native_input::tab_nests_a_list_item_and_elsewhere_moves_on",
+        composer_native_input::tab_nests_a_list_item_and_elsewhere_moves_on as fn(),
+    ),
+    (
+        "composer_native_input::a_typed_sequence_converts_in_place",
+        composer_native_input::a_typed_sequence_converts_in_place as fn(),
+    ),
+    (
+        "composer_native_input::a_composer_command_reaches_its_intent",
+        composer_native_input::a_composer_command_reaches_its_intent as fn(),
+    ),
     (
         "composer_native_patch::a_keystroke_is_a_patch_of_its_block_and_nothing_else_writes",
         composer_native_patch::a_keystroke_is_a_patch_of_its_block_and_nothing_else_writes as fn(),

@@ -1,6 +1,7 @@
 //! The composer's native surface: a `GtkTextView` over `postio_body::project`, never the record.
 //! Nothing writes its buffer but the patch of `apply`'s result (ADR 0039).
 
+mod input;
 mod patch;
 mod render;
 
@@ -74,6 +75,7 @@ impl NativeSurface {
             format_watchers: RefCell::new(Vec::new()),
             source,
         });
+        input::wire(&inner);
         NativeSurface { inner }
     }
 
@@ -164,6 +166,26 @@ impl Inner {
         self.patching.set(false);
     }
 
+    fn step(&self, back: bool) {
+        let undone = {
+            let mut document = self.document.borrow_mut();
+            let mut history = self.history.borrow_mut();
+            if back {
+                history.undo(&mut document)
+            } else {
+                history.redo(&mut document)
+            }
+        };
+        let Some(undone) = undone else {
+            return;
+        };
+        self.last_edit.set(None);
+        self.repaint(undone.changed);
+        self.place(&undone.selection);
+        *self.selection.borrow_mut() = undone.selection;
+        self.notify();
+    }
+
     fn notify(&self) {
         let document = self.document.borrow();
         for handler in self.changed.borrow().iter() {
@@ -239,21 +261,47 @@ impl ComposerSurface for NativeSurface {
         self.inner.format_watchers.borrow_mut().push(handler);
     }
 
-    fn undo(&self) {}
+    fn undo(&self) {
+        self.inner.step(true);
+    }
 
-    fn redo(&self) {}
+    fn redo(&self) {
+        self.inner.step(false);
+    }
 
     fn can_undo(&self) -> bool {
         self.inner.history.borrow().can_undo()
     }
 
-    fn format(&self, _format: Format) {}
-
-    fn create_link(&self, _href: &str) -> bool {
-        false
+    fn format(&self, format: Format) {
+        use postio_body::{BlockKind, HeadingLevel, Mark};
+        self.inner.dispatch(match format {
+            Format::Bold => EditIntent::ToggleMark(Mark::Strong),
+            Format::Italic => EditIntent::ToggleMark(Mark::Emphasis),
+            Format::Heading1 => EditIntent::ToggleBlock(BlockKind::Heading(HeadingLevel::One)),
+            Format::BulletList => EditIntent::ToggleBlock(BlockKind::BulletList),
+            Format::NumberedList => EditIntent::ToggleBlock(BlockKind::NumberedList),
+            Format::QuoteBlock => EditIntent::ToggleBlock(BlockKind::Quote),
+        });
     }
 
-    fn insert_image(&self, _content_id: &ContentId, _alt: &str) {}
+    fn create_link(&self, href: &str) -> bool {
+        let allowed = ["http://", "https://", "mailto:"]
+            .iter()
+            .any(|scheme| href.starts_with(scheme));
+        let Some(href) = postio_body::Href::parse(href).filter(|_| allowed) else {
+            return false;
+        };
+        self.inner.dispatch(EditIntent::SetLink(Some(href)));
+        true
+    }
+
+    fn insert_image(&self, content_id: &ContentId, alt: &str) {
+        self.inner.dispatch(EditIntent::InsertImage {
+            content_id: content_id.clone(),
+            alt: alt.to_owned(),
+        });
+    }
 
     fn place_caret_start(&self) {
         let at = start_of(&self.inner.document.borrow());
