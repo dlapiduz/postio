@@ -178,6 +178,9 @@ pub enum Operation {
     CrossAccountRemove {
         saga: CrossAccountMoveId,
     },
+    CreateMailbox {
+        mailbox: MailboxId,
+    },
 }
 
 impl Operation {
@@ -195,6 +198,7 @@ impl Operation {
             Self::DiscardDraft { .. } => "discard_draft",
             Self::CrossAccountCopy { .. } => "cross_account_copy",
             Self::CrossAccountRemove { .. } => "cross_account_remove",
+            Self::CreateMailbox { .. } => "create_mailbox",
         }
     }
 
@@ -227,7 +231,8 @@ impl Operation {
             | Self::SaveDraft { .. }
             | Self::DiscardDraft { .. }
             | Self::CrossAccountCopy { .. }
-            | Self::CrossAccountRemove { .. } => None,
+            | Self::CrossAccountRemove { .. }
+            | Self::CreateMailbox { .. } => None,
         }
     }
 
@@ -244,7 +249,8 @@ impl Operation {
             | Self::Purge { mailbox }
             | Self::Append { mailbox, .. }
             | Self::SaveDraft { mailbox }
-            | Self::DiscardDraft { mailbox, .. } => Some(*mailbox),
+            | Self::DiscardDraft { mailbox, .. }
+            | Self::CreateMailbox { mailbox } => Some(*mailbox),
             Self::SetFlags { .. }
             | Self::ClearFlags { .. }
             | Self::Send { .. }
@@ -306,6 +312,9 @@ mod tests {
             Operation::CrossAccountRemove {
                 saga: CrossAccountMoveId::new(3),
             },
+            Operation::CreateMailbox {
+                mailbox: MailboxId::new(6),
+            },
         ]
     }
 
@@ -324,7 +333,8 @@ mod tests {
                 | Operation::SaveDraft { .. }
                 | Operation::DiscardDraft { .. }
                 | Operation::CrossAccountCopy { .. }
-                | Operation::CrossAccountRemove { .. } => false,
+                | Operation::CrossAccountRemove { .. }
+                | Operation::CreateMailbox { .. } => false,
             };
             assert_eq!(
                 operation.is_reversible(),
@@ -394,6 +404,24 @@ mod tests {
 
         assert_eq!(expunge.inverse(), None);
         assert!(!expunge.is_reversible());
+    }
+
+    #[test]
+    fn a_folder_being_created_names_itself_so_deleting_it_takes_its_create_away() {
+        let create = Operation::CreateMailbox {
+            mailbox: MailboxId::new(6),
+        };
+        assert_eq!(create.op_type(), "create_mailbox");
+        assert_eq!(
+            create.mailbox(),
+            Some(MailboxId::new(6)),
+            "the queue's mailbox column cascades, so undoing a pending folder drops its create"
+        );
+        assert_eq!(
+            create.inverse(),
+            None,
+            "undo deletes the pending row instead"
+        );
     }
 
     #[test]

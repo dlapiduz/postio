@@ -198,6 +198,7 @@ fn apply(mailbox: &mut Mailbox, summary: &MailboxSummary, overrides: &RoleOverri
     mailbox.role = overrides.settle(summary.role, &summary.path);
     mailbox.selectable = summary.selectable;
     mailbox.subscribed = summary.subscribed;
+    mailbox.pending_create = false;
 }
 
 async fn link_parents(
@@ -240,7 +241,7 @@ async fn retire_missing(
 ) -> std::result::Result<usize, postio_storage::Error> {
     let mut retired = 0;
     for mut local in mailboxes.list_for_account(account).await? {
-        if listed.iter().any(|summary| summary.path == local.path) {
+        if local.pending_create || listed.iter().any(|summary| summary.path == local.path) {
             continue;
         }
         // A folder the server lacks cannot file a role's mail, or `by_role` answers with a row

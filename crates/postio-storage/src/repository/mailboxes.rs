@@ -22,7 +22,7 @@ const MAILBOX_COLUMNS: &str = "\
 m.id, m.account_id, m.parent_id, m.name, m.path, m.delimiter, m.role, m.selectable,
 m.subscribed, m.total_count, m.unread_count, m.flagged_count, m.last_synced_at,
 s.uid_validity, s.uid_next, s.highest_mod_seq, m.signature_id, m.backfill_excluded,
-m.snoozed_count";
+m.snoozed_count, m.pending_create";
 
 const FROM_MAILBOXES: &str = "\
 FROM mailboxes m LEFT JOIN sync_state s ON s.mailbox_id = m.id";
@@ -59,8 +59,8 @@ impl<'a> MailboxRepository<'a> {
                 "INSERT INTO mailboxes (account_id, parent_id, name, path, delimiter, role,
                                     selectable, subscribed, total_count, unread_count,
                                     flagged_count, last_synced_at, signature_id,
-                                    backfill_excluded)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                                    backfill_excluded, pending_create)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 bind![
                     account_id,
                     optional_id(mailbox.parent_id),
@@ -76,6 +76,7 @@ impl<'a> MailboxRepository<'a> {
                     mailbox.last_synced_at.map(to_millis),
                     optional_signature_id(mailbox.signature_id),
                     mailbox.backfill_excluded,
+                    mailbox.pending_create,
                 ],
             )
             .await?;
@@ -102,7 +103,8 @@ impl<'a> MailboxRepository<'a> {
                 SET account_id = ?2, parent_id = ?3, name = ?4, path = ?5, delimiter = ?6,
                     role = ?7, selectable = ?8, subscribed = ?9, total_count = ?10,
                     unread_count = ?11, flagged_count = ?12, last_synced_at = ?13,
-                    signature_id = ?14, backfill_excluded = ?15, snoozed_count = ?16
+                    signature_id = ?14, backfill_excluded = ?15, snoozed_count = ?16,
+                    pending_create = ?17
               WHERE id = ?1",
                 bind![
                     id,
@@ -121,6 +123,7 @@ impl<'a> MailboxRepository<'a> {
                     optional_signature_id(mailbox.signature_id),
                     mailbox.backfill_excluded,
                     mailbox.counts.snoozed,
+                    mailbox.pending_create,
                 ],
             )
             .await?;
@@ -485,6 +488,7 @@ fn read_mailbox(row: &Row) -> Result<Mailbox> {
         last_synced_at: row.col::<Option<i64>>(12)?.map(from_millis),
         signature_id: row.col::<Option<i64>>(16)?.map(SignatureId::new),
         backfill_excluded: row.col(17)?,
+        pending_create: row.col(19)?,
     })
 }
 

@@ -291,6 +291,8 @@ pub struct Mailbox {
     /// nothing already pulled; interactive on-open fetches still run.
     #[serde(default)]
     pub backfill_excluded: bool,
+    #[serde(default)]
+    pub pending_create: bool,
     pub counts: MailboxCounts,
     /// Generation of the mailbox's UID space; a change invalidates every UID.
     pub generation: Option<Generation>,
@@ -319,6 +321,7 @@ impl Mailbox {
             subscribed: true,
             signature_id: None,
             backfill_excluded: false,
+            pending_create: false,
             counts: MailboxCounts::default(),
             generation: None,
             uid_next: None,

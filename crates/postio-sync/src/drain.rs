@@ -56,6 +56,7 @@ impl FailedOperation {
             "save_draft" => "Draft not saved",
             "discard_draft" => "Draft not discarded",
             "cross_account_copy" | "cross_account_remove" => "Not moved across accounts",
+            "create_mailbox" => "Folder not created",
             other => return format!("{other} failed \u{2014} {}", self.reason),
         };
         format!("{what} \u{2014} {}", self.reason)
@@ -75,6 +76,7 @@ pub struct DrainReport {
     pub uncertain: Vec<FailedOperation>,
     pub needs_resync: Vec<MailboxId>,
     pub thread_arrivals: crate::threaded::ThreadArrivals,
+    pub mailboxes_changed: bool,
 }
 
 impl DrainReport {
@@ -213,6 +215,12 @@ impl<'a> Drainer<'a> {
                 })
             };
             let outcome = tracing::Instrument::instrument(outcome, span.clone()).await?;
+            if let (Operation::CreateMailbox { mailbox }, Outcome::Applied) =
+                (&step.operation, &outcome)
+            {
+                created(connection, *mailbox).await?;
+                report.mailboxes_changed = true;
+            }
             let _entered = span.enter();
             tracing::debug!(outcome = ?outcome, "operation settled");
             drop(_entered);
@@ -305,6 +313,11 @@ impl<'a> Drainer<'a> {
             Operation::CrossAccountCopy { .. } | Operation::CrossAccountRemove { .. } => {
                 unreachable!("handled above, before the match")
             }
+            Operation::CreateMailbox { .. } => self
+                .backend
+                .create_mailbox(&context.path)
+                .await
+                .map(|()| Outcome::Applied),
             Operation::Expunge { .. } => self
                 .backend
                 .expunge(&context.path, None)
@@ -500,6 +513,30 @@ impl<'a> Drainer<'a> {
                 draft: None,
             }));
         }
+        if let Operation::CreateMailbox { mailbox } = &step.operation {
+            return Ok(
+                match MailboxRepository::new(connection).get(*mailbox).await? {
+                    Some(folder) if folder.pending_create => Resolved::Ready(Context {
+                        operation: step.operation.clone(),
+                        path: folder.path,
+                        destination: None,
+                        ids: Vec::new(),
+                        mailbox: *mailbox,
+                        message: None,
+                        send: None,
+                        draft: None,
+                    }),
+                    Some(_) => Resolved::Obsolete {
+                        reason: "the server already has the folder".to_owned(),
+                        mailbox: None,
+                    },
+                    None => Resolved::Obsolete {
+                        reason: "the folder was removed before the server was told".to_owned(),
+                        mailbox: None,
+                    },
+                },
+            );
+        }
         if matches!(step.operation, Operation::Append { .. }) {
             return Ok(Resolved::Ready(Context {
                 operation: step.operation.clone(),
@@ -554,7 +591,8 @@ impl<'a> Drainer<'a> {
             | Operation::SaveDraft { .. }
             | Operation::DiscardDraft { .. }
             | Operation::CrossAccountCopy { .. }
-            | Operation::CrossAccountRemove { .. } => unreachable!("handled above"),
+            | Operation::CrossAccountRemove { .. }
+            | Operation::CreateMailbox { .. } => unreachable!("handled above"),
         };
 
         let ids = match step.target {
@@ -601,6 +639,11 @@ impl<'a> Drainer<'a> {
         let destination = match destination {
             None => None,
             Some(id) => match mailboxes.get(id).await? {
+                Some(mailbox) if mailbox.pending_create => {
+                    return Ok(Resolved::Later(
+                        "its folder is not on the server yet".to_owned(),
+                    ));
+                }
                 Some(mailbox) => Some(mailbox.path),
                 None => {
                     return Ok(Resolved::Impossible(format!(
@@ -851,4 +894,13 @@ fn vanished_if_untouched(untouched: bool) -> Outcome {
     } else {
         Outcome::Applied
     }
+}
+
+async fn created(connection: &Connection, folder: MailboxId) -> Result<()> {
+    let mailboxes = MailboxRepository::new(connection);
+    if let Some(mut mailbox) = mailboxes.get(folder).await? {
+        mailbox.pending_create = false;
+        mailboxes.update(&mailbox).await?;
+    }
+    Ok(())
 }
