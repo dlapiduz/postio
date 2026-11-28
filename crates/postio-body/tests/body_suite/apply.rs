@@ -1329,6 +1329,24 @@ fn every_intent_over_generated_documents_keeps_the_contract() {
             );
         }
         assert_well_formed(&edited.document.blocks[start..new_end], &context);
+        let mut projection = postio_body::project(&document, None);
+        let mut text: Vec<char> = projection.text().chars().collect();
+        let patch = projection.patch(edited.changed, &edited.document);
+        assert_eq!(
+            projection,
+            postio_body::project(&edited.document, None),
+            "patching the projection: {context}"
+        );
+        text.splice(
+            patch.delete.start as usize..patch.delete.end as usize,
+            patch.insert.chars(),
+        );
+        assert_eq!(
+            text.into_iter().collect::<String>(),
+            projection.text(),
+            "the buffer edit: {context}"
+        );
+        assert!(patch.restyle.end <= projection.len(), "{context}");
         if settled(&edited.document) {
             round_trips += 1;
             assert_eq!(

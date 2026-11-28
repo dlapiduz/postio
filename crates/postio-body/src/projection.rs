@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use crate::document::{Block, ContentId, Document, HeadingLevel, ListKind, Task, WebHref};
+use crate::edit_ops::BlockRange;
 use crate::edit_ops::flat::{self, Atom, MarkSet};
 use crate::position::DocPosition;
 
@@ -64,6 +65,15 @@ pub struct LineStyle {
     pub kind: LineKind,
     pub list_depth: u32,
     pub quote_depth: u32,
+}
+
+/// A buffer edit: delete `delete`, insert `insert` at its start, then retag `restyle`, which is in
+/// the new buffer's offsets.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Patch {
+    pub delete: Range<u32>,
+    pub insert: String,
+    pub restyle: Range<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -307,6 +317,71 @@ impl Projection {
                 }
             })
         })
+    }
+
+    /// Replaces the changed blocks' units and returns the buffer edit that turns this projection's
+    /// text into the new one: only what differs inside the range is deleted and inserted, and
+    /// `restyle` is the range's new extent, the one to retag.
+    pub fn patch(&mut self, changed: BlockRange, document: &Document) -> Patch {
+        let (start, old_end, new_end) = (
+            changed.start as usize,
+            (changed.old_end as usize).min(self.units.len()),
+            (changed.new_end as usize).min(document.blocks.len()),
+        );
+        if old_end == start && new_end == start {
+            return Patch::default();
+        }
+        let fresh: Vec<Unit> = (start..new_end)
+            .map(|top| unit_of(&document.blocks[top], top, self.preedit.as_ref()))
+            .collect();
+        let joined = |units: &[Unit]| {
+            let mut text = String::new();
+            for (index, unit) in units.iter().enumerate() {
+                if index > 0 {
+                    text.push('\n');
+                }
+                text.push_str(&unit.text);
+            }
+            text
+        };
+        let (mut old, mut new) = (joined(&self.units[start..old_end]), joined(&fresh));
+        let follows = old_end < self.units.len();
+        let mut at = self
+            .starts
+            .get(start)
+            .copied()
+            .unwrap_or_else(|| self.len());
+        if old_end == start || fresh.is_empty() {
+            let grown = if fresh.is_empty() { &mut old } else { &mut new };
+            if follows {
+                grown.push('\n');
+            } else if start > 0 {
+                grown.insert(0, '\n');
+                at = self.starts[start - 1] + self.units[start - 1].len;
+            }
+        }
+        let old_chars: Vec<char> = old.chars().collect();
+        let new_chars: Vec<char> = new.chars().collect();
+        let prefix = old_chars
+            .iter()
+            .zip(&new_chars)
+            .take_while(|(a, b)| a == b)
+            .count();
+        let room = old_chars.len().min(new_chars.len()) - prefix;
+        let suffix = old_chars
+            .iter()
+            .rev()
+            .zip(new_chars.iter().rev())
+            .take(room)
+            .take_while(|(a, b)| a == b)
+            .count();
+        self.units.splice(start..old_end, fresh);
+        self.restart(start);
+        Patch {
+            delete: at + prefix as u32..at + (old_chars.len() - suffix) as u32,
+            insert: new_chars[prefix..new_chars.len() - suffix].iter().collect(),
+            restyle: at..at + new_chars.len() as u32,
+        }
     }
 
     fn restart(&mut self, from: usize) {

@@ -1,9 +1,52 @@
 //! What the composer asks of its editing surface, so the WebView and the native text view are one
 //! seam and the composer cannot reach past it.
 
+use std::cell::Cell;
+use std::rc::Rc;
+use std::sync::OnceLock;
+
 use gtk::prelude::*;
 use postio_body::markdown::DocPosition;
 use postio_body::{ContentId, Document};
+
+use crate::reader::BlobSource;
+
+/// Which surface a composer edits on: the WebView until spec 015's step 4 makes the native one the
+/// only one. A developer switch, read once: `POSTIO_NATIVE_COMPOSER=1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SurfaceKind {
+    Web,
+    Native,
+}
+
+thread_local! {
+    static CHOSEN: Cell<Option<SurfaceKind>> = const { Cell::new(None) };
+}
+
+pub fn chosen() -> SurfaceKind {
+    static FROM_ENV: OnceLock<SurfaceKind> = OnceLock::new();
+    CHOSEN.get().unwrap_or_else(|| {
+        *FROM_ENV.get_or_init(|| {
+            if std::env::var_os("POSTIO_NATIVE_COMPOSER").is_some_and(|value| value == "1") {
+                SurfaceKind::Native
+            } else {
+                SurfaceKind::Web
+            }
+        })
+    })
+}
+
+#[doc(hidden)]
+pub fn test_choose(kind: Option<SurfaceKind>) {
+    CHOSEN.set(kind);
+}
+
+pub(super) fn build(source: Rc<dyn BlobSource>) -> Rc<dyn ComposerSurface> {
+    match chosen() {
+        SurfaceKind::Web => Rc::new(super::editor::Editor::new(source)),
+        SurfaceKind::Native => Rc::new(super::native::NativeSurface::new(source)),
+    }
+}
 
 /// `bold` is true when the selection is inside `Strong`, not when a mode is armed: there are no
 /// modes.

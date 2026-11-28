@@ -6,6 +6,7 @@
 //! line, rather than lose the mail into an unconnected seam.
 
 pub mod editor;
+pub mod native;
 pub mod scheme;
 pub mod source_view;
 pub mod surface;
@@ -441,14 +442,12 @@ mod imp {
                 identity_only: gtk::Label::new(None),
                 body: {
                     let lookup = blob_lookup.clone();
-                    Rc::new(editor::Editor::new(std::rc::Rc::new(
-                        move |content_id: &str| {
-                            lookup
-                                .borrow()
-                                .as_ref()
-                                .and_then(|lookup| lookup(content_id))
-                        },
-                    )))
+                    super::surface::build(std::rc::Rc::new(move |content_id: &str| {
+                        lookup
+                            .borrow()
+                            .as_ref()
+                            .and_then(|lookup| lookup(content_id))
+                    }))
                 },
                 source: source_view::SourceView::new(),
                 source_toggle: gtk::ToggleButton::new(),
@@ -3244,6 +3243,11 @@ impl Composer {
             .filter(|(button, _)| button.is_active())
             .map(|(_, (id, _, _))| id.as_str())
             .collect()
+    }
+
+    #[doc(hidden)]
+    pub fn test_body_widget(&self) -> gtk::Widget {
+        self.imp().body.widget()
     }
 
     #[doc(hidden)]

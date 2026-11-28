@@ -24,6 +24,7 @@ mod composer_host;
 mod composer_inline_image;
 mod composer_markdown;
 mod composer_markdown_source;
+mod composer_native_basic;
 mod composer_recipient_select;
 mod composer_recipients;
 mod composer_remote_image;
@@ -102,6 +103,10 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_basic::the_native_surface_holds_the_document_it_was_given",
+        composer_native_basic::the_native_surface_holds_the_document_it_was_given as fn(),
+    ),
     (
         "spike_preedit::a_composition_stays_out_of_the_buffer_and_its_commit_is_caught",
         spike_preedit::a_composition_stays_out_of_the_buffer_and_its_commit_is_caught as fn(),

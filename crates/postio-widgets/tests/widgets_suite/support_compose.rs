@@ -101,6 +101,14 @@ pub mod composer {
     pub fn install(window: &Window) -> Composer {
         window.install_composer()
     }
+
+    /// A composer on the native surface, the developer switch aside.
+    pub fn install_native(window: &Window) -> Composer {
+        surface::test_choose(Some(surface::SurfaceKind::Native));
+        let composer = window.install_composer();
+        surface::test_choose(None);
+        composer
+    }
 }
 
 fn takes_text(window: &gtk::Window) -> bool {

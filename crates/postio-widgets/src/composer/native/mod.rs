@@ -1,0 +1,310 @@
+//! The composer's native surface: a `GtkTextView` over `postio_body::project`, never the record.
+//! Nothing writes its buffer but the patch of `apply`'s result (ADR 0039).
+
+mod patch;
+mod render;
+
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use gtk::prelude::*;
+use postio_body::markdown::DocPosition as SourcePosition;
+use postio_body::{
+    ContentId, Document, EditHistory, EditIntent, EditStep, Projection, Selection, project,
+};
+
+use super::surface::{ComposerSurface, Format, FormatState};
+use crate::reader::BlobSource;
+
+pub use patch::PatchStats;
+
+const COALESCE: Duration = Duration::from_millis(700);
+
+pub struct NativeSurface {
+    inner: Rc<Inner>,
+}
+
+pub(crate) struct Inner {
+    view: gtk::TextView,
+    buffer: gtk::TextBuffer,
+    document: RefCell<Document>,
+    projection: RefCell<Projection>,
+    selection: RefCell<Selection>,
+    history: RefCell<EditHistory>,
+    last_edit: Cell<Option<Instant>>,
+    coalesce: Duration,
+    patching: Cell<bool>,
+    stats: Cell<PatchStats>,
+    changed: RefCell<Vec<Box<dyn Fn(&Document)>>>,
+    format: Cell<FormatState>,
+    format_watchers: RefCell<Vec<Box<dyn Fn(FormatState)>>>,
+    source: Rc<dyn BlobSource>,
+}
+
+impl NativeSurface {
+    pub fn new(source: Rc<dyn BlobSource>) -> Self {
+        Self::with_coalesce(source, COALESCE)
+    }
+
+    pub fn with_coalesce(source: Rc<dyn BlobSource>, coalesce: Duration) -> Self {
+        let buffer = gtk::TextBuffer::new(Some(&render::tags()));
+        // The document's history is the only undo (ADR 0004 Q5): the buffer's would undo a patch.
+        buffer.set_enable_undo(false);
+        let view = gtk::TextView::with_buffer(&buffer);
+        view.set_wrap_mode(gtk::WrapMode::WordChar);
+        view.set_accepts_tab(false);
+        view.set_hexpand(true);
+        view.set_vexpand(true);
+        view.add_css_class("postio-editor-view");
+        view.update_property(&[gtk::accessible::Property::Label("Message body")]);
+        let inner = Rc::new(Inner {
+            view,
+            buffer,
+            document: RefCell::new(Document::new()),
+            projection: RefCell::new(Projection::default()),
+            selection: RefCell::new(Selection::default()),
+            history: RefCell::new(EditHistory::new()),
+            last_edit: Cell::new(None),
+            coalesce,
+            patching: Cell::new(false),
+            stats: Cell::new(PatchStats::default()),
+            changed: RefCell::new(Vec::new()),
+            format: Cell::new(FormatState::default()),
+            format_watchers: RefCell::new(Vec::new()),
+            source,
+        });
+        NativeSurface { inner }
+    }
+
+    pub fn view(&self) -> &gtk::TextView {
+        &self.inner.view
+    }
+
+    /// What the last patch did to the buffer, for the counts that gate typing (FR-014).
+    pub fn last_patch(&self) -> PatchStats {
+        self.inner.stats.get()
+    }
+
+    pub fn selection(&self) -> Selection {
+        self.inner.selection_now()
+    }
+
+    /// Runs one intent as a key or a command would, through the same path.
+    pub fn dispatch(&self, intent: EditIntent) -> bool {
+        self.inner.dispatch(intent)
+    }
+}
+
+impl Inner {
+    fn selection_now(&self) -> Selection {
+        let projection = self.projection.borrow();
+        let offset = |mark: &gtk::TextMark| self.buffer.iter_at_mark(mark).offset() as u32;
+        let head = projection.position_of(offset(&self.buffer.get_insert()));
+        let anchor = projection.position_of(offset(&self.buffer.selection_bound()));
+        let held = self.selection.borrow();
+        Selection {
+            marks: held.marks.clone().filter(|_| held.head == head),
+            preedit: held.preedit.clone(),
+            ..Selection::range(anchor, head)
+        }
+    }
+
+    fn dispatch(&self, intent: EditIntent) -> bool {
+        let before = self.selection_now();
+        self.dispatch_at(before, intent)
+    }
+
+    fn dispatch_at(&self, before: Selection, intent: EditIntent) -> bool {
+        let applied = self.document.borrow_mut().edit(&before, intent);
+        let changed = !applied.changed.is_empty();
+        if changed {
+            let step = EditStep::of(&applied, &self.document.borrow(), before.clone());
+            let now = Instant::now();
+            let mut history = self.history.borrow_mut();
+            if self
+                .last_edit
+                .get()
+                .is_none_or(|last| now.duration_since(last) >= self.coalesce)
+            {
+                history.seal();
+            }
+            history.record(step, applied.join);
+            self.last_edit.set(Some(now));
+            drop(history);
+            self.repaint(applied.changed);
+        }
+        self.place(&applied.selection);
+        *self.selection.borrow_mut() = applied.selection.clone();
+        if changed {
+            self.notify();
+        }
+        changed || applied.selection != before
+    }
+
+    fn repaint(&self, changed: postio_body::BlockRange) {
+        let patch = self
+            .projection
+            .borrow_mut()
+            .patch(changed, &self.document.borrow());
+        let stats = patch::apply(self, &patch);
+        self.stats.set(stats);
+    }
+
+    fn place(&self, selection: &Selection) {
+        let projection = self.projection.borrow();
+        let head = self
+            .buffer
+            .iter_at_offset(projection.offset_of(&selection.head) as i32);
+        let anchor = self
+            .buffer
+            .iter_at_offset(projection.offset_of(&selection.anchor) as i32);
+        self.patching.set(true);
+        self.buffer.select_range(&head, &anchor);
+        self.patching.set(false);
+    }
+
+    fn notify(&self) {
+        let document = self.document.borrow();
+        for handler in self.changed.borrow().iter() {
+            handler(&document);
+        }
+    }
+
+    fn show(&self, document: Document, at: Selection) {
+        let old = self.projection.borrow().len();
+        *self.document.borrow_mut() = document;
+        *self.projection.borrow_mut() = project(&self.document.borrow(), None);
+        let patch = postio_body::Patch {
+            delete: 0..old,
+            insert: self.projection.borrow().text(),
+            restyle: 0..self.projection.borrow().len(),
+        };
+        self.stats.set(patch::apply(self, &patch));
+        self.place(&at);
+        *self.selection.borrow_mut() = at;
+    }
+}
+
+fn start_of(document: &Document) -> Selection {
+    project(document, None)
+        .lines()
+        .next()
+        .map(|line| Selection::caret(postio_body::DocPosition::new(line.path, 0)))
+        .unwrap_or_default()
+}
+
+/// A reply or a fresh draft needs somewhere to type above everything that holds no caret.
+fn editable(mut document: Document) -> Document {
+    let leaf = |block: &postio_body::Block| {
+        matches!(
+            block,
+            postio_body::Block::Paragraph(_)
+                | postio_body::Block::Heading { .. }
+                | postio_body::Block::List { .. }
+                | postio_body::Block::Quote(_)
+                | postio_body::Block::Code { .. }
+        )
+    };
+    if !document.blocks.first().is_some_and(leaf) {
+        document
+            .blocks
+            .insert(0, postio_body::Block::Paragraph(Vec::new()));
+    }
+    document
+}
+
+impl ComposerSurface for NativeSurface {
+    fn widget(&self) -> gtk::Widget {
+        self.inner.view.clone().upcast()
+    }
+
+    fn load(&self, document: Document) {
+        let document = editable(document);
+        let at = start_of(&document);
+        self.inner.history.borrow_mut().clear();
+        self.inner.last_edit.set(None);
+        self.inner.show(document, at);
+    }
+
+    fn document(&self) -> Document {
+        self.inner.document.borrow().clone()
+    }
+
+    fn connect_changed(&self, handler: Box<dyn Fn(&Document)>) {
+        self.inner.changed.borrow_mut().push(handler);
+    }
+
+    fn connect_format_state(&self, handler: Box<dyn Fn(FormatState)>) {
+        self.inner.format_watchers.borrow_mut().push(handler);
+    }
+
+    fn undo(&self) {}
+
+    fn redo(&self) {}
+
+    fn can_undo(&self) -> bool {
+        self.inner.history.borrow().can_undo()
+    }
+
+    fn format(&self, _format: Format) {}
+
+    fn create_link(&self, _href: &str) -> bool {
+        false
+    }
+
+    fn insert_image(&self, _content_id: &ContentId, _alt: &str) {}
+
+    fn place_caret_start(&self) {
+        let at = start_of(&self.inner.document.borrow());
+        self.inner.place(&at);
+    }
+
+    fn place_caret_end(&self) {
+        let end = self.inner.buffer.end_iter();
+        self.inner.buffer.place_cursor(&end);
+    }
+
+    fn flow_in(&self, _probes: Vec<(&'static str, gtk::Widget)>) {}
+
+    fn caret(&self, done: Box<dyn FnOnce(Option<SourcePosition>)>) {
+        done(self.test_caret());
+    }
+
+    fn show_at(&self, document: Document, _at: Option<&SourcePosition>) {
+        let before = self.inner.document.borrow().clone();
+        let at = start_of(&document);
+        self.inner.history.borrow_mut().record(
+            EditStep::between(&before, &document, self.inner.selection_now(), at.clone()),
+            postio_body::Join::New,
+        );
+        self.inner.show(document, at);
+        self.inner.notify();
+    }
+
+    fn warm(&self) {}
+
+    fn is_warm(&self) -> bool {
+        true
+    }
+
+    fn test_type(&self, text: &str) {
+        self.inner
+            .buffer
+            .insert_interactive_at_cursor(text, self.inner.view.is_editable());
+    }
+
+    fn test_caret(&self) -> Option<SourcePosition> {
+        let head = self.inner.selection_now().head;
+        Some(SourcePosition {
+            path: head.path.iter().map(|&i| i as usize).collect(),
+            offset: head.offset as usize,
+        })
+    }
+
+    fn test_select(&self, _nth: u32, _from: u32, _to: u32) {}
+
+    fn test_eval(&self, _script: &str) -> String {
+        String::new()
+    }
+}
