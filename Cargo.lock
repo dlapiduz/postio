@@ -3484,12 +3484,12 @@ dependencies = [
 
 [[package]]
 name = "io-gmail"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5992425f089d8eb98b68d71f8264b1177ac188a8ad7dddd6485dbd58b00f8fc2"
+checksum = "bd99f4990ab48e66b72baf82cf8eb3662b12281e24c6d87bbe90a9135fc6f552"
 dependencies = [
  "base64-codec",
- "io-http 0.8.0",
+ "io-http",
  "log",
  "serde",
  "serde_json",
@@ -3499,9 +3499,9 @@ dependencies = [
 
 [[package]]
 name = "io-http"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47ae262c265c95e13dc5dd88370d23b74f5e5b307d503ba208e0e6117ddfbd3e"
+checksum = "80214cd8fd62f9ce721483416c1f4cf1b924c2a11f6fd9151f0d3dfa627856ed"
 dependencies = [
  "anyhow",
  "base64-codec",
@@ -3514,24 +3514,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "io-http"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80214cd8fd62f9ce721483416c1f4cf1b924c2a11f6fd9151f0d3dfa627856ed"
-dependencies = [
- "base64-codec",
- "httparse",
- "log",
- "secrecy",
- "thiserror",
- "url",
-]
-
-[[package]]
 name = "io-imap"
-version = "0.11.2"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d67554dda30954adfdffac6535ab86cd5ea491b25074c0a7df9f262c383452c"
+checksum = "6dc29abf0aaf7b213697a91648634609ff7261fbe7dbcbfe5a33095567d87937"
 dependencies = [
  "base64-codec",
  "chrono",
@@ -3545,11 +3531,11 @@ dependencies = [
 
 [[package]]
 name = "io-jmap"
-version = "0.10.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0590fe7ab8e2bac4b3bcb219dc4f9a300505ad1bbf544163b9a05c36a2f6be8d"
+checksum = "a884f979ba07c6cccdcba1b3a73e72f77dc6a3ec8ea8b23257983732f0b22b78"
 dependencies = [
- "io-http 0.8.0",
+ "io-http",
  "log",
  "secrecy",
  "serde",
@@ -3572,13 +3558,13 @@ dependencies = [
 
 [[package]]
 name = "io-oauth"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a1e90de37723f2e56f2e91aaf42e6bf5c6980ae018de265eb6ad4fb4d88af41"
+checksum = "4d011668b36e4e6380b4cc24edc82e1c683712e3aa0e7368f61fec8ec47e360f"
 dependencies = [
  "base64-codec",
  "getrandom 0.4.3",
- "io-http 0.8.0",
+ "io-http",
  "log",
  "secrecy",
  "serde",
@@ -3590,13 +3576,13 @@ dependencies = [
 
 [[package]]
 name = "io-pim-discovery"
-version = "0.13.0"
+version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cf9ed427711221b6a9235184408ac552811dfd0a473470c1415d273233acb6c"
+checksum = "ff57a359baebc7c90e2da6d8bf94518420e0b47c2652ca728616c2be439ee5f2"
 dependencies = [
  "anyhow",
  "domain",
- "io-http 0.8.0",
+ "io-http",
  "ipconfig",
  "log",
  "pimalaya-stream",
@@ -3611,9 +3597,9 @@ dependencies = [
 
 [[package]]
 name = "io-proxy"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b8a1b3698a70ea041d11dea1532276cf270aa289388bce8c68b27d949eb3506"
+checksum = "08d43e8139aa88f8248928a607a60767b93fc4bebf1e1d36ce761554b7397b3c"
 dependencies = [
  "base64-codec",
  "log",
@@ -3623,9 +3609,9 @@ dependencies = [
 
 [[package]]
 name = "io-sasl"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41b6725f5378a27ba94468ff1663ead20f612fa16b70839af132dca27dabfe3f"
+checksum = "b74074034a8b5a55a08c4effb9d71c64ecea0617865cdcecde04721ffd877075"
 dependencies = [
  "log",
  "secrecy",
@@ -3635,9 +3621,9 @@ dependencies = [
 
 [[package]]
 name = "io-smtp"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "160825eec4bad4ee026fabb088b64f9b560b9c9cd6f1c773122f43abab76efe7"
+checksum = "a03d3339c6579db6b03312807bba0443198bfae289c1b7ffbfb065308930717e"
 dependencies = [
  "base64-codec",
  "bounded-static",
@@ -3662,12 +3648,12 @@ dependencies = [
 
 [[package]]
 name = "io-webdav"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4cf4e05eb97fb5c974f872beb03117c43a0dfc4519b4dc87f27ee86fa28ee876"
+checksum = "0d22a84654879a8d8f7dea688fd08a42bb85251f88d2f0f44089981e7869e30a"
 dependencies = [
  "anyhow",
- "io-http 0.9.0",
+ "io-http",
  "log",
  "memchr",
  "pimalaya-stream",
@@ -5322,9 +5308,9 @@ checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
 
 [[package]]
 name = "pimalaya-stream"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "314599e9b99dbd22c67c45704fafa0010c38ad000bea4c6ce555bd9d7ca05aab"
+checksum = "696292f67a3d82d113a279435d4cf6088c5cf2632e166662f28b91268d959e4a"
 dependencies = [
  "anyhow",
  "io-proxy",
@@ -5491,7 +5477,7 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "domain",
- "io-http 0.8.0",
+ "io-http",
  "io-imap",
  "io-maildir",
  "io-oauth",
@@ -5524,7 +5510,7 @@ name = "postio-ai"
 version = "0.6.2"
 dependencies = [
  "chrono",
- "io-http 0.8.0",
+ "io-http",
  "postio-classify",
  "postio-config",
  "postio-model",
@@ -5670,7 +5656,7 @@ version = "0.6.2"
 dependencies = [
  "async-trait",
  "chrono",
- "io-http 0.9.0",
+ "io-http",
  "io-webdav",
  "postio-workspace-hack",
  "thiserror",
@@ -5978,7 +5964,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "futures-util",
- "io-http 0.8.0",
+ "io-http",
  "mimalloc",
  "pimalaya-stream",
  "postio-account",
@@ -6332,7 +6318,7 @@ dependencies = [
  "idna",
  "inout 0.1.4",
  "inout 0.2.6",
- "io-http 0.8.0",
+ "io-http",
  "itertools 0.14.0",
  "lazy_static",
  "libc",

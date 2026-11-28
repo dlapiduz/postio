@@ -14,7 +14,7 @@ chrono = { workspace = true, features = ["std"] }
 # `FuturesUnordered` only, for the concurrent sync wave; `default-features = false` keeps the
 # futures executor and `Sink` out of the graph.
 futures-util = { workspace = true }
-io-http = { version = "0.8", default-features = false }
+io-http = { version = "0.9", default-features = false, features = ["std"] }
 pimalaya-stream = { workspace = true }
 url = { workspace = true }
 postio-core.workspace = true

@@ -16,7 +16,7 @@ async-trait = { workspace = true }
 chrono = { workspace = true }
 
 # No TLS features: connections open on the workspace's own cancellable pimalaya-stream.
-io-jmap = { version = "0.10.0", default-features = false, features = ["client"] }
+io-jmap = { version = "0.11.1", default-features = false, features = ["std"] }
 pimalaya-stream = { workspace = true }
 
 # The MailBackend seam only: `default-features = false` leaves io-imap and its TLS stack out of the
