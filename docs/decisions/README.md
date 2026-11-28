@@ -14,7 +14,7 @@ Format, at most about 250 words: `# ADR NNNN — title`, then `Status` (Accepted
 | [0006](0006-oauth-and-provider-presets.md) | OAuth 2, and what "providers are data" has to mean | Built |
 | [0008](0008-filters-and-rules.md) | Filters and rules: one language, two evaluators | Saved searches, `header:` and the digest-rule matcher built; the rules engine is on `feature/rules`, not on `main` |
 | [0009](0009-ai-subsystem.md) | The AI subsystem | `postio-ai` built as the client for a local model Focus uses; summarise, draft and semantic search not built |
-| [0010](0010-mcp-surface.md) | Exposing Postio over MCP | Built: `postio-mcp`; amended 2026-10-14 to allow archive, move and label |
+| [0010](0010-mcp-surface.md) | Exposing Postio over MCP | Built: `postio-mcp`; amended 2026-10-14 to allow archive, move and label; amended 2026-11-28 for counts, query writes and folders |
 | [0011](0011-docs-site.md) | The docs site | Built |
 | [0012](0012-add-account-and-orientation.md) | Adding a second account, and orienting a first-time user | Built |
 | [0013](0013-event-fanout.md) | Event fan-out: a hub between producers and subscribers | Built |
@@ -54,3 +54,4 @@ Format, at most about 250 words: `# ADR NNNN — title`, then `Status` (Accepted
 | [0047](0047-one-feature-set-for-the-workspace.md) | One feature set for the workspace: `postio-workspace-hack`, and a boundary is what a crate can call | Built |
 | [0048](0048-per-contact-settings-are-the-one-home-of-sender-keyed-settings.md) | Per-contact settings are the one home of sender-keyed settings | Built for pins, markers, one-sender digests and the HTML treatment |
 | [0049](0049-each-layer-asserts-its-own-question.md) | Each test layer asserts its own question: branches once, frontends assert composition | Accepted; enforced per surface by spec 012 |
+| [0050](0050-a-folder-is-created-locally-first.md) | A folder is created locally first | Accepted (#2271) |

@@ -31,7 +31,7 @@ docs/decisions/0005-multiple-accounts.md 681
 docs/decisions/0006-oauth-and-provider-presets.md 482
 docs/decisions/0008-filters-and-rules.md 522
 docs/decisions/0009-ai-subsystem.md 478
-docs/decisions/0010-mcp-surface.md 512
+docs/decisions/0010-mcp-surface.md 651
 docs/decisions/0011-docs-site.md 307
 docs/decisions/0012-add-account-and-orientation.md 320
 docs/decisions/0013-event-fanout.md 349
@@ -71,7 +71,8 @@ docs/decisions/0046-content-identity-is-distinct-from-mailbox-identity.md 415
 docs/decisions/0047-one-feature-set-for-the-workspace.md 374
 docs/decisions/0048-per-contact-settings-are-the-one-home-of-sender-keyed-settings.md 451
 docs/decisions/0049-each-layer-asserts-its-own-question.md 386
-docs/decisions/README.md 934
+docs/decisions/0050-a-folder-is-created-locally-first.md 263
+docs/decisions/README.md 955
 docs/field-report.md 1717
 docs/gotchas.md 102
 docs/gotchas/build.md 589
