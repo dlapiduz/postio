@@ -24,6 +24,20 @@ mod composer_host;
 mod composer_inline_image;
 mod composer_markdown;
 mod composer_markdown_source;
+mod composer_native_a11y;
+mod composer_native_basic;
+mod composer_native_caret;
+mod composer_native_clipboard;
+mod composer_native_counts;
+mod composer_native_css;
+mod composer_native_format;
+mod composer_native_history;
+mod composer_native_image;
+mod composer_native_ime;
+mod composer_native_input;
+mod composer_native_patch;
+mod composer_native_quote;
+mod composer_native_render;
 mod composer_recipient_select;
 mod composer_recipients;
 mod composer_remote_image;
@@ -102,6 +116,147 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "composer_native_input::a_replys_blank_line_takes_a_list_that_leaves_on_an_empty_item",
+        composer_native_input::a_replys_blank_line_takes_a_list_that_leaves_on_an_empty_item
+            as fn(),
+    ),
+    (
+        "composer_native_counts::a_keystroke_in_five_thousand_words_touches_one_block",
+        composer_native_counts::a_keystroke_in_five_thousand_words_touches_one_block as fn(),
+    ),
+    (
+        "composer_native_counts::a_long_draft_opens_with_no_web_process",
+        composer_native_counts::a_long_draft_opens_with_no_web_process as fn(),
+    ),
+    (
+        "composer_native_css::a_scheme_change_restyles_and_keeps_the_caret_and_the_history",
+        composer_native_css::a_scheme_change_restyles_and_keeps_the_caret_and_the_history as fn(),
+    ),
+    (
+        "composer_native_a11y::the_body_is_a_named_text_box_with_gtks_accessible_text",
+        composer_native_a11y::the_body_is_a_named_text_box_with_gtks_accessible_text as fn(),
+    ),
+    (
+        "composer_native_a11y::every_formatting_command_on_the_toolbar_has_a_name",
+        composer_native_a11y::every_formatting_command_on_the_toolbar_has_a_name as fn(),
+    ),
+    (
+        "composer_native_history::a_typing_run_is_one_step_and_undo_puts_the_caret_back",
+        composer_native_history::a_typing_run_is_one_step_and_undo_puts_the_caret_back as fn(),
+    ),
+    (
+        "composer_native_history::past_the_runs_window_every_keystroke_is_a_step",
+        composer_native_history::past_the_runs_window_every_keystroke_is_a_step as fn(),
+    ),
+    (
+        "composer_native_history::a_conversion_is_its_own_step_after_the_run_that_typed_it",
+        composer_native_history::a_conversion_is_its_own_step_after_the_run_that_typed_it as fn(),
+    ),
+    (
+        "composer_native_format::the_toolbar_lights_what_the_caret_is_in",
+        composer_native_format::the_toolbar_lights_what_the_caret_is_in as fn(),
+    ),
+    (
+        "composer_native_quote::the_quote_is_read_only_and_typing_into_it_changes_nothing",
+        composer_native_quote::the_quote_is_read_only_and_typing_into_it_changes_nothing as fn(),
+    ),
+    (
+        "composer_native_quote::backspace_after_the_quote_removes_it_whole_and_undo_gives_it_back",
+        composer_native_quote::backspace_after_the_quote_removes_it_whole_and_undo_gives_it_back as fn(),
+    ),
+    (
+        "composer_native_quote::the_quote_opens_folded_to_its_first_lines",
+        composer_native_quote::the_quote_opens_folded_to_its_first_lines as fn(),
+    ),
+    (
+        "composer_native_image::an_inline_image_is_a_picture_of_its_blob_at_its_place",
+        composer_native_image::an_inline_image_is_a_picture_of_its_blob_at_its_place as fn(),
+    ),
+    (
+        "composer_native_image::an_inserted_image_is_anchored_and_one_backspace_takes_it_whole",
+        composer_native_image::an_inserted_image_is_anchored_and_one_backspace_takes_it_whole as fn(),
+    ),
+    (
+        "composer_native_clipboard::hostile_html_pastes_narrowed",
+        composer_native_clipboard::hostile_html_pastes_narrowed as fn(),
+    ),
+    (
+        "composer_native_clipboard::plain_text_pastes_a_paragraph_per_line",
+        composer_native_clipboard::plain_text_pastes_a_paragraph_per_line as fn(),
+    ),
+    (
+        "composer_native_clipboard::cut_then_paste_gives_the_marks_back",
+        composer_native_clipboard::cut_then_paste_gives_the_marks_back as fn(),
+    ),
+    (
+        "composer_native_clipboard::a_copy_carries_no_drawn_bullet",
+        composer_native_clipboard::a_copy_carries_no_drawn_bullet as fn(),
+    ),
+    (
+        "composer_native_caret::a_caret_on_a_bullet_lands_on_the_items_text",
+        composer_native_caret::a_caret_on_a_bullet_lands_on_the_items_text as fn(),
+    ),
+    (
+        "composer_native_caret::home_skips_the_bullet_and_end_stays_on_the_text",
+        composer_native_caret::home_skips_the_bullet_and_end_stays_on_the_text as fn(),
+    ),
+    (
+        "composer_native_caret::a_click_in_the_reply_quote_lands_after_it",
+        composer_native_caret::a_click_in_the_reply_quote_lands_after_it as fn(),
+    ),
+    (
+        "composer_native_caret::a_selection_keeps_its_place_across_a_patch_of_another_block",
+        composer_native_caret::a_selection_keeps_its_place_across_a_patch_of_another_block as fn(),
+    ),
+    (
+        "composer_native_ime::a_cjk_composition_in_a_list_item_is_one_commit_and_one_undo",
+        composer_native_ime::a_cjk_composition_in_a_list_item_is_one_commit_and_one_undo as fn(),
+    ),
+    (
+        "composer_native_ime::escape_cancels_a_composition_and_the_document_is_untouched",
+        composer_native_ime::escape_cancels_a_composition_and_the_document_is_untouched as fn(),
+    ),
+    (
+        "composer_native_input::typed_text_goes_through_the_engine_not_the_buffer",
+        composer_native_input::typed_text_goes_through_the_engine_not_the_buffer as fn(),
+    ),
+    (
+        "composer_native_input::enter_and_shift_enter_split_and_break",
+        composer_native_input::enter_and_shift_enter_split_and_break as fn(),
+    ),
+    (
+        "composer_native_input::backspace_and_delete_take_characters_words_and_join_blocks",
+        composer_native_input::backspace_and_delete_take_characters_words_and_join_blocks as fn(),
+    ),
+    (
+        "composer_native_input::tab_nests_a_list_item_and_elsewhere_moves_on",
+        composer_native_input::tab_nests_a_list_item_and_elsewhere_moves_on as fn(),
+    ),
+    (
+        "composer_native_input::a_typed_sequence_converts_in_place",
+        composer_native_input::a_typed_sequence_converts_in_place as fn(),
+    ),
+    (
+        "composer_native_input::a_composer_command_reaches_its_intent",
+        composer_native_input::a_composer_command_reaches_its_intent as fn(),
+    ),
+    (
+        "composer_native_patch::a_keystroke_is_a_patch_of_its_block_and_nothing_else_writes",
+        composer_native_patch::a_keystroke_is_a_patch_of_its_block_and_nothing_else_writes as fn(),
+    ),
+    (
+        "composer_native_render::each_block_and_mark_is_drawn_by_its_tag",
+        composer_native_render::each_block_and_mark_is_drawn_by_its_tag as fn(),
+    ),
+    (
+        "composer_native_render::the_reply_quote_is_one_unit_no_caret_enters",
+        composer_native_render::the_reply_quote_is_one_unit_no_caret_enters as fn(),
+    ),
+    (
+        "composer_native_basic::the_native_surface_holds_the_document_it_was_given",
+        composer_native_basic::the_native_surface_holds_the_document_it_was_given as fn(),
+    ),
     (
         "spike_preedit::a_composition_stays_out_of_the_buffer_and_its_commit_is_caught",
         spike_preedit::a_composition_stays_out_of_the_buffer_and_its_commit_is_caught as fn(),

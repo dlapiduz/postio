@@ -66,10 +66,12 @@ pub fn attaching_shows_the_row_and_removing_cleans_it_up() {
          the message would attach beside it instead of landing in it: \
          {targets:?}"
     );
-    for (place, formats) in &targets {
+    for place in ["composer", "body"] {
         assert!(
-            formats.contains("FileList"),
-            "the {place} drop target does not accept files: {formats}"
+            targets
+                .iter()
+                .any(|(at, formats)| *at == place && formats.contains("FileList")),
+            "no {place} drop target accepts files: {targets:?}"
         );
     }
 

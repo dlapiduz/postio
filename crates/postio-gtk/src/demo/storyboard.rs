@@ -145,10 +145,11 @@ pub enum Preset {
     Locked,
     AgentsShared,
     Vault,
+    NativeComposer,
 }
 
 impl Preset {
-    pub const ALL: [Preset; 21] = [
+    pub const ALL: [Preset; 22] = [
         Preset::Settings(Section::Accounts),
         Preset::Settings(Section::Filtering),
         Preset::Settings(Section::Filters),
@@ -170,6 +171,7 @@ impl Preset {
         Preset::Locked,
         Preset::AgentsShared,
         Preset::Vault,
+        Preset::NativeComposer,
     ];
 
     /// Settings' Appearance section is not a preset: Focus does not show it.
@@ -196,6 +198,7 @@ impl Preset {
             Preset::Locked => "locked",
             Preset::AgentsShared => "settings/agents-shared",
             Preset::Vault => "vault",
+            Preset::NativeComposer => "native-composer",
         }
     }
 
@@ -206,7 +209,7 @@ impl Preset {
     fn apply(self, started: &Started) -> Result<(), String> {
         let window = &started.window;
         match self {
-            Preset::Vault => Ok(()),
+            Preset::Vault | Preset::NativeComposer => Ok(()),
             Preset::Settings(Section::Sync) | Preset::SyncBackfill => {
                 let panel = open_settings(window, Section::Sync)?;
                 show_mail_weight(&panel, started.account);
@@ -1096,6 +1099,10 @@ pub async fn run(board: &Storyboard, options: &Options) -> Run {
         .iter()
         .any(|step| step.input == Input::Event(EnvEvent::BodyArrived));
     let vault = board.preset.as_deref() == Some(Preset::Vault.id());
+    let native = board.preset.as_deref() == Some(Preset::NativeComposer.id());
+    postio_widgets::composer::surface::test_choose(
+        native.then_some(postio_widgets::composer::surface::SurfaceKind::Native),
+    );
     let started = match acting(base, size, &board.name, hold_body, vault).await {
         Ok(started) => started,
         Err(message) => {

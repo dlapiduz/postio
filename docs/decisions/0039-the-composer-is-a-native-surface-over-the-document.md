@@ -1,10 +1,10 @@
 # ADR 0039 — The composer is a native surface over the document
 
-- **Status:** Accepted (2026-09-18). Not built: the composer still edits in a WebKitGTK view (`postio-widgets` `composer/`). Replaces ADR 0003 Q2 (`contenteditable`); the rest of ADR 0003 stands.
+- **Status:** Accepted (2026-09-18). Being built by spec 015, which answers Q1 to Q3; the Mac shipped WebKit compose first. Replaces ADR 0003 Q2 (`contenteditable`); the rest of ADR 0003 stands.
 - **Decision:** The composer's editing surface becomes a native text view over `postio_body::Document` (`GtkTextView` in `postio-widgets`, `NSTextView` in the Swift frontend). The editing algebra moves into `postio-body` as pure functions on `Document`. No `contenteditable`, no bundled script, no script bridge, no browser engine in the compose path.
 
 ## Rules
-- `postio-body` gains `EditIntent` and `apply(&Document, EditIntent) -> Document`, beside `EditHistory`. It stays a pure leaf. `Document` is six block kinds and seven inline kinds (ADR 0004 Q2); every edit is a total function over that set, tested at the `--lib` tier.
+- `postio-body` gains `EditIntent` and `apply(&Document, &Selection, EditIntent) -> Edited`, beside `EditHistory`. It stays a pure leaf. `Document` is six block kinds and seven inline kinds (ADR 0004 Q2); every edit is a total function over that set, tested at the `--lib` tier.
 - The buffer is a projection of `Document`. It never holds the record (ADR 0004 Q3). Nesting lives in `Document`; the buffer renders margins and bullets.
 - Paste normalises through `postio_body::parse`.
 - Inline images are `GtkTextChildAnchor` holding a `GtkPicture` over blob bytes.
@@ -21,7 +21,7 @@
 - This removes the last WebKitGTK link from the Linux app.
 
 ## Revisit when
-- The buffer-offset to `Document` mapping is unstable under IME preedit. Spike typing CJK into a list item before step 3 is locked.
+- The buffer-offset to `Document` mapping is unstable under IME preedit. Spiked: it holds (spec 015 research R3).
 - `libspelling` fights a re-rendered buffer.
 
 ## Waiting on this

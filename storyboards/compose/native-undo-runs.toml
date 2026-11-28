@@ -1,0 +1,33 @@
+# Undo on the native composer goes by what a person did (spec 015 US2
+# scenario 2, R6): a typed run is one step and a conversion its own, so
+# Ctrl+Z gives back the typed `- ` before it takes back the words typed
+# before it.
+#
+# On the native surface by its preset until spec 015's step 4.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/015-native-composer US3" }
+preset = "native-composer"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { cursor.index = 0 }
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+expect  = "A reply opens with the caret in the body, above the quote."
+
+[[step]]
+type    = "- "
+check   = { app.focus.composer.marks = "bullet_list" }
+expect  = "The typed `- ` became a bullet."
+
+[[step]]
+key     = "ctrl+z"
+check   = { keyboard.field = "body", app.focus.composer.marks = "" }
+expect  = "One undo takes back the conversion and leaves what was typed: `- ` as plain text, no bullet."
+
+[[step]]
+key     = "ctrl+z"
+check   = { keyboard.field = "body" }
+expect  = "A second undo takes back the typing itself; the body is as the reply opened it."

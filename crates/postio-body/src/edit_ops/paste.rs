@@ -1,5 +1,5 @@
 use super::flat::{self, Atom, Cell};
-use super::text::{collapse, split_off};
+use super::text::{collapse, delete_range, split_off};
 use super::tree;
 use super::{Join, Outcome};
 use crate::document::{Block, Document};
@@ -79,4 +79,30 @@ fn splice(blocks: &mut Vec<Block>, at: DocPosition, cells: Vec<Cell>) -> Option<
         into.splice(offset..offset, cells);
     })?;
     Outcome::at(DocPosition::new(at.path, at.offset + added), Join::New)
+}
+
+pub fn slice(document: &Document, selection: &Selection) -> Document {
+    let (start, end) = (selection.start(), selection.end());
+    let mut blocks =
+        document.blocks[start.top()..=end.top().min(document.blocks.len() - 1)].to_vec();
+    let rebase = |at: &DocPosition| {
+        let mut path = at.path.clone();
+        path[0] -= start.top() as u32;
+        DocPosition::new(path, at.offset)
+    };
+    let (start, end) = (rebase(start), rebase(end));
+    let leaves = tree::leaves(&blocks, 0..blocks.len());
+    if let Some(last) = leaves.last().cloned() {
+        let len = block_at(&blocks, &last).and_then(text_len).unwrap_or(0);
+        if end < DocPosition::new(last.clone(), len) {
+            delete_range(&mut blocks, &end, &DocPosition::new(last, len));
+        }
+    }
+    if let Some(first) = leaves.first().cloned() {
+        let origin = DocPosition::new(first, 0);
+        if origin < start {
+            delete_range(&mut blocks, &origin, &start);
+        }
+    }
+    Document { blocks }
 }

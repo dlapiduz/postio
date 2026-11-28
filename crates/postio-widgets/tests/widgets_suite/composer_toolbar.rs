@@ -1,3 +1,4 @@
+use crate::support_compose::find;
 use crate::support_compose::settle as pump;
 use std::time::{Duration, Instant};
 
@@ -50,20 +51,6 @@ fn settle(composer: &composer::Composer, what: &str, done: impl Fn() -> bool) {
          responsive the moment it is finally asked. Raise POSTIO_TEST_PATIENCE \
          and see whether it still fails before concluding anything (#957)"
     );
-}
-
-fn find(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
-    if widget.has_css_class(class) {
-        return Some(widget.clone());
-    }
-    let mut child = widget.first_child();
-    while let Some(current) = child {
-        if let Some(found) = find(&current, class) {
-            return Some(found);
-        }
-        child = current.next_sibling();
-    }
-    None
 }
 
 fn toggle(composer: &composer::Composer, class: &str) -> gtk::ToggleButton {

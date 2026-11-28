@@ -1,0 +1,25 @@
+# What a paste brings into the native composer (spec 015 US3 scenario 4,
+# FR-007) has no storyboard yet: the format has no clipboard step, so a
+# film cannot put hostile HTML on the clipboard. The claim is a case,
+# `composer_native_clipboard::hostile_html_pastes_narrowed`, which pastes
+# it through the same signal a person's Ctrl+V reaches.
+#
+# Kept as a film of the reply it would paste into, so the catalogue
+# shows where it stops; on the native surface by its preset.
+apps   = ["focus"]
+source = { kind = "spec", ref = "specs/015-native-composer US3" }
+preset = "native-composer"
+
+[[step]]
+wait    = { until = { cursor.index = 0 } }
+check   = { cursor.index = 0 }
+
+[[step]]
+command = "reply"
+check   = { composer.open = true, keyboard.field = "body" }
+expect  = "A reply opens with the caret in the body, above the quote."
+
+[[step]]
+type    = "Pasted below:"
+check   = { keyboard.field = "body" }
+expect  = "The words are in the body, ordinary text, the quote below them untouched."

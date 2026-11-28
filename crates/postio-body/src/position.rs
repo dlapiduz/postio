@@ -88,6 +88,53 @@ impl Selection {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BlockContext {
+    pub heading: Option<crate::HeadingLevel>,
+    pub code: bool,
+    pub list: Option<(crate::ListKind, bool)>,
+    pub quoted: bool,
+}
+
+pub fn block_context(document: &Document, at: &DocPosition) -> BlockContext {
+    let mut context = BlockContext::default();
+    let mut blocks: &[Block] = &document.blocks;
+    let mut path = at.path.as_slice();
+    while let Some((&index, rest)) = path.split_first() {
+        let Some(block) = blocks.get(index as usize) else {
+            break;
+        };
+        match block {
+            Block::Quote(children) => {
+                context.quoted = true;
+                blocks = children;
+                path = rest;
+            }
+            Block::List { kind, items } => {
+                let Some((&item, rest)) = rest.split_first() else {
+                    break;
+                };
+                let Some(held) = items.get(item as usize) else {
+                    break;
+                };
+                context.list = Some((*kind, held.task.is_some()));
+                blocks = &held.blocks;
+                path = rest;
+            }
+            Block::Heading { level, .. } => {
+                context.heading = Some(*level);
+                break;
+            }
+            Block::Code { .. } => {
+                context.code = true;
+                break;
+            }
+            _ => break,
+        }
+    }
+    context
+}
+
 pub(crate) fn block_at<'a>(blocks: &'a [Block], path: &[u32]) -> Option<&'a Block> {
     let (&first, rest) = path.split_first()?;
     let block = blocks.get(first as usize)?;

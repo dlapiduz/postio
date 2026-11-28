@@ -61,8 +61,10 @@ So the interception is `insert-text` (and `delete-range`) stopped on the
 user path, not the input method's `commit`, which the view keeps private.
 The space that ends a hex entry is committed after the character: the
 surface sees two inserts, one a composition's commit and one typing.
-The spike is kept as a guard until T034 asserts the same on the real
-surface, and is deleted in that commit.
+T034 asserts the first, second and fourth rows on the real surface. The
+third stays in the spike as its guard: on the real surface `apply` refuses
+every intent while a composition is open, so no path of its own patches
+another block mid-preedit, and the claim is the widget's, not the surface's.
 
 The expectation it tested:
 
@@ -159,7 +161,45 @@ Disposition of today's files in `crates/postio-widgets/tests/widgets_suite/`
 The full list is `ls widgets_suite/composer_*.rs widgets_suite/editor_*.rs`;
 T045 records a verdict for each.
 
-## R8 — Spell-check **Spike**
+### R7's verdicts, recorded (T045, 2026-11-29)
+
+The composer's suites run on either surface: the developer switch is read
+once per process and nextest runs a process per case, so
+`POSTIO_NATIVE_COMPOSER=1 cargo nextest run -p postio-widgets --test
+widgets_suite composer_ editor_ editable_` is the native column. It is green
+apart from the two files deleted with the WebView.
+
+| File | Native column | Verdict |
+|---|---|---|
+| `composer_attachments.rs` | green | port: the body's drop target takes files; a text view also has its own target for dragged text, so the case asks that each place has one that takes files |
+| `composer_autosave.rs`, `composer_confirms.rs`, `composer_focus.rs`, `composer_host.rs`, `composer_recipient_select.rs`, `composer_recipients.rs`, `composer_remote_image.rs`, `composer_resume.rs`, `composer_schedule_send.rs`, `composer_signature_default.rs`, `composer_size.rs`, `composer_tracking_notice.rs` | green | unchanged: the shell around the surface |
+| `composer_document.rs` | green | port: the native `test_type` replaces the body, as the WebView's did |
+| `composer_markdown.rs`, `composer_markdown_source.rs` | green | port: the native surface takes the Markdown view's caret back (`show_at`) and selects a text run for the case (`test_select`) |
+| `composer_toolbar.rs` | green | port |
+| `composer_inline_image.rs` | red: it reads the WebView's decoded `<img>` by script | delete in step 4; `composer_native_image.rs` asks it of the native surface |
+| `composer_warm.rs` | red: there is no web process to warm | delete in step 4 with `warm()` |
+| `editor_format.rs` | WebView only (builds `Editor`) | moved down: `postio_ui::editor::format` cases and `composer_native_format.rs`; delete in step 4 |
+| `editor_markdown.rs` | WebView only | moved down: `postio_ui::editor::markdown` matcher cases and `body_suite/apply.rs` conversions; `composer_native_input.rs` and `composer_native_history.rs` for composition; delete in step 4 |
+| `editor_images.rs` | WebView only | `composer_native_image.rs`; delete in step 4 |
+| `editor_appearance.rs` | WebView only | `composer_native_css.rs`; delete in step 4 |
+| `editor_bridge.rs`, `editor_profile.rs`, `editor_teardown.rs` | WebView only | delete in step 4; the claims become `check-no-browser-engine.py` |
+| `editable_dialect.rs` | WebView only | delete in step 4; the contract becomes a `body_suite` case (T049) |
+
+## R8 — Spell-check **Spike: Q3 goes to B (2026-11-29)**
+
+**Outcome.** Q3's condition fails before the adapter can be tried: the
+Flatpak runtime (`org.gnome.Platform//51`) ships enchant
+(`libenchant-2.so.2`) but not libspelling, so the app would have to bundle
+it as a module of its own, and this machine has the library without its
+headers (`libspelling-0.4.10` installed, `libspelling-devel` not), so the
+`libspelling` crate cannot build here without a system package the
+maintainer installs. Per Q3 = B, spell-check becomes its own task after
+step 4: bundle libspelling in the Flatpak manifest, add the build
+dependency to CI's runner, then run the patch-survival case below. The
+native surface ships without it, which costs nothing counted: the WebView
+never enabled it either.
+
+The question the spike was to answer:
 
 ADR 0039's second falsifier: does `SpellingTextBufferAdapter` cope with a
 buffer patched by the surface instead of edited in place? Patch operations

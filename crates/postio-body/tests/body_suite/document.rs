@@ -988,3 +988,34 @@ mod subset {
         ));
     }
 }
+
+#[test]
+fn the_composer_dialect_is_what_to_html_writes() {
+    let document = every_shape();
+    let html = document.to_html();
+    assert_eq!(parse(&html), document, "the dialect round-trips");
+    for foreign in [
+        "<span",
+        "<div",
+        "<font",
+        " style=",
+        " class=",
+        "<b>",
+        "<i>",
+        "<script",
+        "<br/>",
+        "contenteditable",
+        "&nbsp;",
+    ] {
+        assert!(
+            !html.contains(foreign),
+            "the dialect holds {foreign}: {html}"
+        );
+    }
+    let webkit = "<div><b>bold</b> and <i>italic</i></div><div><br></div><p>next</p>";
+    assert_eq!(
+        parse(&parse(webkit).to_html()),
+        parse(webkit),
+        "WebKit's own markup narrows once and stays narrowed"
+    );
+}

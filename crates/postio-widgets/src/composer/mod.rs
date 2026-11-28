@@ -6,8 +6,10 @@
 //! line, rather than lose the mail into an unconnected seam.
 
 pub mod editor;
+pub mod native;
 pub mod scheme;
 pub mod source_view;
+pub mod surface;
 pub mod web_process;
 
 use std::cell::{Cell, RefCell};
@@ -341,7 +343,7 @@ mod imp {
         pub identity_only: gtk::Label,
         /// The `Editor` owns the document, edit history and typing-run coalescing; the composer
         /// holds a view over its record (ADR 0004 Q6, #347).
-        pub body: editor::Editor,
+        pub body: Rc<dyn super::surface::ComposerSurface>,
         pub source: source_view::SourceView,
         pub source_toggle: gtk::ToggleButton,
         pub source_notice: gtk::Box,
@@ -440,7 +442,7 @@ mod imp {
                 identity_only: gtk::Label::new(None),
                 body: {
                     let lookup = blob_lookup.clone();
-                    editor::Editor::new(std::rc::Rc::new(move |content_id: &str| {
+                    super::surface::build(std::rc::Rc::new(move |content_id: &str| {
                         lookup
                             .borrow()
                             .as_ref()
@@ -1481,22 +1483,22 @@ impl Composer {
                 self.say_under_editor(&words);
             }
             CommandId::Bold if self.is_open() => {
-                self.imp().body.format(editor::Format::Bold);
+                self.imp().body.format(surface::Format::Bold);
             }
             CommandId::Italic if self.is_open() => {
-                self.imp().body.format(editor::Format::Italic);
+                self.imp().body.format(surface::Format::Italic);
             }
             CommandId::Heading1 if self.is_open() => {
-                self.imp().body.format(editor::Format::Heading1);
+                self.imp().body.format(surface::Format::Heading1);
             }
             CommandId::BulletList if self.is_open() => {
-                self.imp().body.format(editor::Format::BulletList);
+                self.imp().body.format(surface::Format::BulletList);
             }
             CommandId::NumberedList if self.is_open() => {
-                self.imp().body.format(editor::Format::NumberedList);
+                self.imp().body.format(surface::Format::NumberedList);
             }
             CommandId::QuoteBlock if self.is_open() => {
-                self.imp().body.format(editor::Format::QuoteBlock);
+                self.imp().body.format(surface::Format::QuoteBlock);
             }
             CommandId::InsertLink if self.is_open() => self.request_link(),
             _ => {}
@@ -1786,7 +1788,7 @@ impl Composer {
         }
         // The caret first: the rich view says where it is asynchronously.
         let weak = self.downgrade();
-        self.imp().body.caret(move |caret| {
+        self.imp().body.caret(Box::new(move |caret| {
             if let Some(composer) = weak.upgrade()
                 && !composer.imp().source.is_shown()
             {
@@ -1796,7 +1798,7 @@ impl Composer {
                 );
                 composer.show_source(&opened.text, opened.quotes, opened.caret);
             }
-        });
+        }));
     }
 
     fn show_source(&self, text: &str, quotes: Vec<postio_body::Block>, caret: Option<usize>) {
@@ -2680,11 +2682,11 @@ impl Composer {
         imp.body.widget().add_css_class("postio-compose-body");
         // Editing undo is the document's and mail undo is `u`: the two-stacks separation of ADR
         // 0004 Q5, enforced inside the Editor.
-        imp.body.connect_changed(glib::clone!(
+        imp.body.connect_changed(Box::new(glib::clone!(
             #[weak(rename_to = composer)]
             self,
             move |_| composer.body_edited()
-        ));
+        )));
         imp.source
             .text_view()
             .buffer()
@@ -2799,7 +2801,7 @@ impl Composer {
         column.append(fields);
         column.append(&imp.tracking_notice);
         column.append(&self.build_toolbar());
-        column.append(imp.body.widget());
+        column.append(&imp.body.widget());
         column.append(imp.source.widget());
         column.append(&self.build_source_notice());
         column.append(&imp.below_body);
@@ -2919,7 +2921,7 @@ impl Composer {
 
         // Programmatic `set_active` emits `toggled`, not `clicked`, so nothing loops.
         let toggles = imp.format_toggles.clone();
-        imp.body.connect_format_state(move |state| {
+        imp.body.connect_format_state(Box::new(move |state| {
             let states = [
                 state.bold,
                 state.italic,
@@ -2931,7 +2933,7 @@ impl Composer {
             for (button, active) in toggles.iter().zip(states) {
                 button.set_active(active);
             }
-        });
+        }));
 
         toolbar
     }
@@ -3241,6 +3243,11 @@ impl Composer {
             .filter(|(button, _)| button.is_active())
             .map(|(_, (id, _, _))| id.as_str())
             .collect()
+    }
+
+    #[doc(hidden)]
+    pub fn test_body_widget(&self) -> gtk::Widget {
+        self.imp().body.widget()
     }
 
     #[doc(hidden)]
