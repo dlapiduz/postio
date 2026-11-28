@@ -13,6 +13,7 @@ use postio_body::{Document, EditHistory, EditStep, Join, Selection, parse};
 use webkit6::prelude::*;
 
 use super::scheme;
+use super::surface::{Format, FormatState};
 use crate::reader::BlobSource;
 use postio_ui::editor::document as editor_document;
 
@@ -255,18 +256,6 @@ type ChangedHandler = Box<dyn Fn(&Document)>;
 
 type FormatWatcher = Box<dyn Fn(FormatState)>;
 
-/// `bold` is true when the selection is inside `Strong`, not when a mode is armed: there are no
-/// modes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FormatState {
-    pub bold: bool,
-    pub italic: bool,
-    pub heading_1: bool,
-    pub bullet_list: bool,
-    pub numbered_list: bool,
-    pub quote_block: bool,
-}
-
 struct EditorState {
     document: RefCell<Document>,
     history: RefCell<EditHistory>,
@@ -491,7 +480,6 @@ impl Editor {
         self.state.changed.borrow_mut().push(Box::new(handler));
     }
 
-    /// Called only on change, never per keystroke.
     pub fn connect_format_state(&self, handler: impl Fn(FormatState) + 'static) {
         self.state
             .format_watchers
@@ -529,7 +517,6 @@ impl Editor {
         self.state.history.borrow().can_undo()
     }
 
-    /// `None` when there is no caret, or it is in a carried quote.
     pub fn caret(&self, done: impl FnOnce(Option<DocPosition>) + 'static) {
         self.view.evaluate_javascript(
             "window.postioMarkedBody()",
@@ -736,16 +723,6 @@ impl Editor {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Format {
-    Bold,
-    Italic,
-    Heading1,
-    BulletList,
-    NumberedList,
-    QuoteBlock,
-}
-
 impl Editor {
     /// Each fires an `input` event, so the edit crosses the bridge like any keystroke and lands on
     /// the same history.
@@ -777,8 +754,6 @@ impl Editor {
         ));
     }
 
-    /// Anything but http, https and mailto is refused here rather than silently dropped by the
-    /// parse later.
     pub fn create_link(&self, href: &str) -> bool {
         let allowed = ["http://", "https://", "mailto:"]
             .iter()

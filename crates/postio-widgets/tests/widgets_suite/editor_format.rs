@@ -6,7 +6,8 @@ use std::time::Duration;
 use gtk::glib;
 use gtk::prelude::*;
 use postio_body::{Block, Document, HeadingLevel, Inline};
-use postio_widgets::composer::editor::{Editor, Format};
+use postio_widgets::composer::editor::Editor;
+use postio_widgets::composer::surface::Format;
 use webkit6::prelude::*;
 
 fn eval_str(view: &webkit6::WebView, script: &str) -> String {
