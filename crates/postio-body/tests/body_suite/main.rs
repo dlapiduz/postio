@@ -1,3 +1,4 @@
+mod apply;
 mod document;
 mod edit;
 mod formatting_wire;
@@ -5,6 +6,7 @@ mod markdown_corpus;
 mod markdown_parity;
 mod outgoing;
 mod own_text;
+mod projection;
 mod reader_view;
 mod remote_vectors;
 mod replying;

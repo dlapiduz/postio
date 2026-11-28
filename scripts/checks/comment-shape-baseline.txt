@@ -31,7 +31,6 @@ crates/postio-bench/benches/sync_lanes.rs 1
 crates/postio-bench/benches/sync_writes.rs 2
 crates/postio-body/src/autolink.rs 1
 crates/postio-body/src/document.rs 2
-crates/postio-body/src/edit.rs 1
 crates/postio-body/src/flowed.rs 2
 crates/postio-body/src/forward.rs 2
 crates/postio-body/src/golden.rs 1

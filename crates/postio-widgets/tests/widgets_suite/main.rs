@@ -83,6 +83,7 @@ mod settings_sync;
 mod settings_unsubscribe;
 mod small_widgets;
 mod source_headers;
+mod spike_preedit;
 mod storyboard_chain_delivery;
 mod storyboard_outline;
 mod storyboard_reach;
@@ -101,6 +102,18 @@ mod widgets_css;
 const IGNORED: &[&str] = &[];
 
 const CASES: &[(&str, fn())] = &[
+    (
+        "spike_preedit::a_composition_stays_out_of_the_buffer_and_its_commit_is_caught",
+        spike_preedit::a_composition_stays_out_of_the_buffer_and_its_commit_is_caught as fn(),
+    ),
+    (
+        "spike_preedit::a_patch_of_another_line_leaves_a_composition_open",
+        spike_preedit::a_patch_of_another_line_leaves_a_composition_open as fn(),
+    ),
+    (
+        "spike_preedit::escape_cancels_a_composition_and_commits_nothing",
+        spike_preedit::escape_cancels_a_composition_and_commits_nothing as fn(),
+    ),
     (
         "display_required::ci_has_a_display_to_run_the_gtk_suites_on",
         display_required::ci_has_a_display_to_run_the_gtk_suites_on as fn(),

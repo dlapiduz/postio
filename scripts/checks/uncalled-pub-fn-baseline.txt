@@ -104,3 +104,8 @@ with_internal_date                # crates/postio-account/src/backend/message.rs
 with_user_names                   # crates/postio-ui/src/reader/header.rs:162 -- the To and Cc names of the reader header (FR-032); the Mac window reads the sender the list statement already names
 fail_next                         # crates/postio-dav/src/fake.rs -- sync's calendar cases (specs/017-calendar T034) queue faults with it
 sync_account                      # crates/postio-sync/src/caldav.rs -- the host's poll (specs/017-calendar T034, wired with T036's account switch) calls it
+conversion_before                 # crates/postio-ui/src/editor/markdown.rs -- the native composer surface (specs/015-native-composer T033) calls it on each typed character and Enter
+lines_in                          # crates/postio-body/src/projection.rs -- the native surface's patch (specs/015-native-composer T032) restyles the lines it changed
+runs_in                           # crates/postio-body/src/projection.rs -- the native surface's patch (specs/015-native-composer T032) retags the runs it changed
+offset_of                         # crates/postio-body/src/projection.rs -- the native surface (specs/015-native-composer T035) places the caret from a DocPosition
+utf16_of                          # crates/postio-body/src/projection.rs -- the Mac's NSTextView surface (specs/015-native-composer T053) converts offsets with it
