@@ -1,0 +1,37 @@
+Message-ID: <pgp-signed-tampered-body@example.com>
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+From: Ada Moreno <ada@example.com>
+To: Grace Example <grace@example.net>
+Subject: Tampered body: lock-keeper rota, April
+MIME-Version: 1.0
+Content-Type: multipart/signed; micalg=pgp-sha256;
+	protocol="application/pgp-signature"; boundary="=_sig_good_7d1"
+
+This is an OpenPGP/MIME signed message (RFC 3156).
+--=_sig_good_7d1
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 7bit
+
+The lock-keeper rota for April, signed so it is on the record.
+
+  Week 1  Ada
+  Week 2  Grace
+  Week 3  Ada
+  Week 4  Kim
+
+Swaps go through me, not the shared sheet.
+
+Ada
+--=_sig_good_7d1
+Content-Type: application/pgp-signature; name="signature.asc"
+Content-Description: OpenPGP digital signature
+Content-Disposition: attachment; filename="signature.asc"
+
+-----BEGIN PGP SIGNATURE-----
+
+iHUEABYIAB0WIQTo35mHUT7PR+hIegYZnBGUbTZwXQUCaalGEAAKCRAZnBGUbTZw
+XQssAP4h1MP0tUGJvazsALXHY203uxEDYjBChUxg9rRhejzNAgD/VLFnxQZN1ACc
+R56cUF7ZPAsPo/IXMOEMcY5Te9GS9gE=
+=UFGq
+-----END PGP SIGNATURE-----
+--=_sig_good_7d1--

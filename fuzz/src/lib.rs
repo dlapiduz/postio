@@ -20,4 +20,7 @@ pub fn allow_contained_panics() {
     });
 }
 
-pub use properties::{check_parse_message, check_parse_query, check_sanitize_html};
+pub use properties::{
+    check_parse_message, check_parse_query, check_read_keyring, check_sanitize_html,
+    check_verify_signature,
+};

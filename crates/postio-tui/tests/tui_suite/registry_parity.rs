@@ -14,10 +14,17 @@ const PALETTE_SURFACES: &[Context] = &[
     Context::Digest,
     Context::Filtered,
     Context::Capture,
+    Context::Source,
     Context::Calendar,
 ];
 
-const NOT_YET: &[(&str, &str)] = &[];
+const NOT_YET: &[(&str, &str)] = &[
+    ("copy_source", "specs/016-message-authenticity T023"),
+    ("save_source", "specs/016-message-authenticity T023"),
+    ("unfold_part", "specs/016-message-authenticity T023"),
+    ("accept_key", "specs/016-message-authenticity T042"),
+    ("forget_key", "specs/016-message-authenticity T042"),
+];
 
 fn key_event(chord: &Chord) -> KeyEvent {
     let mut modifiers = KeyModifiers::NONE;

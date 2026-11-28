@@ -798,6 +798,47 @@ fn disposition(part: &MessagePart<'_>) -> Disposition {
     }
 }
 
+pub fn leaf_bodies(raw: &[u8]) -> Vec<LeafBody> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let Some(parsed) = MessageParser::default().parse(raw) else {
+            return Vec::new();
+        };
+        let mut out: Vec<LeafBody> = parsed
+            .parts()
+            .filter(|part| !part.is_multipart() && !part.is_message())
+            .filter_map(|part| {
+                let range = part.offset_body() as usize..part.offset_end() as usize;
+                (range.start < range.end && range.end <= raw.len()).then(|| LeafBody {
+                    range,
+                    encoding: part
+                        .content_transfer_encoding()
+                        .unwrap_or("7bit")
+                        .to_ascii_lowercase(),
+                    name: part.attachment_name().map(str::to_owned),
+                })
+            })
+            .collect();
+        out.sort_by_key(|leaf| leaf.range.start);
+        let mut end = 0;
+        out.retain(|leaf| {
+            let kept = leaf.range.start >= end;
+            if kept {
+                end = leaf.range.end;
+            }
+            kept
+        });
+        out
+    }))
+    .unwrap_or_default()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LeafBody {
+    pub range: std::ops::Range<usize>,
+    pub encoding: String,
+    pub name: Option<String>,
+}
+
 #[cfg(test)]
 mod containment {
     use super::*;
@@ -806,6 +847,33 @@ mod containment {
     fn a_panic_inside_the_parse_is_reported_as_unparseable() {
         let outcome = contain(|| panic!("a dependency bug"));
         assert_eq!(outcome, Err(Unparseable));
+    }
+
+    #[test]
+    fn leaf_bodies_are_the_bytes_between_a_parts_headers_and_its_end() {
+        let raw = b"Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n\
+            Content-Type: text/plain\r\n\r\nhello\r\n--b\r\n\
+            Content-Type: application/octet-stream; name=x.bin\r\n\
+            Content-Transfer-Encoding: BASE64\r\n\r\naGk=\r\n--b--\r\n";
+        let leaves = leaf_bodies(raw);
+        let seen: Vec<(&[u8], &str, Option<&str>)> = leaves
+            .iter()
+            .map(|leaf| {
+                (
+                    &raw[leaf.range.clone()],
+                    leaf.encoding.as_str(),
+                    leaf.name.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                (&b"hello"[..], "7bit", None),
+                (&b"aGk="[..], "base64", Some("x.bin"))
+            ]
+        );
+        assert!(leaf_bodies(b"").is_empty());
     }
 
     #[test]

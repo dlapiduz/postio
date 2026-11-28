@@ -29,6 +29,7 @@ pub enum SurfaceKind {
     RowMenu,
     ThreadMenu,
     Outline,
+    Source,
 }
 
 impl SurfaceKind {
@@ -56,6 +57,7 @@ impl SurfaceKind {
             SurfaceKind::Calendar => KeyContext::Calendar,
             SurfaceKind::ThreadMenu => KeyContext::Reader,
             SurfaceKind::Outline => KeyContext::Outline,
+            SurfaceKind::Source => KeyContext::Source,
             // Their keys are the list's context, and only the ones that
             // close them are the window's (GTK's dialog close rule).
             SurfaceKind::Settings
@@ -82,6 +84,7 @@ impl SurfaceKind {
                 | SurfaceKind::Calendar
                 | SurfaceKind::ThreadMenu
                 | SurfaceKind::Outline
+                | SurfaceKind::Source
         )
     }
 }
@@ -116,7 +119,6 @@ pub enum ReaderVerb {
     /// When there is none, say `Input::MatchEdge`.
     PrevMatch,
     SwitchTreatment,
-    ViewSource,
     ShowMore,
     /// Said only when the controller holds no walk.
     StepThread(i32),
@@ -201,10 +203,11 @@ impl Surfaces {
     pub(crate) fn answers(&self, id: CommandId) -> Option<bool> {
         let top = self.top()?;
         match top {
-            SurfaceKind::Message => {
-                (id == CommandId::Back || id == CommandId::PrevView || reader_verb(id).is_some())
-                    .then_some(true)
-            }
+            SurfaceKind::Message => (id == CommandId::Back
+                || id == CommandId::PrevView
+                || id == CommandId::ViewSource
+                || reader_verb(id).is_some())
+            .then_some(true),
             // They take the keyboard: every key but Quit is theirs, and
             // only their close keys do anything.
             SurfaceKind::KeyMap | SurfaceKind::Dialog => Some(crate::keys::key_map_takes(id)),
@@ -223,7 +226,10 @@ impl Surfaces {
         };
         match top {
             SurfaceKind::Message => {
-                if matches!(id, CommandId::Back | CommandId::PrevView) || reader_verb(id).is_some()
+                if matches!(
+                    id,
+                    CommandId::Back | CommandId::PrevView | CommandId::ViewSource
+                ) || reader_verb(id).is_some()
                 {
                     Route::Controller
                 } else {
@@ -255,6 +261,8 @@ impl Surfaces {
             | SurfaceKind::Picker
             | SurfaceKind::RowMenu => Route::Surface(top),
             SurfaceKind::Bar | SurfaceKind::Filtered => Route::List,
+            SurfaceKind::Source if crate::source::Source::owns(id) => Route::Controller,
+            SurfaceKind::Source => Route::Toolkit,
         }
     }
 
@@ -467,7 +475,6 @@ fn reader_verb(id: CommandId) -> Option<ReaderVerb> {
         CommandId::FindNext => ReaderVerb::FindNext,
         CommandId::FindPrevious => ReaderVerb::FindPrevious,
         CommandId::SwitchTreatment => ReaderVerb::SwitchTreatment,
-        CommandId::ViewSource => ReaderVerb::ViewSource,
         CommandId::MoreActions => ReaderVerb::ShowMore,
         CommandId::NextInConversation => ReaderVerb::StepThread(1),
         CommandId::PrevInConversation => ReaderVerb::StepThread(-1),

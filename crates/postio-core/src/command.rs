@@ -402,6 +402,25 @@ commands! {
     FilteredTab5 => "filtered_tab_5",
     FilteredTab6 => "filtered_tab_6",
     FilteredTab7 => "filtered_tab_7",
+    SourceTabVerification => "source_tab_verification",
+    SourceTabHeaders => "source_tab_headers",
+    SourceTabRaw => "source_tab_raw",
+    CopySource => "copy_source",
+    SaveSource => "save_source",
+    UnfoldPart => "unfold_part",
+    AcceptKey {
+        message: Option<MessageId> = None,
+        accepted: bool = true,
+        kept: Option<String> = None,
+    } => "accept_key",
+    ForgetKey {
+        message: Option<MessageId> = None,
+        forgotten: bool = true,
+        kept: Option<KeptKey> = None,
+    } => "forget_key",
+    ImportKey {
+        message: Option<MessageId> = None,
+    } => "import_key",
     /// The deliberate command that applies filtering to mail filed before it was turned on; the
     /// frontend shows what would move first.
     SweepInbox => "sweep_inbox",
@@ -758,6 +777,16 @@ pub enum ContactAddressAction {
 
 /// Kept by the undo entry of a verb that changed it; `position` matters because file order is match
 /// order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptKey {
+    pub fingerprint: String,
+    pub keyblock: Vec<u8>,
+    pub primary_uid: Option<String>,
+    pub sources: Vec<String>,
+    pub addresses: Vec<String>,
+    pub first_seen: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KeptRule {
     pub position: u32,

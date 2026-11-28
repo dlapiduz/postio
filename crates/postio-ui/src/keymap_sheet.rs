@@ -304,6 +304,15 @@ pub fn group(command: CommandId) -> Option<Group> {
         | C::ForwardWhat3 => None,
         C::EditExternally | C::TogglePreview => None,
         C::ToggleFold | C::ExpandAll => None,
+        C::SourceTabVerification
+        | C::SourceTabHeaders
+        | C::SourceTabRaw
+        | C::CopySource
+        | C::SaveSource
+        | C::UnfoldPart
+        | C::AcceptKey
+        | C::ForgetKey
+        | C::ImportKey => None,
         C::ToggleAccountEnabled
         | C::RemoveAccount
         | C::UpdateCredential

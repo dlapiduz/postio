@@ -389,6 +389,8 @@ pub struct ComposingControls {
 
 type ContactTakeBack = std::rc::Rc<dyn Fn(&postio_ui::filtering::Undo)>;
 
+type Toggled = Box<dyn Fn(bool)>;
+
 mod imp {
     use super::*;
 
@@ -537,6 +539,11 @@ mod imp {
         /// A count, not a toggle: Postio never sends a read receipt automatically, so there is only
         /// a fact to state. Always visible: zero is itself the answer.
         pub read_receipt_count: gtk::Label,
+        pub gnupg_switch: gtk::Switch,
+        pub gnupg_line: gtk::Label,
+        pub gnupg_reload: gtk::Button,
+        pub gnupg_toggled: RefCell<Option<Toggled>>,
+        pub gnupg_drawing: Cell<bool>,
         pub keys_list: gtk::ListBox,
         pub keys_scroller: gtk::ScrolledWindow,
         pub capturing: RefCell<Option<CommandId>>,
@@ -662,6 +669,11 @@ mod imp {
                 unsubscribe_empty: gtk::Label::new(Some(postio_ui::privacy::NO_LISTS_LEFT)),
                 unsubscribe_activations: RefCell::new(Vec::new()),
                 read_receipt_count: gtk::Label::new(None),
+                gnupg_switch: gtk::Switch::new(),
+                gnupg_line: gtk::Label::new(None),
+                gnupg_reload: gtk::Button::with_label("Reload GnuPG keys"),
+                gnupg_toggled: RefCell::default(),
+                gnupg_drawing: Cell::new(false),
                 keys_list: gtk::ListBox::new(),
                 keys_scroller: gtk::ScrolledWindow::new(),
                 capturing: RefCell::new(None),
@@ -728,6 +740,7 @@ impl SettingsPanel {
         self.refresh_validity();
         self.redraw_filters();
         self.redraw_sync();
+        self.redraw_signatures();
         self.redraw_keys();
         if postio_config::validate::check_str(&text)
             .validation
@@ -754,6 +767,7 @@ impl SettingsPanel {
         self.refresh_validity();
         self.redraw_filters();
         self.redraw_sync();
+        self.redraw_signatures();
         self.redraw_keys();
         self.schedule_write();
     }
@@ -1178,6 +1192,64 @@ impl SettingsPanel {
     pub fn set_unsubscribe_activations(&self, activations: Vec<UnsubscribeActivation>) {
         *self.imp().unsubscribe_activations.borrow_mut() = activations;
         self.redraw_unsubscribe_activations();
+    }
+
+    pub fn connect_gnupg_keyring(&self, handler: impl Fn(bool) + 'static) {
+        self.imp().gnupg_toggled.replace(Some(Box::new(handler)));
+    }
+
+    pub fn set_gnupg_keyring(&self, state: &postio_ui::settings::GnupgKeyring) {
+        self.imp()
+            .gnupg_line
+            .set_label(&postio_ui::settings::gnupg_line(state));
+    }
+
+    #[doc(hidden)]
+    pub fn gnupg_keyring_line(&self) -> String {
+        self.imp().gnupg_line.label().to_string()
+    }
+
+    #[doc(hidden)]
+    pub fn turn_gnupg_keyring(&self, on: bool) {
+        self.imp().gnupg_switch.set_active(on);
+    }
+
+    fn gnupg_switched(&self, on: bool) {
+        let imp = self.imp();
+        if imp.gnupg_drawing.get() {
+            return;
+        }
+        let original = self.text();
+        match postio_config::signatures::set_gnupg_keyring(&original, on) {
+            Ok(Some(patched)) => imp.buffer.set_text(&patched),
+            Ok(None) => {}
+            Err(error) => tracing::error!(%error, "could not patch [signatures]: {error}"),
+        }
+        imp.gnupg_reload.set_visible(on);
+        self.ask_for_gnupg_keys(on);
+    }
+
+    fn ask_for_gnupg_keys(&self, on: bool) {
+        if let Some(handler) = self.imp().gnupg_toggled.borrow().as_ref() {
+            handler(on);
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn reload_gnupg_keys(&self) {
+        self.imp().gnupg_reload.emit_clicked();
+    }
+
+    fn redraw_signatures(&self) {
+        let Ok(config) = Config::from_toml_str(&self.text()) else {
+            return;
+        };
+        let imp = self.imp();
+        imp.gnupg_drawing.set(true);
+        imp.gnupg_switch.set_active(config.signatures.gnupg_keyring);
+        imp.gnupg_reload
+            .set_visible(config.signatures.gnupg_keyring);
+        imp.gnupg_drawing.set(false);
     }
 
     /// A count, not a switch: Postio never sends a receipt automatically (a fixed privacy policy).
@@ -4030,6 +4102,40 @@ impl SettingsPanel {
             .append(&imp.unsubscribe_empty);
         privacy.section(postio_ui::privacy::READ_RECEIPTS);
         privacy.append(&imp.read_receipt_count);
+        privacy.section("Signatures");
+        let gnupg_row = gtk::Box::new(gtk::Orientation::Horizontal, space::S3);
+        let gnupg_label = gtk::Label::new(Some("Use keys from my GnuPG keyring"));
+        gnupg_label.set_xalign(0.0);
+        gnupg_label.set_hexpand(true);
+        gnupg_row.append(&gnupg_label);
+        imp.gnupg_switch.set_valign(gtk::Align::Center);
+        imp.gnupg_switch
+            .update_property(&[gtk::accessible::Property::Label(
+                "Use keys from my GnuPG keyring",
+            )]);
+        gnupg_row.append(&imp.gnupg_switch);
+        imp.gnupg_line.set_xalign(0.0);
+        imp.gnupg_line.set_wrap(true);
+        imp.gnupg_line.add_css_class("dim-label");
+        imp.gnupg_line.set_label(&postio_ui::settings::gnupg_line(
+            &postio_ui::settings::GnupgKeyring::Off,
+        ));
+        imp.gnupg_switch.connect_active_notify(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |switch| panel.gnupg_switched(switch.is_active())
+        ));
+        imp.gnupg_reload.set_halign(gtk::Align::Start);
+        imp.gnupg_reload.set_visible(false);
+        imp.gnupg_reload.connect_clicked(glib::clone!(
+            #[weak(rename_to = panel)]
+            self,
+            move |_| panel.ask_for_gnupg_keys(true)
+        ));
+        privacy
+            .append(&gnupg_row)
+            .append(&imp.gnupg_line)
+            .append(&imp.gnupg_reload);
         privacy.section(postio_ui::privacy::CONNECTIONS);
         privacy
             .append(&imp.egress_scroller)

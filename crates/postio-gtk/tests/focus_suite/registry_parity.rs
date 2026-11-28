@@ -134,6 +134,15 @@ const NOT_YET: &[&str] = &[
     "filtered_tab_5",
     "filtered_tab_6",
     "filtered_tab_7",
+    "source_tab_verification",
+    "source_tab_headers",
+    "source_tab_raw",
+    "copy_source",
+    "save_source",
+    "unfold_part",
+    "accept_key",
+    "forget_key",
+    "import_key",
     // The capture sheet's own keys each have a control in the sheet; the command bar lists what the
     // list reaches.
     "capture_change_project",

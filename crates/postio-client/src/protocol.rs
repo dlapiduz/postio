@@ -386,6 +386,14 @@ pub enum Req {
     SweepPreview,
     /// Fetched from the server on this request when never downloaded.
     RawSource(MessageId),
+    SourceView {
+        message: MessageId,
+        offline: bool,
+    },
+    GnupgKeyring {
+        on: bool,
+    },
+    ImportKeys(ImportFrom),
     Surfaced,
     /// Fails with a sentence when no `[focus.vault]` is configured.
     Vault {
@@ -599,6 +607,9 @@ pub enum Resp {
     DigestLikeThis(Option<LikeThisRule>),
     DigestSummary(Option<postio_model::summary::DigestSummary>),
     RawSource(Vec<u8>),
+    SourceView(Box<postio_ui::source::SourceView>),
+    GnupgKeyring(postio_ui::settings::GnupgKeyring),
+    Imported(postio_ui::source::Imported),
     Vault(VaultPicture),
     Captured(postio_vault::Captured),
     /// The sentence is for the user.
@@ -629,8 +640,7 @@ pub struct Reading {
     pub body: Body,
     pub row: Option<Box<postio_model::Message>>,
     pub send_state: Option<postio_model::DraftState>,
-    /// The quiet line shown when the sender may not be who they say (#1928).
-    pub sender_warning: Option<String>,
+    pub authenticity: postio_ui::reader::authenticity::HeaderAuthenticity,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -871,4 +881,10 @@ mod tests {
             Err(postio_ui::digest::TIME_ERROR.to_owned())
         );
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImportFrom {
+    File(std::path::PathBuf),
+    Message(MessageId),
 }

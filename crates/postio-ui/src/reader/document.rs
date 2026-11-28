@@ -109,6 +109,15 @@ pub fn absent_html(state: Absent) -> String {
 
 /// One line, deliberately short of the reason: what a reader needs is that the words below may not
 /// be the words sent (#901).
+pub const ENCRYPTED: &str = "This message is encrypted. Postio can't decrypt mail yet.";
+
+pub fn is_encrypted(content_type: &str) -> bool {
+    matches!(
+        content_type.trim().to_ascii_lowercase().as_str(),
+        "multipart/encrypted" | "application/pkcs7-mime" | "application/x-pkcs7-mime"
+    )
+}
+
 pub const DECODE_CAVEAT: &str = "Parts of this message could not be decoded";
 
 /// A notice with nothing to report must not be on screen: it teaches people to dismiss the one that

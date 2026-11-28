@@ -4,7 +4,7 @@
 # fuzz/corpus/ is ignored; this recreates it from crates/postio-model/tests/corpus. Idempotent: it
 # adds seeds and never removes.
 #
-#   scripts/fuzz-seed.sh            # all three targets
+#   scripts/fuzz-seed.sh            # every target
 #   scripts/fuzz-seed.sh parse_query
 set -euo pipefail
 
@@ -39,14 +39,19 @@ seed_sanitize_html() {
     seed_from "$EML" sanitize_html
 }
 seed_parse_query() { seed_from "$SEEDS/query" parse_query; }
+seed_verify_signature() { seed_from "$EML" verify_signature; }
+# The keys themselves, for the readers to find keyblocks in; a mutated keybox is the hostile case.
+seed_read_keyring() { seed_from "$EML/keys" read_keyring; }
 
-TARGETS=("${@:-parse_message sanitize_html parse_query}")
+TARGETS=("${@:-parse_message sanitize_html parse_query verify_signature read_keyring}")
 # shellcheck disable=SC2068 # deliberate: the default above is a word list.
 for target in ${TARGETS[@]}; do
     case "$target" in
         parse_message) seed_parse_message ;;
         sanitize_html) seed_sanitize_html ;;
         parse_query)   seed_parse_query ;;
+        verify_signature) seed_verify_signature ;;
+        read_keyring)  seed_read_keyring ;;
         *) echo "unknown target: $target" >&2; exit 2 ;;
     esac
 done

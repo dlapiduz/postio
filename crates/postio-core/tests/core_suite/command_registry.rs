@@ -290,7 +290,7 @@ fn contexts_round_trip_through_strings() {
         assert_eq!(context.as_str().parse::<Context>().unwrap(), *context);
     }
     // A count, so adding a context is a deliberate act.
-    assert_eq!(Context::ALL.len(), 21);
+    assert_eq!(Context::ALL.len(), 22);
 }
 
 #[test]
@@ -679,7 +679,12 @@ fn the_reading_commands_are_registered_as_the_contract_says() {
         assert_eq!(spec.title, title, "{name}");
         assert_eq!(spec.default_binding, default, "{name}");
         assert_eq!(spec.alternate_bindings, alternates, "{name}");
-        assert_eq!(spec.contexts, reading, "{name}");
+        let contexts = if id == CommandId::FindInMessage {
+            reading.with(Context::Source)
+        } else {
+            reading
+        };
+        assert_eq!(spec.contexts, contexts, "{name}");
         assert!(!spec.destructive, "{name}");
         assert_eq!(Command::default_for(id).id(), id);
     }
@@ -898,4 +903,27 @@ fn saving_a_file_is_the_results_views_alone() {
         Context::Results.as_set()
     );
     assert_eq!(CommandId::SaveFile.as_str(), "save_file");
+}
+
+#[test]
+fn view_source_opens_source_and_verification() {
+    assert_eq!(
+        registry::get(CommandId::ViewSource).title,
+        "Source and verification"
+    );
+    assert_eq!(Context::Source.to_string(), "source");
+    assert_eq!("source".parse::<Context>().ok(), Some(Context::Source));
+    let titles: BTreeMap<CommandId, &str> = registry::for_context(Context::Source)
+        .map(|spec| (spec.id, spec.title))
+        .collect();
+    for (id, title) in [
+        (CommandId::SourceTabVerification, "Verification"),
+        (CommandId::SourceTabHeaders, "Headers"),
+        (CommandId::SourceTabRaw, "Raw"),
+        (CommandId::CopySource, "Copy all"),
+        (CommandId::SaveSource, "Save as .eml…"),
+        (CommandId::UnfoldPart, "Show"),
+    ] {
+        assert_eq!(titles.get(&id), Some(&title), "{id}'s command-bar row");
+    }
 }

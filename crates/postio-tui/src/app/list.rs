@@ -130,6 +130,9 @@ impl App {
             | Intent::NewReply(_)
             | Intent::ReplyTo(_)
             | Intent::MatchBanner(_)) => self.show_reader_intent(intent),
+            intent @ (Intent::OpenSource { .. }
+            | Intent::Source(_)
+            | Intent::CloseSurface(SurfaceKind::Source)) => self.show_source_intent(intent),
             intent @ (Intent::Composer { .. }
             | Intent::CloseSurface(SurfaceKind::Composer)
             | Intent::SaveDraft { .. }

@@ -246,3 +246,24 @@ pub fn i_opens_the_popover_the_arrows_choose_where_mail_arrives_and_escape_close
         );
     });
 }
+
+pub fn the_card_lists_the_contacts_keys_and_where_each_came_from() {
+    crate::gtk_case(async {
+        let fixture = fixture().await;
+        fixture
+            .write_key("ada@example.test", "E8DF9987513ECF47")
+            .await;
+        let (window, _client) = fixture.open().await;
+        support::keys(&window, &["g", "c"]);
+        assert!(
+            crate::settle_until(async || {
+                let shown = support::texts(&window);
+                shown.iter().any(|text| text == "E8DF 9987 513E CF47")
+                    && shown.iter().any(|text| text == "From your GnuPG keyring")
+            })
+            .await,
+            "Ada's card names her key: {:?}",
+            support::texts(&window)
+        );
+    });
+}

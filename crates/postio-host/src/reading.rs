@@ -110,11 +110,11 @@ pub(crate) async fn load(
             .ok()
             .flatten(),
     };
-    let sender_warning = match (&row, &body) {
+    let authenticity = match (&row, &body) {
         (Some(row), Stored::Ready { .. }) => {
-            postio_session::reading::sender_warning(connection, row, headers.as_deref()).await
+            postio_session::reading::authenticity(connection, row, headers.as_deref()).await
         }
-        _ => None,
+        _ => Default::default(),
     };
     let send_state = MessageRepository::new(connection)
         .send_state(message)
@@ -125,7 +125,7 @@ pub(crate) async fn load(
         body: wire_body(body),
         row: row.map(Box::new),
         send_state,
-        sender_warning,
+        authenticity,
     }
 }
 
@@ -248,7 +248,7 @@ mod asked_tests {
             body,
             row: None,
             send_state: None,
-            sender_warning: None,
+            authenticity: Default::default(),
         }
     }
 

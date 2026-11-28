@@ -946,15 +946,26 @@ fn perform(
                     tracing::warn!(%error, "could not write where messages open");
                 }
             }
+            Effect::ImportKeys(message) => {
+                let client = client.clone();
+                let inputs = inputs.clone();
+                tokio::spawn(async move {
+                    let imported = client
+                        .import_keys(postio_client::protocol::ImportFrom::Message(message))
+                        .await
+                        .map_err(|error| error.message().to_owned());
+                    let _ = inputs.send(Input::Imported(imported)).await;
+                });
+            }
             Effect::ReadSource(message) => {
                 let client = client.clone();
                 let inputs = inputs.clone();
                 tokio::spawn(async move {
-                    let raw = client
-                        .raw_source(message)
+                    let view = client
+                        .source_view(message, false)
                         .await
                         .map_err(|error| error.message().to_owned());
-                    let _ = inputs.send(Input::Source { message, raw }).await;
+                    let _ = inputs.send(Input::Source { message, view }).await;
                 });
             }
             Effect::Settle { generation, after } => {
@@ -1109,7 +1120,8 @@ fn perform(
                                     .send(Input::Addressed {
                                         message,
                                         row,
-                                        warning: reading.sender_warning,
+                                        warning: reading.authenticity.warning,
+                                        mark: reading.authenticity.mark,
                                     })
                                     .await;
                             }

@@ -2,7 +2,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use postio_storage::Connection;
 use postio_storage::sql::bind;
 
-use postio_model::{Flag, MailboxId, Message, MessageId, Operation};
+use postio_model::{Flag, MailboxId, Message, MessageId, Operation, OperationTarget};
 use postio_storage::actions::{Relocation, relocate, set_flag};
 use postio_storage::repository::{MessageRepository, OperationQueueRepository};
 use postio_storage::test_support;
@@ -314,4 +314,99 @@ async fn read(connection: &Connection, ids: &[MessageId]) -> Vec<Message> {
         );
     }
     collected
+}
+
+#[tokio::test]
+async fn refiling_swaps_the_old_reason_for_the_new_one_and_tells_the_server_both() {
+    use postio_storage::actions::mark_filtered;
+    use postio_storage::repository::{FilterReason, FlagSource};
+    let database = test_support::memory().await;
+    let mut connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let spam = a_message(&connection, inbox, "uid-1").await;
+    let plain = a_message(&connection, inbox, "uid-2").await;
+    let flags = [Flag::Seen, FilterReason::Spam.keyword()]
+        .into_iter()
+        .collect();
+    MessageRepository::new(&connection)
+        .set_flags(spam, &flags, FlagSource::Local)
+        .await
+        .expect("flag it");
+    let rows = read(&connection, &[spam, plain]).await;
+
+    let transaction = connection.transaction().await.expect("open a transaction");
+    mark_filtered(
+        &transaction,
+        account.id,
+        &[&rows[0], &rows[1]],
+        Some(FilterReason::Promotion),
+        at(9),
+    )
+    .await
+    .expect("mark");
+    transaction.commit().await.expect("commit");
+
+    for row in read(&connection, &[spam, plain]).await {
+        assert_eq!(
+            FilterReason::in_flags(&row.flags),
+            Some(FilterReason::Promotion),
+            "one reason per message"
+        );
+    }
+    assert!(
+        read(&connection, &[spam]).await[0]
+            .flags
+            .contains(&Flag::Seen)
+    );
+    let queued = OperationQueueRepository::new(&connection)
+        .pending(account.id, at(23))
+        .await
+        .expect("read the queue");
+    let told: Vec<(OperationTarget, bool)> = queued
+        .iter()
+        .map(|row| match &row.operation {
+            Operation::ClearFlags { flags } => {
+                (row.target, flags.contains(&FilterReason::Spam.keyword()))
+            }
+            Operation::SetFlags { flags } => (
+                row.target,
+                flags.contains(&FilterReason::Promotion.keyword()),
+            ),
+            other => panic!("only flag changes, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        told,
+        [
+            (OperationTarget::Message(spam), true),
+            (OperationTarget::Message(spam), true),
+            (OperationTarget::Message(plain), true)
+        ],
+        "spam's old reason is cleared, and both get the new one"
+    );
+}
+
+#[tokio::test]
+async fn unfiling_a_message_with_no_reason_changes_and_queues_nothing() {
+    use postio_storage::actions::mark_filtered;
+    let database = test_support::memory().await;
+    let mut connection = database.connect().await.expect("checkout");
+    let (account, inbox) = test_support::account_with_inbox(&connection).await;
+    let plain = a_message(&connection, inbox, "uid-1").await;
+    let rows = read(&connection, &[plain]).await;
+
+    let transaction = connection.transaction().await.expect("open a transaction");
+    mark_filtered(&transaction, account.id, &[&rows[0]], None, at(9))
+        .await
+        .expect("mark");
+    transaction.commit().await.expect("commit");
+
+    assert_eq!(read(&connection, &[plain]).await[0].flags, rows[0].flags);
+    assert!(
+        OperationQueueRepository::new(&connection)
+            .pending(account.id, at(23))
+            .await
+            .expect("read the queue")
+            .is_empty()
+    );
 }

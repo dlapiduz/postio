@@ -135,7 +135,7 @@ pub fn a_store_no_migration_reaches_offers_a_fresh_store_that_keeps_the_account(
         let fresh = support::button_labelled(&window, "Start a fresh store");
         support::click(&window, &fresh, 1);
         assert!(
-            crate::settle_until(async || opened.borrow().is_some()).await,
+            crate::settle_until_within(crate::STORE_OPEN, async || opened.borrow().is_some()).await,
             "a fresh store did not open: {:?}",
             window.unavailable_reason()
         );
@@ -220,7 +220,7 @@ pub fn a_store_under_another_key_offers_a_fresh_store_and_keeps_the_old_one() {
         let fresh = support::button_labelled(&window, "Start a fresh store");
         support::click(&window, &fresh, 1);
         assert!(
-            crate::settle_until(async || opened.borrow().is_some()).await,
+            crate::settle_until_within(crate::STORE_OPEN, async || opened.borrow().is_some()).await,
             "a fresh store did not open: {:?}",
             window.unavailable_reason()
         );

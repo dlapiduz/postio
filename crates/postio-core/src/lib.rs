@@ -23,7 +23,7 @@ pub use action::ActionId;
 pub use bridge::{Bridge, CommandHandler, CommandSender, EventSink, EventStream};
 pub use command::{
     Command, CommandId, ContactAddressAction, ContactEditAction, ContactGroupNewAction,
-    ContactJoinAction, ContactNewAction, KeptRule, MessageTarget, UnknownCommand,
+    ContactJoinAction, ContactNewAction, KeptKey, KeptRule, MessageTarget, UnknownCommand,
 };
 pub use config::{ConfigChange, ConfigService, Keymap, SharedConfig};
 pub use context::{Context, ContextSet, UnknownContext};

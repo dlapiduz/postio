@@ -13,6 +13,9 @@ use postio_widgets::widgets::space::S1;
 pub struct HeaderCard {
     root: gtk::Grid,
     from: gtk::Box,
+    mark: gtk::Button,
+    mark_word: gtk::Label,
+    mark_key: gtk::Box,
     date: gtk::Label,
     to_label: gtk::Label,
     to: adw::WrapBox,
@@ -87,8 +90,25 @@ impl HeaderCard {
         let cc_label = field("Cc");
         cc_label.set_valign(gtk::Align::Start);
         let cc = recipient_line();
+        let mark = gtk::Button::new();
+        mark.add_css_class("flat");
+        mark.add_css_class("postio-chip-base");
+        mark.add_css_class("focus-open-mark");
+        mark.set_valign(gtk::Align::Center);
+        mark.set_visible(false);
+        let mark_word = gtk::Label::new(None);
+        let mark_key = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        let mark_row = gtk::Box::new(gtk::Orientation::Horizontal, focus_dialog::KEYCAP_GAP);
+        mark_row.append(&mark_word);
+        mark_row.append(&mark_key);
+        mark.set_child(Some(&mark_row));
+        from.set_hexpand(false);
+        let sender = gtk::Box::new(gtk::Orientation::Horizontal, S1);
+        sender.set_hexpand(true);
+        sender.append(&from);
+        sender.append(&mark);
         root.attach(&from_label, 0, 0, 1, 1);
-        root.attach(&from, 1, 0, 1, 1);
+        root.attach(&sender, 1, 0, 1, 1);
         root.attach(&date, 2, 0, 1, 1);
         root.attach(&to_label, 0, 1, 1, 1);
         root.attach(&to, 1, 1, 2, 1);
@@ -119,6 +139,9 @@ impl HeaderCard {
         let card = HeaderCard {
             root,
             from,
+            mark,
+            mark_word,
+            mark_key,
             date,
             to_label,
             to,
@@ -178,10 +201,56 @@ impl HeaderCard {
         recipients(&self.cc_label, &self.cc, cc);
     }
 
-    /// The sentence is `postio_ui::reader::authenticity`'s (#1928).
     pub fn set_warning(&self, line: Option<&str>) {
         self.warning.set_text(line.unwrap_or(""));
         self.warning_row.set_visible(line.is_some());
+    }
+
+    pub fn set_mark(&self, mark: Option<postio_ui::reader::authenticity::Mark>, address: &str) {
+        match mark {
+            Some(mark) => {
+                self.mark_word.set_text(mark.label());
+                self.mark
+                    .update_property(&[gtk::accessible::Property::Label(
+                        &mark.accessible_name(address),
+                    )]);
+                self.mark.set_visible(true);
+            }
+            None => self.mark.set_visible(false),
+        }
+    }
+
+    pub fn mark_shown(&self) -> Option<String> {
+        self.mark
+            .is_visible()
+            .then(|| self.mark_word.text().to_string())
+    }
+
+    pub fn set_mark_key(&self, key: Option<&str>) {
+        while let Some(child) = self.mark_key.first_child() {
+            self.mark_key.remove(&child);
+        }
+        if let Some(key) = key {
+            self.mark_key
+                .append(&postio_widgets::widgets::keyhint::cap(key));
+        }
+    }
+
+    pub fn mark_key(&self) -> Option<String> {
+        self.mark_key
+            .first_child()
+            .and_downcast::<gtk::Label>()
+            .map(|cap| cap.text().to_string())
+    }
+
+    pub fn mark_gap_after_sender(&self) -> Option<f32> {
+        let from = self.from.compute_bounds(&self.root)?;
+        let mark = self.mark.compute_bounds(&self.root)?;
+        Some(mark.x() - (from.x() + from.width()))
+    }
+
+    pub fn connect_mark(&self, pressed: impl Fn() + 'static) {
+        self.mark.connect_clicked(move |_| pressed());
     }
 
     pub fn set_reply_to(&self, text: Option<&str>) {
@@ -198,6 +267,7 @@ impl HeaderCard {
 
     pub fn clear(&self) {
         self.set_warning(None);
+        self.set_mark(None, "");
         clear(&self.from);
         self.date.set_text("");
         recipients(&self.to_label, &self.to, &[]);

@@ -90,6 +90,7 @@ mod imp {
         pub pane: RefCell<Option<ListPane>>,
         pub chrome: RefCell<Option<Rc<Chrome>>>,
         pub client: RefCell<Option<Client>>,
+        pub source: RefCell<Option<(MessageId, postio_widgets::source::SourceDialog)>>,
         pub waiting: Cell<Option<Waiting>>,
         pub waiting_since: Cell<Option<std::time::Instant>>,
         pub on_retry: RefCell<Option<Rc<dyn Fn()>>>,
@@ -196,6 +197,7 @@ mod imp {
                 pane: RefCell::default(),
                 chrome: RefCell::default(),
                 client: RefCell::default(),
+                source: RefCell::default(),
                 waiting: Cell::default(),
                 waiting_since: Cell::default(),
                 on_retry: RefCell::default(),
@@ -903,6 +905,12 @@ impl FocusWindow {
             now.push(SurfaceKind::Composer);
         } else if let Some(dialog) = self.visible_dialog() {
             let name = dialog.widget_name();
+            if name == postio_widgets::source::DIALOG_NAME
+                && !self.reading_beside()
+                && self.reading().is_some_and(|reading| reading.is_open())
+            {
+                now.push(SurfaceKind::Message);
+            }
             now.push(if name == crate::open::DIALOG_NAME {
                 SurfaceKind::Message
             } else if name == crate::digest::DIALOG_NAME {
@@ -913,6 +921,8 @@ impl FocusWindow {
                 SurfaceKind::Settings
             } else if name == KEY_MAP {
                 SurfaceKind::KeyMap
+            } else if name == postio_widgets::source::DIALOG_NAME {
+                SurfaceKind::Source
             } else {
                 SurfaceKind::Dialog
             });
@@ -977,6 +987,14 @@ impl FocusWindow {
             }
             SurfaceKind::KeyMap | SurfaceKind::Dialog => {
                 if let Some(dialog) = self.visible_dialog() {
+                    dialog.close();
+                }
+            }
+            SurfaceKind::Source => {
+                if let Some(dialog) = self
+                    .visible_dialog()
+                    .filter(|dialog| dialog.widget_name() == postio_widgets::source::DIALOG_NAME)
+                {
                     dialog.close();
                 }
             }
@@ -1244,7 +1262,6 @@ impl FocusWindow {
             ReaderVerb::SwitchTreatment => {
                 reading.reader().switch_treatment();
             }
-            ReaderVerb::ViewSource => self.view_source(),
             ReaderVerb::ShowMore => reading.show_more(),
             _ => {}
         }
@@ -1284,9 +1301,12 @@ impl FocusWindow {
     }
 
     fn is_typing(&self) -> bool {
-        gtk::prelude::GtkWindowExt::focus(self)
-            .is_some_and(|focus| focus.is::<gtk::Text>() || focus.is::<gtk::TextView>())
-            || self.composer_body_has_keyboard()
+        gtk::prelude::GtkWindowExt::focus(self).is_some_and(|focus| {
+            focus.is::<gtk::Text>()
+                || focus
+                    .downcast_ref::<gtk::TextView>()
+                    .is_some_and(gtk::prelude::TextViewExt::is_editable)
+        }) || self.composer_body_has_keyboard()
     }
 
     /// Settings' account list is the one context only this window can see.
@@ -1877,7 +1897,7 @@ impl FocusWindow {
                 None => self.open_message(),
             },
             CommandId::NextScope => self.next_scope(),
-            CommandId::ViewSource => self.view_source(),
+            CommandId::ViewSource => self.run_in_controller(id),
             CommandId::OpenContacts
             | CommandId::ContactsSuggestions
             | CommandId::ContactPopover
@@ -2218,6 +2238,8 @@ impl FocusWindow {
             Intent::Empty(page) => self.show_empty(page.as_ref()),
             Intent::Toast { text, kind } => self.show_toast(text, kind),
             Intent::Reader(verb) => self.show_reader_verb(*verb),
+            Intent::OpenSource { message, .. } => self.view_source(*message),
+            Intent::Source(verb) => self.source_verb(*verb),
             Intent::OpenMessage {
                 message,
                 index,
@@ -3242,12 +3264,28 @@ impl FocusWindow {
                 if let Some(compose) = self.compose() {
                     compose.composer().fetch_settled(*message, sections);
                 }
+                if *sections == postio_model::fetch::Sections::Whole
+                    && self.source_of() == Some(*message)
+                {
+                    self.refresh_source(*message);
+                }
             }
             Event::BodyReachable { message, .. } => {
                 if let Some(reading) = self.reading() {
                     reading.body_landed(*message);
                 }
             }
+            Event::MessagesChanged { messages, .. } => {
+                if let Some(shown) = self.source_of().filter(|shown| messages.contains(shown)) {
+                    self.refresh_source(shown);
+                }
+                if let Some(reading) = self.reading() {
+                    for message in messages {
+                        reading.header_changed(*message);
+                    }
+                }
+            }
+
             Event::ReminderDue {
                 event,
                 title,
@@ -5020,6 +5058,23 @@ impl FocusWindow {
                 dialog.set_initial_name(Some(&suggested));
                 dialog.save(Some(self), None::<&gio::Cancellable>, done);
             }
+            crate::chooser::SavePick::Key => {
+                dialog.set_title("Import key");
+                let keys = gtk::FileFilter::new();
+                keys.set_name(Some("Public keys"));
+                for pattern in ["*.asc", "*.gpg", "*.pgp", "*.key"] {
+                    keys.add_pattern(pattern);
+                }
+                let filters = gio::ListStore::new::<gtk::FileFilter>();
+                filters.append(&keys);
+                dialog.set_filters(Some(&filters));
+                dialog.open(Some(self), None::<&gio::Cancellable>, done);
+            }
+            crate::chooser::SavePick::Message { suggested } => {
+                dialog.set_title("Save message");
+                dialog.set_initial_name(Some(&suggested));
+                dialog.save(Some(self), None::<&gio::Cancellable>, done);
+            }
         }
     }
 
@@ -5180,37 +5235,196 @@ impl FocusWindow {
         }
     }
 
-    pub fn source_shown(&self) -> Option<String> {
-        self.visible_dialog()
-            .filter(|dialog| dialog.widget_name() == crate::source::DIALOG_NAME)
-            .and_then(|dialog| crate::source::shown(&dialog))
+    pub fn source(&self) -> Option<postio_widgets::source::SourceDialog> {
+        self.imp()
+            .source
+            .borrow()
+            .as_ref()
+            .map(|(_, dialog)| dialog.clone())
     }
 
-    fn view_source(&self) {
-        let message = self
-            .reading()
-            .filter(|reading| reading.is_open())
-            .and_then(|reading| reading.shown())
-            .or_else(|| self.cursor_row().map(|row| row.id()));
-        let (Some(message), Some(client)) = (message, self.imp().client.borrow().clone()) else {
+    fn source_of(&self) -> Option<MessageId> {
+        self.imp()
+            .source
+            .borrow()
+            .as_ref()
+            .map(|(message, _)| *message)
+    }
+
+    fn view_source(&self, message: MessageId) {
+        let Some(client) = self.imp().client.borrow().clone() else {
             return;
         };
         let window = self.downgrade();
         glib::spawn_future_local(async move {
             // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host
             // answers on its own runtime (ADR 0041).
-            let read = client.raw_source(message).await;
+            let read = client.source_view(message, false).await;
             let Some(window) = window.upgrade() else {
                 return;
             };
             match read {
-                Ok(raw) => crate::source::dialog(&raw, &window.keymap()).present(Some(&window)),
+                Ok(view) => window.present_source(message, view),
                 Err(error) => {
                     window.imp().toast.show_notice(&error.to_string());
                     window.follow_toast();
                 }
             }
         });
+    }
+
+    fn present_source(&self, message: MessageId, view: postio_ui::source::SourceView) {
+        let weak = self.downgrade();
+        let dialog =
+            postio_widgets::source::SourceDialog::new(view, &self.keymap(), move |command| {
+                if let Some(window) = weak.upgrade() {
+                    window.run_in_controller(command);
+                }
+            });
+        let weak = self.downgrade();
+        dialog.dialog().connect_closed(move |_| {
+            if let Some(window) = weak.upgrade() {
+                window.imp().source.replace(None);
+                window.imp().toast.set_over(
+                    window
+                        .reading()
+                        .filter(|reading| reading.is_open())
+                        .map(|reading| reading.toast_overlay()),
+                );
+                window.sync_surfaces();
+                if !window.reading().is_some_and(|reading| reading.is_open()) {
+                    window.focus_cursor_soon();
+                }
+            }
+        });
+        dialog.dialog().present(Some(self));
+        self.imp().toast.set_over(Some(dialog.toast_overlay()));
+        dialog.show_tab(dialog.tab());
+        self.imp().source.replace(Some((message, dialog)));
+        self.sync_surfaces();
+    }
+
+    fn refresh_source(&self, message: MessageId) {
+        let Some(client) = self.imp().client.borrow().clone() else {
+            return;
+        };
+        let window = self.downgrade();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive (ADR 0041).
+            let read = client.source_view(message, false).await;
+            if let (Some(window), Ok(view)) = (window.upgrade(), read)
+                && let Some(dialog) = window
+                    .source()
+                    .filter(|_| window.source_of() == Some(message))
+            {
+                dialog.set_view(view);
+            }
+        });
+    }
+
+    fn save_source(&self) {
+        let (Some(message), Some(client)) = (self.source_of(), self.imp().client.borrow().clone())
+        else {
+            return;
+        };
+        let subject = self
+            .source()
+            .map(|dialog| dialog.subject())
+            .unwrap_or_default();
+        let window = self.downgrade();
+        self.pick_place(
+            crate::chooser::SavePick::Message {
+                suggested: postio_ui::source::eml_name(&subject),
+            },
+            move |to| {
+                glib::spawn_future_local(async move {
+                    // POSTIO-GLIB-SAFE: a client call is a oneshot receive (ADR 0041).
+                    let saved = client.export_messages(vec![(message, to)]).await;
+                    let Some(window) = window.upgrade() else {
+                        return;
+                    };
+                    let said = match saved {
+                        Ok(paths) => postio_ui::reader::parts::saved(
+                            &paths
+                                .first()
+                                .and_then(|path| path.file_name())
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_default(),
+                        ),
+                        Err(error) => error.to_string(),
+                    };
+                    window.imp().toast.show_notice(&said);
+                    window.follow_toast();
+                });
+            },
+        );
+    }
+
+    fn import_key(&self) {
+        use postio_client::protocol::ImportFrom;
+        let (Some(message), Some(client)) = (self.source_of(), self.imp().client.borrow().clone())
+        else {
+            return;
+        };
+        let window = self.downgrade();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a client call is a oneshot receive (ADR 0041).
+            let attached = client.import_keys(ImportFrom::Message(message)).await;
+            let Some(this) = window.upgrade() else {
+                return;
+            };
+            match attached {
+                Ok(imported) if imported.keys > 0 => this.said_imported(Ok(imported)),
+                _ => this.pick_place(crate::chooser::SavePick::Key, move |path| {
+                    glib::spawn_future_local(async move {
+                        // POSTIO-GLIB-SAFE: a oneshot receive; the host reads the file.
+                        let imported = client.import_keys(ImportFrom::File(path)).await;
+                        if let Some(this) = window.upgrade() {
+                            this.said_imported(imported);
+                        }
+                    });
+                }),
+            }
+        });
+    }
+
+    fn said_imported(
+        &self,
+        imported: Result<postio_ui::source::Imported, postio_model::listing::StoreError>,
+    ) {
+        let said = match imported {
+            Ok(imported) => postio_ui::source::imported_line(&imported),
+            Err(error) => error.to_string(),
+        };
+        self.imp().toast.show_notice(&said);
+        self.follow_toast();
+    }
+
+    fn source_verb(&self, verb: postio_focus::SourceVerb) {
+        use postio_focus::SourceVerb;
+        let Some(dialog) = self.source() else {
+            return;
+        };
+        match verb {
+            SourceVerb::Tab(tab) => dialog.show_tab(tab),
+            SourceVerb::Copy => {
+                if let Some(selected) = dialog.selection() {
+                    self.clipboard().set_text(&selected);
+                    return;
+                }
+                let bytes = dialog.bytes();
+                if !bytes.is_empty() {
+                    self.clipboard().set_text(&String::from_utf8_lossy(&bytes));
+                }
+            }
+            SourceVerb::Save => self.save_source(),
+            SourceVerb::Unfold => {
+                dialog.unfold();
+            }
+            SourceVerb::Find => dialog.find(),
+            SourceVerb::Import => self.import_key(),
+            _ => {}
+        }
     }
 
     pub fn set_remote_runtime(&self, runtime: tokio::runtime::Handle) {
@@ -5976,9 +6190,12 @@ impl FocusWindow {
             .is_some_and(|compose| compose.composer().is_detached());
         let sign_in = self.add_account_dialog().is_some();
         let settings = self.settings_dialog().is_some();
-        let small_dialog = [crate::source::DIALOG_NAME, crate::chooser::DIALOG_NAME]
-            .into_iter()
-            .find(|name| dialog_named(name));
+        let small_dialog = [
+            postio_widgets::source::DIALOG_NAME,
+            crate::chooser::DIALOG_NAME,
+        ]
+        .into_iter()
+        .find(|name| dialog_named(name));
         let reading_here = self.visible_dialog().is_none() && self.reading_beside();
         // The merge sheet over the Contacts view takes every key until answered.
         let merging = self.contacts().is_some_and(|view| view.merge_open());
@@ -6192,6 +6409,12 @@ impl FocusWindow {
             });
 
         let mut app = std::collections::BTreeMap::new();
+        if let Some(dialog) = self.source() {
+            app.insert(
+                "focus.source.tab".to_owned(),
+                serde_json::Value::String(dialog.tab().id().to_owned()),
+            );
+        }
         app.insert(
             "focus.sync".to_owned(),
             serde_json::Value::String(self.sync_said()),
@@ -6277,6 +6500,9 @@ impl FocusWindow {
                 reading.body_text().trim().to_owned()
             };
             app.insert("focus.reading.body".to_owned(), serde_json::json!(body));
+            if let Some(mark) = reading.mark_shown() {
+                app.insert("focus.reading.mark".to_owned(), serde_json::json!(mark));
+            }
         }
         if let Some(reading) = reading.as_ref()
             && let Some(item) = reading.more_item_with_focus()

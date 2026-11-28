@@ -31,6 +31,7 @@ mod search_budget;
 mod search_execution;
 mod search_passages;
 mod sender_warning;
+mod signature;
 mod signin;
 mod store_key;
 mod watch_policy;

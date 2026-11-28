@@ -100,7 +100,7 @@ pub fn every_surfaces_icon_buttons_keep_their_own_shape() {
         keys.close();
         crate::settle();
 
-        let source = postio_gtk::source::dialog(b"From: a@example.com\r\n\r\nx", &window.keymap());
+        let source = support::source_dialog(&window.keymap());
         source.present(Some(&window));
         laid_out(&source).await;
         assert_icon_buttons_keep_their_shape("the raw source", &source);

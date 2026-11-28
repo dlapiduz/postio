@@ -477,7 +477,7 @@ static SPECS: &[CommandSpec] = &[
         id: CommandId::FindInMessage,
         title: "Find in message",
         default_binding: "mod+f",
-        contexts: ctx(MESSAGE_SURFACES),
+        contexts: ctx(MESSAGE_SURFACES).with(Context::Source),
         ..BASE
     },
     CommandSpec {
@@ -695,7 +695,7 @@ static SPECS: &[CommandSpec] = &[
     },
     CommandSpec {
         id: CommandId::ViewSource,
-        title: "View source",
+        title: "Source and verification",
         default_binding: "V",
         contexts: ctx(MESSAGE_SURFACES),
         requires: FOCUS_MAIL,
@@ -1779,6 +1779,80 @@ static SPECS: &[CommandSpec] = &[
         title: "Reason 7",
         default_binding: "7",
         contexts: Context::Filtered.as_set(),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::SourceTabVerification,
+        title: "Verification",
+        default_binding: "1",
+        contexts: Context::Source.as_set(),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::SourceTabHeaders,
+        title: "Headers",
+        default_binding: "2",
+        contexts: Context::Source.as_set(),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::SourceTabRaw,
+        title: "Raw",
+        default_binding: "3",
+        contexts: Context::Source.as_set(),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::CopySource,
+        title: "Copy all",
+        default_binding: "mod+c",
+        contexts: Context::Source.as_set(),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::SaveSource,
+        title: "Save as .eml…",
+        default_binding: "mod+s",
+        contexts: Context::Source.as_set(),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::UnfoldPart,
+        title: "Show",
+        default_binding: "Return",
+        contexts: Context::Source.as_set(),
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::AcceptKey,
+        title: "Accept this key",
+        default_binding: "a",
+        contexts: Context::Source.as_set(),
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::ForgetKey,
+        title: "Forget this key",
+        default_binding: "x",
+        contexts: Context::Source.as_set(),
+        recovery: Recovery::Undo,
+        requires: FOCUS_MAIL,
+        ..BASE
+    },
+    CommandSpec {
+        id: CommandId::ImportKey,
+        title: "Import key…",
+        default_binding: "i",
+        contexts: Context::Source.as_set(),
         requires: FOCUS_MAIL,
         ..BASE
     },

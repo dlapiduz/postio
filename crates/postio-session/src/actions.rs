@@ -30,6 +30,7 @@ use postio_storage::{Checkout, Store, WritePermit, WritePriority};
 
 mod calendar;
 mod focus;
+mod keys;
 pub use focus::invitation_of;
 
 fn now() -> chrono::DateTime<Utc> {
@@ -61,6 +62,8 @@ pub const WIRED: &[CommandId] = &[
     CommandId::Undo,
     CommandId::MapMailboxRole,
     CommandId::RestoreFiltered,
+    CommandId::AcceptKey,
+    CommandId::ForgetKey,
     CommandId::SweepInbox,
     CommandId::ContactSetArrival,
     CommandId::ContactJoin,
@@ -152,6 +155,32 @@ struct Applied {
     /// closes.
     lasts: Option<std::time::Duration>,
     surfaced: bool,
+}
+
+impl Applied {
+    fn changed_one(
+        kind: UndoKind,
+        account: AccountId,
+        message: MessageId,
+        inverse: Command,
+    ) -> Applied {
+        Applied {
+            kind,
+            account,
+            messages: vec![message],
+            count: 1,
+            rows: None,
+            removed: Vec::new(),
+            arrived: None,
+            reloaded: Vec::new(),
+            changed: vec![message],
+            mailboxes_changed: false,
+            contacts_changed: None,
+            inverse: vec![inverse],
+            lasts: None,
+            surfaced: false,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -343,6 +372,19 @@ impl Actions {
                 stopped,
                 kept,
             } => vec![self.stop_digesting(target, *stopped, kept.as_ref()).await?],
+            Command::AcceptKey {
+                message,
+                accepted,
+                kept,
+            } => vec![
+                self.accept_key(*message, *accepted, kept.as_deref())
+                    .await?,
+            ],
+            Command::ForgetKey {
+                message,
+                forgotten,
+                kept,
+            } => vec![self.forget_key(*message, *forgotten, kept.as_ref()).await?],
             Command::SweepInbox => self.sweep().await?,
             Command::UnsweepInbox { target } => self.unsweep(target).await?,
             // Deliberately `Some(true)` rather than a toggle: a dwell says

@@ -18,6 +18,7 @@ postio-ffi Intent::Counts
 postio-ffi Intent::DraftReminder
 postio-ffi Intent::PresentWindow # the Mac's Calendar window is PostioKit work (specs/017 T024), built on a Mac
 postio-ffi Intent::Quit
+postio-ffi Intent::Source # the Mac's Source tabs are PostioKit work (specs/016 T024), built on a Mac
 postio-gtk Input::CaptureDue
 postio-gtk Input::CaptureFilter
 postio-gtk Input::CaptureProject

@@ -167,6 +167,7 @@ magick -background none crates/postio-widgets/data/icons/scalable/apps/dev.posti
 | `--talk-name=org.freedesktop.secrets` | Secret Service keyring, where account passwords live (never in `config.toml`) |
 | `--filesystem=xdg-download` | Saving attachments directly; ordinary file *choosers* go through the portal and need no static permission |
 | `--filesystem=xdg-data/postio:create`, `xdg-config/postio:create` | The store and `config.toml`, shared with the other Postio package (above) |
+| `--filesystem=~/.gnupg:ro` | Public keys from the GnuPG keyring, to check signatures; read only after the switch in Settings → Privacy is turned on, and never written |
 
 The terminal package asks for the same, less the GPU, plus
 `--talk-name=org.freedesktop.Notifications` for new-mail notices. It keeps

@@ -459,6 +459,7 @@ mod tests {
             files: Vec::new(),
             issues: Vec::new(),
             address_notes: Vec::new(),
+            keys: Vec::new(),
         };
         let note = AddressNote {
             address: AddressId::new(7),

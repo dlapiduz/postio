@@ -13,6 +13,7 @@ pub mod onboarding;
 pub mod present;
 pub mod reader;
 pub mod settings;
+pub mod source;
 pub mod startup;
 pub mod state;
 pub mod storyboard;

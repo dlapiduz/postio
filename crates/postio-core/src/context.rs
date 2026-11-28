@@ -50,6 +50,7 @@ pub enum Context {
     Outline,
     /// Not the picker's context, which already gives each digit to `picker_choose_n`.
     ForwardChooser,
+    Source,
     Calendar,
     CalendarWindow,
 }
@@ -78,6 +79,7 @@ impl Context {
         Context::ContactPopover,
         Context::Outline,
         Context::ForwardChooser,
+        Context::Source,
         Context::Calendar,
         Context::CalendarWindow,
     ];
@@ -103,6 +105,7 @@ impl Context {
             Context::ContactPopover => "contact_popover",
             Context::Outline => "outline",
             Context::ForwardChooser => "forward_chooser",
+            Context::Source => "source",
             Context::Calendar => "calendar",
             Context::CalendarWindow => "calendar_window",
         }

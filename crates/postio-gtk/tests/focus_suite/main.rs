@@ -146,6 +146,10 @@ const CASES: &[(&str, fn())] = &[
         gmail_keys::every_menu_key as fn(),
     ),
     (
+        "contacts::the_card_lists_the_contacts_keys_and_where_each_came_from",
+        contacts::the_card_lists_the_contacts_keys_and_where_each_came_from as fn(),
+    ),
+    (
         "calendar_pop_out::mod_shift_o_moves_calendar_into_its_own_window_and_back_with_its_ring",
         calendar_pop_out::mod_shift_o_moves_calendar_into_its_own_window_and_back_with_its_ring
             as fn(),
@@ -759,8 +763,31 @@ const CASES: &[(&str, fn())] = &[
         open_choice::o_offers_the_links_and_parts_and_opens_only_what_is_chosen as fn(),
     ),
     (
-        "view_source::v_shows_the_raw_message_from_the_list_and_from_the_open_message",
-        view_source::v_shows_the_raw_message_from_the_list_and_from_the_open_message as fn(),
+        "view_source::v_opens_the_source_on_verification_and_the_digits_pick_its_tabs",
+        view_source::v_opens_the_source_on_verification_and_the_digits_pick_its_tabs as fn(),
+    ),
+    (
+        "view_source::v_in_the_open_message_stacks_the_source_and_escape_takes_one_rung",
+        view_source::v_in_the_open_message_stacks_the_source_and_escape_takes_one_rung as fn(),
+    ),
+    (
+        "view_source::save_as_eml_writes_the_bytes_the_store_holds",
+        view_source::save_as_eml_writes_the_bytes_the_store_holds as fn(),
+    ),
+    (
+        "view_source::mod_c_copies_the_selection_and_copies_every_byte_when_nothing_is_selected",
+        view_source::mod_c_copies_the_selection_and_copies_every_byte_when_nothing_is_selected
+            as fn(),
+    ),
+    ("view_source::signed_mark", view_source::signed_mark as fn()),
+    (
+        "view_source::accepting_from_the_source_is_a_button_and_its_notice_shows_over_the_source",
+        view_source::accepting_from_the_source_is_a_button_and_its_notice_shows_over_the_source
+            as fn(),
+    ),
+    (
+        "view_source::import_key_with_none_attached_asks_for_a_file_and_says_what_it_kept",
+        view_source::import_key_with_none_attached_asks_for_a_file_and_says_what_it_kept as fn(),
     ),
     (
         "open_message::a_message_opens_at_its_top_every_time",

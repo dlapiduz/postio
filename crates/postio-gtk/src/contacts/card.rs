@@ -32,6 +32,9 @@ pub fn build(card: &CardView, hooks: &CardHooks) -> gtk::Widget {
     left.append(&section(&card.addresses_title, &addresses(card, hooks)));
     left.append(&section(&card.arrival_title, &arrival(card, hooks)));
     left.append(&section(&card.notes_title, &notes(card)));
+    if let Some(title) = &card.keys_title {
+        left.append(&section(title, &keys(card)));
+    }
     let right = gtk::Box::new(gtk::Orientation::Vertical, S4);
     right.set_valign(gtk::Align::Start);
     right.set_size_request(380, -1);
@@ -352,4 +355,23 @@ fn files(card: &CardView) -> gtk::FlowBox {
         flow.append(&chip);
     }
     flow
+}
+
+fn keys(card: &CardView) -> gtk::Box {
+    let list = gtk::Box::new(gtk::Orientation::Vertical, S2);
+    for key in &card.keys {
+        let line = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let fingerprint = gtk::Label::new(Some(&key.fingerprint));
+        fingerprint.add_css_class("monospace");
+        fingerprint.set_xalign(0.0);
+        fingerprint.set_selectable(true);
+        let text = gtk::Label::new(Some(&key.text));
+        text.add_css_class("dim-label");
+        text.set_xalign(0.0);
+        text.set_wrap(true);
+        line.append(&fingerprint);
+        line.append(&text);
+        list.append(&line);
+    }
+    list
 }

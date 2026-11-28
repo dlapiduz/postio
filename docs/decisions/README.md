@@ -21,7 +21,7 @@ Format, at most about 250 words: `# ADR NNNN — title`, then `Status` (Accepted
 | [0014](0014-encryption-at-rest.md) | The local store encrypts itself | Built; the mechanism is ADR 0038's, the threat model is this one's |
 | [0015](0015-threaded-list.md) | One row per thread, and the conversation pane | Built |
 | [0016](0016-full-mailbox-backfill-by-default.md) | Full-mailbox backfill by default, folders optionally excluded | Built |
-| [0017](0017-backfill-cost-attachments-memory-disk-encryption.md) | What "download everything" costs, and the four axes that pay for it | Built, on the Turso engine (ADR 0038) |
+| [0017](0017-backfill-cost-attachments-memory-disk-encryption.md) | What "download everything" costs, and the four axes that pay for it | Built on Turso (ADR 0038); amended 2026-11-22 |
 | [0018](0018-jmap-and-gmail-backends.md) | JMAP and Gmail REST backends, on Pimalaya crates | Built |
 | [0019](0019-macos-frontend.md) | A native macOS frontend over `postio-session` | Built; rebuilt as Focus by `specs/009-focus-macos` |
 | [0020](0020-where-message-bodies-live.md) | Message bodies live in the store; the blob store keeps attachments | Built; per-row zstd, no dictionary (see 0038) |

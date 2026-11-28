@@ -1042,3 +1042,45 @@ button.postio-settings-keys-binding.postio-settings-keys-capturing {
   outline: 2px solid var(--postio-accent);
   outline-offset: 2px;
 }
+
+/* The Source surface (spec 016): a header, a tab strip, then one page of plain text. The current
+   tab is a bordered ghost button, never the accent, which is reserved (FR-091). */
+.postio-source-header {
+  min-height: 44px;
+  padding: 0 18px;
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+.postio-source-tabs {
+  min-height: 36px;
+  padding: 0 var(--postio-space-3);
+  box-shadow: inset 0 -1px var(--postio-hairline);
+}
+
+button.postio-source-tab {
+  color: var(--postio-ink);
+  font-weight: normal;
+  padding: 0 var(--postio-space-2);
+}
+
+button.postio-source-tab.postio-source-tab-on {
+  box-shadow: inset 0 0 0 1px var(--postio-hairline);
+  font-weight: bold;
+}
+
+.postio-source-verification {
+  padding: var(--postio-space-3);
+}
+
+.postio-source-text {
+  padding: var(--postio-space-3);
+}
+
+.postio-source-title {
+  font-weight: bold;
+}
+
+/* A colour, not dim-label: opacity compounds when a quiet row holds a mono line. */
+.postio-source-quiet {
+  color: var(--postio-ink-secondary);
+}

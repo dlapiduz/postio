@@ -532,3 +532,29 @@ mod saved_search_words {
         assert!(said.contains("command bar"), "{said:?}");
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum GnupgKeyring {
+    Off,
+    Read { keys: usize, skipped: u32 },
+    Unreadable,
+    Absent { home: String },
+}
+
+pub fn gnupg_line(state: &GnupgKeyring) -> String {
+    match state {
+        GnupgKeyring::Off => "Off: Postio reads no file outside its own store.".to_owned(),
+        GnupgKeyring::Read { keys, skipped } => {
+            let mut line = format!(
+                "{keys} {} read from your GnuPG keyring",
+                if *keys == 1 { "key" } else { "keys" }
+            );
+            if *skipped > 0 {
+                line.push_str(&format!(" · {skipped} skipped"));
+            }
+            line
+        }
+        GnupgKeyring::Unreadable => "Postio can't read this GnuPG keyring. Export the keys you need with `gpg --export --armor <address> > keys.asc` and import the file.".to_owned(),
+        GnupgKeyring::Absent { home } => format!("No GnuPG keyring was found in {home}."),
+    }
+}

@@ -1,0 +1,17 @@
+Message-ID: <autocrypt-header@example.com>
+Date: Thu, 05 Mar 2026 09:00:00 +0000
+From: Ada Moreno <ada@example.com>
+To: Grace Example <grace@example.net>
+Subject: Moorings for the summer
+Autocrypt: addr=ada@example.com; prefer-encrypt=mutual; keydata=
+ mDMEaaajEBYJKwYBBAHaRw8BAQdAn6REzjXN0OXkjKi7tbKyb6P9I1KzmT/WhsRjDE33Y960K0Fk
+ YSBNb3Jlbm8gKGNvcnB1cyBrZXkgQSkgPGFkYUBleGFtcGxlLmNvbT6IkwQTFgoAOxYhBOjfmYdR
+ Ps9H6Eh6BhmcEZRtNnBdBQJppqMQAhsDBQsJCAcCAiICBhUKCQgLAgQWAgMBAh4HAheAAAoJEBmc
+ EZRtNnBdFeoBAPfd9RN1UdxHY4yJm8TcHFLc8PP7QZX10SdFOzGx2fmmAP9kdcLYg82TFqJh4b0s
+ ekYhVrBX/EGNRpcPsupSiLAbAA==
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Not signed: the Autocrypt header only carries my key, for next time.
+
+Ada

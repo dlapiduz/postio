@@ -12,6 +12,19 @@ pub async fn install(panel: &SettingsPanel, client: Client) {
     // A no-op while the panel is not on screen (see `refresh`); kept because `install` is also how
     // a showing panel gets its first read.
     refresh(panel, &client).await;
+    let weak = panel.downgrade();
+    let asking = client.clone();
+    panel.connect_gnupg_keyring(move |on| {
+        let weak: glib::WeakRef<SettingsPanel> = weak.clone();
+        let client = asking.clone();
+        glib::spawn_future_local(async move {
+            // POSTIO-GLIB-SAFE: a oneshot receive; the host reads on its own runtime.
+            let state = client.gnupg_keyring(on).await;
+            if let (Some(panel), Ok(state)) = (weak.upgrade(), state) {
+                panel.set_gnupg_keyring(&state);
+            }
+        });
+    });
     // Weak: the panel owns this handler (#1072).
     let weak = panel.downgrade();
     panel.connect_map(move |_| {
@@ -33,7 +46,6 @@ async fn refresh(panel: &SettingsPanel, client: &Client) {
     if !panel.is_visible() {
         return;
     }
-    // One call for both figures: the host reads every account's log and count on one connection.
     // POSTIO-GLIB-SAFE: a client call is a oneshot receive; the host answers
     // on its own runtime.
     let log = match client.privacy_log().await {

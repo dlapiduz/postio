@@ -102,6 +102,7 @@ fn card(id: i64, name: &str) -> ContactCardRead {
         files: Vec::new(),
         issues: Vec::new(),
         address_notes: Vec::new(),
+        keys: Vec::new(),
     }
 }
 

@@ -80,6 +80,7 @@ pub enum Input {
         message: postio_model::MessageId,
         row: Box<postio_model::Message>,
         warning: Option<String>,
+        mark: Option<postio_ui::reader::authenticity::Mark>,
     },
     Body {
         message: postio_model::MessageId,
@@ -97,8 +98,9 @@ pub enum Input {
     },
     Source {
         message: postio_model::MessageId,
-        raw: Result<Vec<u8>, String>,
+        view: Result<postio_ui::source::SourceView, String>,
     },
+    Imported(Result<postio_ui::source::Imported, String>),
     Settled {
         generation: u64,
     },
@@ -172,6 +174,7 @@ pub enum Effect {
     SetReading(postio_config::Reading),
     SaveSearch(postio_focus::SaveSearch),
     ReadSource(postio_model::MessageId),
+    ImportKeys(postio_model::MessageId),
     Settle {
         generation: u64,
         after: std::time::Duration,
@@ -1541,6 +1544,7 @@ impl App {
     fn key_context(&self) -> KeyContext {
         match self.focus {
             Focus::List => self.results_context().unwrap_or(KeyContext::List),
+            Focus::Reader if self.open.raw.is_some() => KeyContext::Source,
             Focus::Reader => KeyContext::Reader,
             Focus::Composer => KeyContext::Composer,
             Focus::Bar | Focus::Folders => KeyContext::Search,
@@ -2003,6 +2007,19 @@ impl App {
             }
             "toggle_reading_pane" => return self.toggle_reading_pane(),
             "view_source" => return self.view_source(),
+            "source_tab_verification" => {
+                return self.source_tab(postio_ui::source::Tab::Verification);
+            }
+            "source_tab_headers" => return self.source_tab(postio_ui::source::Tab::Headers),
+            "source_tab_raw" => return self.source_tab(postio_ui::source::Tab::Raw),
+            "import_key" => {
+                return self
+                    .open
+                    .raw
+                    .as_ref()
+                    .map(|raw| vec![Effect::ImportKeys(raw.message)])
+                    .unwrap_or_default();
+            }
             "open_attachment_or_link" => return self.offer_choices(),
             "more_actions" => return self.more_actions(),
             "toggle_read" => {
@@ -2644,7 +2661,12 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
                 Vec::new()
             }
         }
-        Input::Source { message, raw } => app.source_read(message, raw),
+        Input::Source { message, view } => app.source_read(message, view),
+        Input::Imported(imported) => match imported {
+            Ok(imported) if imported.keys == 0 => app.say(postio_ui::source::NO_KEY_ATTACHED),
+            Ok(imported) => app.say(&postio_ui::source::imported_line(&imported)),
+            Err(error) => app.say(&error),
+        },
         Input::DwellDue {
             generation,
             message,
@@ -2836,7 +2858,8 @@ pub fn update(app: &mut App, input: Input) -> Vec<Effect> {
             message,
             row,
             warning,
-        } => app.addressed(message, &row, warning.as_deref()),
+            mark,
+        } => app.addressed(message, &row, warning.as_deref(), mark),
         Input::Body { message, answer } => {
             if app
                 .reading

@@ -511,37 +511,38 @@ this machine that the user did not ask for** (constitution VI). The mechanisms:
 - `List-Unsubscribe` One-Click fires only on deliberate activation, because
   sending it confirms the address is live.
 - No link prefetch, favicon fetch or speculative connection. The reader's
-  renderer cannot run script or reach the network (ADR 0042): it has no script
-  engine and draws only the message's own parts from the local blob store plus
-  a remote image the user allowed, fetched by the application. The
-  conversation rail reads the visible message from the renderer's geometry.
+  renderer cannot run script or reach the network (ADR 0042): it draws only
+  the message's own parts from the local blob store and remote images the
+  user allowed, fetched by the application.
 - **A forward** is generated from Postio's own types, where script has no
   representation. **A reply** carries the sender's markup as the reader
   sanitised it ([ADR 0033](decisions/0033-a-reply-quotes-what-the-reader-shows.md)),
-  remote images blocked regardless. The corpus-wide assertion in `postio-body`
-  keeps this true: zero scripts, remote-loading references, tracking pixels or
-  broken image elements across every HTML message in the corpus.
+  remote images blocked regardless. `postio-body`'s corpus-wide assertion
+  holds it: no script, remote reference, tracking pixel or broken image.
 - **A sender who may not be who they say gets one quiet line in the reader's
-  header; ordinary mail gets nothing** (#1928). Triggers: the provider stamped
-  an `Authentication-Results` saying DMARC failed (or SPF and DKIM both failed
-  for the From domain), or the display name is itself another address or
-  domain. Only the topmost `Authentication-Results` whose authserv-id is in the
-  provider's preset row (`authserv_ids`) is believed, since a sender writes
-  every header it sends; with none, nothing is shown. There is no "verified"
-  badge.
+  header; ordinary mail gets nothing** (#1928): the provider's
+  `Authentication-Results` says DMARC failed (or SPF and DKIM both failed for
+  the From domain), or the display name is another address or domain. Only
+  the topmost such header from the provider's `authserv_ids` is believed; with
+  none, nothing is shown. A pass draws nothing: a lookalike domain passes its
+  own checks.
+- **A valid signature shows the word "Signed"** ("Signed · accepted" for the
+  key the person accepted; [spec 016](../specs/016-message-authenticity/spec.md)),
+  never a lock. A bad signature or an unaccepted key is the warning line. Keys
+  come only from this machine; DKIM is never re-checked.
 - No telemetry, crash reporting or update ping.
 - **The local store holds the whole mailbox and is encrypted**
   ([ADR 0014](decisions/0014-encryption-at-rest.md)). A backup of
-  `$XDG_DATA_HOME` is a backup of the mailbox; the key lives in the keyring,
-  and losing it costs a re-sync, never mail.
+  `$XDG_DATA_HOME` is a backup of the mailbox; losing the keyring's key costs
+  a re-sync, never mail.
 - Credentials in the OS keyring; TLS wherever the server offers it.
 - Logs carry ids, counts and outcomes, never message content.
 
-For anything that could make a network request, ask "did the user ask for it";
-if not, it does not ship. `scripts/checks/check-no-silent-tracking.py` refuses
+Anything that could make a network request ships only if the user asked for it. `scripts/checks/check-no-silent-tracking.py` refuses
 the two easiest mechanisms to add by accident.
 
-Link warnings, PGP and S/MIME are unscheduled.
+Link warnings, decryption and sending signed or encrypted mail are
+unscheduled.
 
 ---
 
